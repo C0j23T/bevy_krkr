@@ -1,0 +1,4 @@
+[submodule "Kirikiroid2"]
+	path = Kirikiroid2
+	url = https://github.com/C0j23T/Kirikiroid2.git
+	branch = bevy-port

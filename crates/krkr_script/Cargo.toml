@@ -1,0 +1,11 @@
+[package]
+name        = "krkr_script"
+version     = "0.1.0"
+edition     = "2021"
+license     = "GPL-2.0-or-later"
+description = "TJS2 runtime adapter: Kirikiroid2 tTJS as a Bevy non-send resource"
+
+[dependencies]
+krkr_sys  = { path = "../krkr_sys" }
+bevy      = { workspace = true }
+thiserror = { workspace = true }

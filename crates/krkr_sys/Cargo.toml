@@ -1,0 +1,24 @@
+[package]
+name        = "krkr_sys"
+version     = "0.1.0"
+edition     = "2021"
+license     = "GPL-2.0-or-later"
+description = "Raw FFI bindings for Kirikiroid2, generated at build time"
+links       = "kirikiroid2"
+build       = "build.rs"
+
+[dependencies]
+
+[build-dependencies]
+krkr_codegen = { path = "../../codegen" }
+bindgen      = { version = "0.72", optional = true }
+cc           = { version = "1", optional = true, features = ["parallel"] }
+pkg-config   = { version = "0.3", optional = true }
+
+[features]
+default  = []
+# Build the Kirikiroid2 engine core from a checkout ($KIRIKIROID2_SRC or
+# ./Kirikiroid2, bevy-port branch) and bind it. Needs libclang (bindgen), a C++17
+# compiler and the system libraries listed in codegen/src/port.rs.
+# Without it, or without a checkout, krkr_sys builds stub bindings.
+real_ffi = ["dep:bindgen", "dep:cc", "dep:pkg-config"]

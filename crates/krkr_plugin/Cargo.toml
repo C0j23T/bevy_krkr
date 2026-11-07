@@ -1,0 +1,13 @@
+[package]
+name        = "krkr_plugin"
+version     = "0.1.0"
+edition     = "2021"
+license     = "GPL-2.0-or-later"
+description = "Top-level Bevy plugin assembling the bevy_krkr subsystems"
+
+[dependencies]
+krkr_sys    = { path = "../krkr_sys" }
+krkr_script = { path = "../krkr_script" }
+krkr_kag    = { path = "../krkr_kag" }
+krkr_audio  = { path = "../krkr_audio" }
+bevy        = { workspace = true }

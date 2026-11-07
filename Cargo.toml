@@ -1,0 +1,55 @@
+[workspace]
+members = [
+    ".",
+    "crates/krkr_sys",
+    "crates/krkr_script",
+    "crates/krkr_kag",
+    "crates/krkr_audio",
+    "crates/krkr_plugin",
+    "codegen",
+]
+resolver = "2"
+
+[workspace.dependencies]
+bevy = { version = "0.20", default-features = false, features = ["2d", "jpeg"] }
+bevy_kira_audio = { version = "0.27", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+
+# ──────────────────────────────────────────────────────────────────────────────
+[package]
+name    = "bevy_krkr"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Bevy integration layer for Kirikiri2 / KAG3 (via Kirikiroid2 FFI)"
+repository  = "https://github.com/your-org/bevy_krkr"
+keywords    = ["bevy", "visual-novel", "kirikiri", "kag"]
+categories  = ["game-engines"]
+
+[lib]
+name = "bevy_krkr"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Runtime dependencies
+[dependencies]
+krkr_plugin = { path = "crates/krkr_plugin" }
+krkr_kag    = { path = "crates/krkr_kag" }
+krkr_audio  = { path = "crates/krkr_audio" }
+krkr_script = { path = "crates/krkr_script" }
+krkr_sys    = { path = "crates/krkr_sys" }
+
+bevy = { workspace = true }
+bevy_kira_audio = { workspace = true, features = ["ogg", "mp3", "wav", "flac"] }
+
+[features]
+default  = ["real_ffi"]
+# Build the Kirikiroid2 engine core (./Kirikiroid2 or $KIRIKIROID2_SRC, branch
+# bevy-port) and bind it. `--no-default-features` builds stub bindings instead.
+real_ffi = ["krkr_sys/real_ffi"]
+
+[[example]]
+name = "minimal_kag"
+path = "examples/minimal_kag.rs"

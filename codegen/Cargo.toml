@@ -1,0 +1,21 @@
+[package]
+name        = "krkr_codegen"
+version     = "0.1.0"
+edition     = "2021"
+description = "Binding generator for bevy_krkr: expands the C ABI table into a C header, a C++ shim over Kirikiroid2 and Rust stubs"
+
+[[bin]]
+name = "krkr_codegen"
+path = "src/main.rs"
+
+[lib]
+name = "krkr_codegen"
+path = "src/lib.rs"
+
+[dependencies]
+clap       = { version = "4", features = ["derive"] }
+walkdir    = "2"
+regex      = "1"
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow     = "1"
