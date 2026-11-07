@@ -9,6 +9,7 @@
 #include "SysInitIntf.h"
 #include "SysInitImpl.h"
 #include "StorageIntf.h"
+#include "EventIntf.h"
 #include "MsgIntf.h"
 #include "BitmapIntf.h"
 #include "LayerIntf.h"
@@ -64,11 +65,24 @@ static void krkr_require(bool ok) {
 
 // ─── engine state ───────────────────────────────────────────────────────────
 
-enum class KrkrEngineState { NotStarted, Running, ShutDown };
+// Running: a session is up. ShutDown: it was torn down and another one may
+// start. Failed: initialisation threw half-way, which leaves globals in an
+// unknown state; the engine is never retried in that process.
+enum class KrkrEngineState { NotStarted, Running, ShutDown, Failed };
 static KrkrEngineState krkr_engine_state = KrkrEngineState::NotStarted;
 
 static void krkr_require_running() {
     if (krkr_engine_state != KrkrEngineState::Running) throw std::logic_error("the engine is not running");
+}
+
+// Drop everything the engine keeps outside the session's own objects. They all
+// refer to the instance being shut down: pending events, continuous handlers
+// and event hooks point into the TJS engine, cached archives and XP3 segments
+// belong to its data path. Upstream clears them at process exit only.
+static void krkr_clear_session_state() {
+    TVPUninitEventState();      // EventIntf.h
+    TVPClearStorageArchiveCache(); // StorageIntf.h
+    TVPClearStorageCaches();
 }
 
 // ─── strings ────────────────────────────────────────────────────────────────

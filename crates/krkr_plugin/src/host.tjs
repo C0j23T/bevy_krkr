@@ -41,9 +41,16 @@ class KrkrBevyHost
 
     function finalize()
     {
-        invalidate message;
-        invalidate base;
-        invalidate screen;
+        // Called by bevy_krkr from `host::stop` when the instance stops, and by
+        // TJS2's own finalizer. The `invalidate` calls are not optional: TJS2
+        // has no cycle collector, and a Layer holds its layer-manager and tree
+        // owner through a reference cycle, so nothing would ever reach a
+        // reference count of zero. Without them a stopped instance keeps its
+        // bitmaps (several megabytes) for the rest of the process.
+        if (message !== void) { invalidate message; message = void; }
+        if (base !== void) { invalidate base; base = void; }
+        if (screen !== void) { invalidate screen; screen = void; }
+        text = "";
     }
 
     // Wrap `s` to the window width using the font's real glyph widths.

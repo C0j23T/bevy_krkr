@@ -58,6 +58,21 @@ pub fn start(engine: &Tjs2Engine, size: UVec2) -> Result<KrkrScreen, String> {
     Ok(KrkrScreen { ptr })
 }
 
+/// Release the host objects (`host.tjs`). Call before the engine shuts down.
+///
+/// TJS2 collects objects by reference count and has no cycle collector, so the
+/// screen's layer tree — Layer ↔ layer manager ↔ tree owner — never reaches a
+/// reference count of zero on its own. Its bitmaps stay allocated for the rest
+/// of the process unless the script tears it down, which is several megabytes
+/// per stopped instance.
+pub fn stop(engine: &Tjs2Engine) {
+    const TEARDOWN: &str =
+        "if (global.krkrBevy !== void) { global.krkrBevy.finalize(); global.krkrBevy = void; }";
+    if let Err(e) = engine.exec_script(TEARDOWN, "bevy_krkr teardown") {
+        warn!("bevy_krkr: releasing the host objects failed: {e}");
+    }
+}
+
 /// Draws the KAG message text into the Kirikiri message window.
 pub fn message_window(
     engine: Option<NonSend<Tjs2Engine>>,

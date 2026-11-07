@@ -180,8 +180,15 @@ the BGM and closes the window.
   layout and rendering by Kirikiroid2 (Layer, Font, FreeType), off-screen
   compositing uploaded as a texture, BGM/SE/voice channels, XP3/TAR reading,
   engine log → Bevy log.
-- One Kirikiri instance per process: Kirikiroid2's globals cannot be
-  re-initialised, so a second `KirikiriEnterEvent` after an exit fails.
+- One instance at a time, and the same process can start another one after an
+  exit. Stopping an instance returns its memory. Kirikiroid2 is written for a
+  process that ends with the engine, so the port does what that assumption
+  covered: `krkr_engine_shutdown` clears the process-global state (TJS2
+  interpreter and its script blocks, event queue, storage caches, font
+  rasterisers) and `krkr_engine_init` resets the one-shot initialisation
+  guards. The teardown releases the host objects before the interpreter goes
+  away, because TJS2 has no cycle collector and the screen's layer tree would
+  otherwise keep its bitmaps. `tests/restart_memory.rs` measures it.
 - Not taken from Kirikiroid2: its Window class and input (the Bevy host owns
   them), sound output (bevy_kira_audio), video, BPG/JXR/PVR images and
   ZIP/7z archives. Scripts using them get an "not supported by the bevy_krkr

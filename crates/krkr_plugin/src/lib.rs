@@ -7,8 +7,8 @@
 //! - [`KirikiriExitEvent`] is written by the plugin when script code asks the
 //!   engine to terminate, or by game code. On it, the instance is torn down in
 //!   dependency order: parser, screen, TJS2 engine, archive, engine shutdown.
-//!   Kirikiroid2 supports one instance per process: after an exit, a new
-//!   [`KirikiriEnterEvent`] fails with an error.
+//!   After an exit another [`KirikiriEnterEvent`] starts a new instance;
+//!   `krkr_engine_shutdown` resets the engine's process-global state.
 //!
 //! Kirikiri output is drawn by the camera marked with [`KirikiriCamera`]; see
 //! [`render`]. Engine log lines go to Bevy's log (`bevy_krkr::engine`).
@@ -240,6 +240,9 @@ fn start(world: &mut World, path: &Path, config: &KirikiriConfig) -> Result<(), 
 /// Drop the running instance in dependency order. Does nothing when idle.
 pub fn teardown(world: &mut World) {
     drop(world.remove_non_send::<KagParser>());
+    if let Some(engine) = world.get_non_send::<Tjs2Engine>() {
+        host::stop(engine);
+    }
     drop(world.remove_non_send::<KrkrScreen>());
     drop(world.remove_non_send::<Tjs2Engine>());
     let was_running = world.remove_non_send::<KrkrSession>().is_some();

@@ -9,7 +9,8 @@ pub const FUNCTIONS: &[FnDecl] = &[
         name: "krkr_engine_init",
         doc: "Start the engine with `data_path` (a data folder or a data.xp3 file) as the project. \
               Initialises storage, the TJS2 engine with all native classes, fonts and pixel \
-              routines. Once per process: the engine cannot be restarted after krkr_engine_shutdown.",
+              routines. One instance at a time: after krkr_engine_shutdown another instance may \
+              be started.",
         c_ret: "krkr_result_t",
         rust_ret: "krkr_result_t",
         params: &[cstr("data_path")],
@@ -17,15 +18,18 @@ pub const FUNCTIONS: &[FnDecl] = &[
         cpp_body: r#"
     if (!data_path) throw std::invalid_argument("data_path is NULL");
     if (krkr_engine_state == KrkrEngineState::Running) throw std::logic_error("the engine is already running");
-    if (krkr_engine_state == KrkrEngineState::ShutDown)
-        throw std::logic_error("the engine cannot be restarted in the same process");
+    if (krkr_engine_state == KrkrEngineState::Failed)
+        throw std::logic_error("a previous krkr_engine_init failed; the engine cannot be initialised again in this process");
     std::error_code ec;
     std::filesystem::path path = std::filesystem::weakly_canonical(std::filesystem::absolute(data_path, ec), ec);
     if (ec || !std::filesystem::exists(path)) throw std::runtime_error(std::string("data path not found: ") + data_path);
     std::string native = path.string();
     if (std::filesystem::is_directory(path) && native.back() != '/') native += '/';
     // Failing half-way leaves the engine unusable; never retry.
-    krkr_engine_state = KrkrEngineState::ShutDown;
+    krkr_engine_state = KrkrEngineState::Failed;
+    // The exit request of a previous session does not carry over into this one.
+    TVPTerminated = false;
+    TVPTerminateCode = 0;
     TVPNativeProjectDir = krkr_ttstr(native.c_str());
     TVPProjectDir = TVPNormalizeStorageName(TVPNativeProjectDir);
     TVPInitScriptEngine();
@@ -38,7 +42,8 @@ pub const FUNCTIONS: &[FnDecl] = &[
     FnDecl {
         module: Engine,
         name: "krkr_engine_shutdown",
-        doc: "Shut the engine down. Release every handle (TJS, parser, archive, layer) first.",
+        doc: "Shut the engine down. Release every handle (TJS, parser, archive, layer) first. \
+              The process may then start another instance with krkr_engine_init.",
         c_ret: "void",
         rust_ret: "",
         params: &[],
@@ -48,7 +53,8 @@ pub const FUNCTIONS: &[FnDecl] = &[
     krkr_engine_state = KrkrEngineState::ShutDown;
     TVPSystemUninit();
     delete TVPSystemControl;
-    TVPSystemControl = nullptr;"#,
+    TVPSystemControl = nullptr;
+    krkr_clear_session_state();"#,
     },
     FnDecl {
         module: Engine,
