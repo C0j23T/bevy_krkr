@@ -16,6 +16,11 @@
 //!
 //! Bevy's own `bevy_audio` must stay disabled; the workspace builds Bevy
 //! without its `audio` feature.
+//!
+//! This is the path for KAG tags the *host* parses (`krkr_kag`). A game that
+//! runs its own KAG (`system/bgm.tjs` and friends) never produces these events:
+//! it plays through the engine's `WaveSoundBuffer`, which the port mixes for the
+//! device itself (`crates/krkr_plugin/src/audio.rs`). Both can run at once.
 
 use std::collections::HashMap;
 use std::time::Duration;

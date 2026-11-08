@@ -3558,6 +3558,7 @@ name = "krkr_plugin"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "cpal 0.18.2",
  "krkr_audio",
  "krkr_kag",
  "krkr_script",
