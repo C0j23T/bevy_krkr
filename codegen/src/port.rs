@@ -137,7 +137,6 @@ pub const PKG_CONFIG: &[&str] = &[
     "freetype2",
     "oniguruma",
     "zlib",
-    "libarchive",
     "libpng16",
     "libjpeg",
     "libturbojpeg",

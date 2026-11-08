@@ -10,8 +10,11 @@
 //! - Report errors as a sentinel (`0` for the codecs, `SIZE_MAX` for the
 //!   `usize` returns), because C has no way to receive a `Result`.
 
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void};
+use std::io::{self, Read, Seek, SeekFrom};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
+use crate::archives::{Archive, Kind};
 
 // ─── pointer plumbing ──────────────────────────────────────────────────────
 
@@ -41,6 +44,14 @@ unsafe fn output<'a>(ptr: *mut c_void, len: usize) -> &'a mut [u8] {
         std::slice::from_raw_parts_mut(ptr as *mut u8, len)
     }
 }
+
+/// Runs `body`, turning a panic into `fallback`.
+fn guard<T>(fallback: T, body: impl FnOnce() -> T) -> T {
+    catch_unwind(AssertUnwindSafe(body)).unwrap_or(fallback)
+}
+
+/// Error value of the `usize`-returning entry points.
+const FAILED: usize = usize::MAX;
 
 // ─── xxHash ────────────────────────────────────────────────────────────────
 //
@@ -134,6 +145,209 @@ pub unsafe extern "C" fn krkr_lz4_decompress(
         Ok(written) if written == dst_len => written,
         _ => usize::MAX,
     }
+}
+
+// ─── archives ──────────────────────────────────────────────────────────────
+
+/// Callbacks into the C++ `tTJSBinaryStream`. Mirrors `KrkrArchiveReader` in
+/// `environ/bevy/compat/krkr_shim.h`.
+#[repr(C)]
+pub struct KrkrArchiveReader {
+    pub userdata: *mut c_void,
+    /// Reads at most `len` bytes; returns the count, 0 at end of stream, or a
+    /// negative number on error.
+    pub read: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> i64>,
+    /// `whence` is 0 (start), 1 (current) or 2 (end); returns the new absolute
+    /// position, or a negative number on error.
+    pub seek: Option<unsafe extern "C" fn(*mut c_void, i64, i32) -> i64>,
+    /// Length of the stream, needed to seek from the end.
+    pub size: i64,
+}
+
+/// `Read + Seek` over the C callbacks: the adapter that lets
+/// [`crate::archives::Archive`] read from a `tTJSBinaryStream` it does not own.
+///
+/// Public only because it is the type behind the `KrkrArchive *` handle; its
+/// fields and the type itself are not part of the ABI the C++ side sees.
+pub struct Source {
+    userdata: *mut c_void,
+    read: unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> i64,
+    seek: unsafe extern "C" fn(*mut c_void, i64, i32) -> i64,
+    size: u64,
+}
+
+// The pointers belong to the C++ side, which only ever runs one of these calls
+// at a time (the archive holds the decoder behind a mutex).
+unsafe impl Send for Source {}
+
+impl Source {
+    /// # Safety
+    /// `reader` must point at a valid `KrkrArchiveReader` whose callbacks stay
+    /// alive and callable until the archive is closed.
+    unsafe fn from_c(reader: *const KrkrArchiveReader) -> Option<Self> {
+        let reader = reader.as_ref()?;
+        Some(Self {
+            userdata: reader.userdata,
+            read: reader.read?,
+            seek: reader.seek?,
+            size: if reader.size > 0 { reader.size as u64 } else { 0 },
+        })
+    }
+}
+
+impl Read for Source {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let n = unsafe { (self.read)(self.userdata, buf.as_mut_ptr().cast(), buf.len()) };
+        if n < 0 {
+            return Err(io::Error::other("archive stream read failed"));
+        }
+        // A callback that reports more than it was given would make the
+        // decoders read uninitialised bytes; clamp instead of trusting it.
+        Ok((n as usize).min(buf.len()))
+    }
+}
+
+impl Seek for Source {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let (offset, whence) = match pos {
+            SeekFrom::Start(n) => (n as i64, 0),
+            SeekFrom::Current(n) => (n, 1),
+            SeekFrom::End(n) => ((self.size as i64).saturating_add(n), 0),
+        };
+        let position = unsafe { (self.seek)(self.userdata, offset, whence) };
+        if position < 0 {
+            return Err(io::Error::other("archive stream seek failed"));
+        }
+        Ok(position as u64)
+    }
+}
+
+/// The handle the C++ side holds as `KrkrArchive *`. Opaque to it: the layout
+/// is not part of the ABI.
+pub type KrkrArchive = Archive<Source>;
+
+/// `KRKR_ARCHIVE_*` in `environ/bevy/compat/krkr_shim.h`.
+pub const KRKR_ARCHIVE_7Z: i32 = 1;
+pub const KRKR_ARCHIVE_ZIP: i32 = 2;
+
+fn kind_from_c(kind: i32) -> Option<Kind> {
+    match kind {
+        KRKR_ARCHIVE_7Z => Some(Kind::SevenZ),
+        KRKR_ARCHIVE_ZIP => Some(Kind::Zip),
+        _ => None,
+    }
+}
+
+/// Opens `reader` as a 7z or ZIP archive and lists its entries.
+///
+/// Returns null when the stream is not an archive of `kind`; the caller
+/// (`TVPOpenArchive`) then tries the next format, so this must leave the
+/// stream seekable.
+///
+/// # Safety
+/// `reader` must be valid for the call and stay valid (its `userdata` and
+/// callbacks) until [`krkr_archive_close`].
+#[no_mangle]
+pub unsafe extern "C" fn krkr_archive_open(
+    reader: *const KrkrArchiveReader,
+    kind: i32,
+) -> *mut KrkrArchive {
+    guard(std::ptr::null_mut(), || {
+        let (Some(source), Some(kind)) = (Source::from_c(reader), kind_from_c(kind)) else {
+            return std::ptr::null_mut();
+        };
+        match Archive::open(kind, source) {
+            Some(archive) => Box::into_raw(Box::new(archive)),
+            None => std::ptr::null_mut(),
+        }
+    })
+}
+
+/// Frees an archive; the stream itself stays with the caller.
+///
+/// # Safety
+/// `archive` must come from [`krkr_archive_open`] and not be used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn krkr_archive_close(archive: *mut KrkrArchive) {
+    if archive.is_null() {
+        return;
+    }
+    guard((), || drop(Box::from_raw(archive)));
+}
+
+/// Number of entries in the list.
+///
+/// # Safety
+/// `archive` must be a live archive handle.
+#[no_mangle]
+pub unsafe extern "C" fn krkr_archive_count(archive: *const KrkrArchive) -> usize {
+    archive.as_ref().map_or(0, |archive| archive.entries().len())
+}
+
+/// Uncompressed size of entry `index`, or `SIZE_MAX` for a bad index.
+///
+/// # Safety
+/// `archive` must be a live archive handle.
+#[no_mangle]
+pub unsafe extern "C" fn krkr_archive_size(archive: *const KrkrArchive, index: usize) -> usize {
+    match archive.as_ref().and_then(|archive| archive.entries().get(index)) {
+        Some(entry) => entry.size() as usize,
+        None => FAILED,
+    }
+}
+
+/// Copies entry `index`'s name into `buf` as UTF-8 and NUL-terminates it.
+///
+/// Returns the byte count without the NUL. `buf` may be null (or `len` 0) to
+/// ask for the length only, which is how the caller sizes its buffer.
+///
+/// # Safety
+/// `archive` must be live; `buf` must hold `len` writable bytes when not null.
+#[no_mangle]
+pub unsafe extern "C" fn krkr_archive_name(
+    archive: *const KrkrArchive,
+    index: usize,
+    buf: *mut c_char,
+    len: usize,
+) -> usize {
+    let Some(entry) = archive.as_ref().and_then(|archive| archive.entries().get(index)) else {
+        return FAILED;
+    };
+    let name = entry.name().as_bytes();
+    if !buf.is_null() && len > 0 {
+        let copied = name.len().min(len - 1);
+        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.cast(), copied);
+        *buf.add(copied) = 0;
+    }
+    name.len()
+}
+
+/// Decompresses entry `index` into `buf` (`len` bytes).
+///
+/// Returns the bytes written, or `SIZE_MAX` when the entry does not fit or
+/// cannot be decoded. The caller gets the exact size from [`krkr_archive_size`]
+/// first, so a short read is an error rather than something to pad.
+///
+/// # Safety
+/// `archive` must be live; `buf` must hold `len` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn krkr_archive_read(
+    archive: *mut KrkrArchive,
+    index: usize,
+    buf: *mut c_void,
+    len: usize,
+) -> usize {
+    guard(FAILED, || {
+        let Some(archive) = archive.as_ref() else { return FAILED };
+        let out = output(buf, len);
+        match archive.read(index, out) {
+            Some(written) => written,
+            None => FAILED,
+        }
+    })
 }
 
 #[cfg(test)]
@@ -244,5 +458,43 @@ mod tests {
             )
         };
         assert_eq!(written, usize::MAX, "a truncated block must not decode");
+    }
+
+    /// A C caller that passes nothing must get a failure, not a crash: the
+    /// engine does pass null handles when a load was cancelled.
+    #[test]
+    fn null_handles_are_rejected() {
+        unsafe {
+            assert!(krkr_archive_open(std::ptr::null(), KRKR_ARCHIVE_7Z).is_null());
+            assert_eq!(krkr_archive_count(std::ptr::null()), 0);
+            assert_eq!(krkr_archive_size(std::ptr::null(), 0), usize::MAX);
+            assert_eq!(krkr_archive_name(std::ptr::null(), 0, std::ptr::null_mut(), 0), usize::MAX);
+            assert_eq!(
+                krkr_archive_read(std::ptr::null_mut(), 0, std::ptr::null_mut(), 0),
+                usize::MAX
+            );
+            krkr_archive_close(std::ptr::null_mut()); // must be a no-op
+        }
+    }
+
+    /// An unknown archive kind is an error, not a guess.
+    #[test]
+    fn an_unknown_kind_is_rejected() {
+        // The stream is never reached — the kind is rejected first — but the
+        // reader still has to be well-formed, since `Source` requires both
+        // callbacks.
+        unsafe extern "C" fn read_nothing(_: *mut c_void, _: *mut c_void, _: usize) -> i64 {
+            0
+        }
+        unsafe extern "C" fn seek_to_start(_: *mut c_void, _: i64, _: i32) -> i64 {
+            0
+        }
+        let reader = KrkrArchiveReader {
+            userdata: std::ptr::null_mut(),
+            read: Some(read_nothing),
+            seek: Some(seek_to_start),
+            size: 0,
+        };
+        unsafe { assert!(krkr_archive_open(&reader, 0).is_null()) };
     }
 }
