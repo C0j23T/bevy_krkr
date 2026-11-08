@@ -45,11 +45,14 @@ bevy = { workspace = true }
 bevy_kira_audio = { workspace = true, features = ["ogg", "mp3", "wav", "flac"] }
 
 [features]
-default  = ["real_ffi"]
-# Build the Kirikiroid2 engine core (./Kirikiroid2 or $KIRIKIROID2_SRC, branch
-# bevy-port) and bind it. `--no-default-features` builds stub bindings instead.
+default  = ["real_ffi", "xp3filter"]
 real_ffi = ["krkr_sys/real_ffi"]
+xp3filter = ["krkr_sys/plugin-xp3filter"]
 
 [[example]]
 name = "minimal_kag"
 path = "examples/minimal_kag.rs"
+
+[[example]]
+name = "snbk"
+path = "examples/snbk.rs"
