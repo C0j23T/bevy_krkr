@@ -40,7 +40,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
         cpp_target: "iTJSDispatch2::Release",
         cpp_body: r#"
     if (!layer) return;
-    if (layer->obj) layer->obj->Release();
+    if (layer->obj && krkr_engine_alive()) layer->obj->Release();
     delete layer;"#,
     },
     FnDecl {
@@ -52,6 +52,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
         params: &[LAYER],
         cpp_target: "XXH3 over the snapshot",
         cpp_body: r#"
+    krkr_require_running();
     krkr_require(layer);
     krkr_layer_refresh(layer);
     return layer->revision;"#,
@@ -65,6 +66,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
         params: &[LAYER],
         cpp_target: "snapshot",
         cpp_body: r#"
+    krkr_require_running();
     krkr_require(layer);
     if (!layer->has_snapshot) krkr_layer_refresh(layer);
     return layer->width;"#,
@@ -78,6 +80,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
         params: &[LAYER],
         cpp_target: "snapshot",
         cpp_body: r#"
+    krkr_require_running();
     krkr_require(layer);
     if (!layer->has_snapshot) krkr_layer_refresh(layer);
     return layer->height;"#,
@@ -93,6 +96,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
         params: &[LAYER],
         cpp_target: "tTJSNI_Bitmap / tTJSNI_BaseLayer pixel buffer",
         cpp_body: r#"
+    krkr_require_running();
     krkr_require(layer);
     if (!layer->has_snapshot) krkr_layer_refresh(layer);
     return layer->pixels.empty() ? nullptr : layer->pixels.data();"#,

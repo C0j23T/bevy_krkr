@@ -5,6 +5,7 @@
 #include "tjsCommHead.h"
 #include "tjsDictionary.h"
 #include "tjsError.h"
+#include "Application.h"
 #include "ScriptMgnIntf.h"
 #include "SysInitIntf.h"
 #include "SysInitImpl.h"
@@ -19,6 +20,7 @@
 #include "BevyPlatform.h"
 
 #include <algorithm>
+#include <csetjmp>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -75,15 +77,72 @@ static void krkr_require_running() {
     if (krkr_engine_state != KrkrEngineState::Running) throw std::logic_error("the engine is not running");
 }
 
-// Drop everything the engine keeps outside the session's own objects. They all
-// refer to the instance being shut down: pending events, continuous handlers
-// and event hooks point into the TJS engine, cached archives and XP3 segments
-// belong to its data path. Upstream clears them at process exit only.
+/// Whether handles the host holds still point at live objects. They are TJS
+/// objects, so once the engine has released itself (`System.exit`, a script
+/// exception) only the handle structs are left.
+static bool krkr_engine_alive() { return krkr_engine_state == KrkrEngineState::Running; }
+
+// Drop what the engine keeps outside the session's own objects. Cached
+// archives and XP3 segments belong to the session's data path; upstream clears
+// them at process exit only. Queued events are not here: they reference TJS
+// objects, so the engine drops them while those still exist (see
+// TVPBeforeSystemUninit).
 static void krkr_clear_session_state() {
-    TVPUninitEventState();      // EventIntf.h
     TVPClearStorageArchiveCache(); // StorageIntf.h
     TVPClearStorageCaches();
 }
+
+// ─── leaving the engine ─────────────────────────────────────────────────────
+
+// `TVPExitApplication` is upstream's `exit()`: it never returns. A host cannot
+// do that, but it cannot unwind the stack from there either. `System.exit`
+// shuts the engine down first (`TVPTerminateSync` calls `TVPSystemUninit`) and
+// only then exits, so every engine frame between it and the host is left over
+// freed globals (`TJS` among them); unwinding through them runs cleanup code
+// that dereferences them. The generated entry points therefore install a jump
+// target and `TVPExitApplication` leaves through it, abandoning the call.
+struct KrkrExitJump {
+    std::jmp_buf Target;
+    KrkrExitJump *Previous;
+};
+
+static thread_local KrkrExitJump *krkr_exit_jump = nullptr;
+
+namespace {
+/// Restores the enclosing jump target when a generated function returns.
+class KrkrExitJumpRestore {
+    KrkrExitJump *Previous;
+
+public:
+    explicit KrkrExitJumpRestore(KrkrExitJump *previous) : Previous(previous) {}
+    ~KrkrExitJumpRestore() { krkr_exit_jump = Previous; }
+    KrkrExitJumpRestore(const KrkrExitJumpRestore &) = delete;
+    KrkrExitJumpRestore &operator=(const KrkrExitJumpRestore &) = delete;
+};
+} // namespace
+
+/// Target of `TVPExitApplication` (environ/bevy/BevyPlatform.cpp). Returns
+/// false when no entry point is waiting for it, in which case the caller has to
+/// unwind the stack itself; otherwise it does not return.
+bool TVPBevyLeaveThroughExitBoundary() {
+    KrkrExitJump *jump = krkr_exit_jump;
+    if (!jump) return false;
+    // The engine has already released itself: from here on there is nothing to
+    // call, only the session left to close.
+    krkr_engine_state = KrkrEngineState::ShutDown;
+    std::longjmp(jump->Target, 1);
+}
+
+// First statement of every generated body (see generate_cpp_shim).
+#define KRKR_SHIM_ENTER(...)                                                                  \
+    KrkrExitJump krkr_exit_jump_here;                                                         \
+    krkr_exit_jump_here.Previous = krkr_exit_jump;                                            \
+    krkr_exit_jump = &krkr_exit_jump_here;                                                    \
+    KrkrExitJumpRestore krkr_exit_jump_restore(krkr_exit_jump_here.Previous);                  \
+    if (setjmp(krkr_exit_jump_here.Target) != 0) {                                            \
+        krkr_set_error("the engine requested exit (code " + std::to_string(TVPTerminateCode) + ")"); \
+        return __VA_ARGS__;                                                                   \
+    }
 
 // ─── strings ────────────────────────────────────────────────────────────────
 

@@ -256,9 +256,10 @@ pub fn generate_cpp_shim(notices: &[String]) -> String {
             let ret = f.failure_value().unwrap_or("");
             let _ = writeln!(
                 out,
-                "\n// forwards to: {}\n{} {{\n    try {{{}\n    }} KRKR_SHIM_CATCH({})\n}}",
+                "\n// forwards to: {}\n{} {{\n    KRKR_SHIM_ENTER({});\n    try {{{}\n    }} KRKR_SHIM_CATCH({})\n}}",
                 f.cpp_target,
                 c_signature(f),
+                ret,
                 f.cpp_body.trim_end().replace("\n    ", "\n        "),
                 ret
             );

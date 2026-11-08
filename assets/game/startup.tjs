@@ -1,0 +1,5 @@
+// Start-up script of the test fixture. Kirikiroid2 runs this before anything
+// else (`TVPExecuteStartupScript`), and the engine refuses `System.exit` /
+// `System.terminate` until it has run -- quitting during start-up is not a
+// thing a game does. Every KAG game ships one, so the fixture does too.
+global.fixtureStartup = "ran";

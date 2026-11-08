@@ -84,6 +84,12 @@ pub fn message_window(
         clear.clear();
         return;
     };
+    // A game that quit with `System.exit` took the interpreter with it.
+    if !engine.is_running() {
+        show.clear();
+        clear.clear();
+        return;
+    }
     // A clear is always followed by new text (KagCursor clears before it
     // shows), so apply clears first, then the latest text.
     if clear.read().count() > 0 {

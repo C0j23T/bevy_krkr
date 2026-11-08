@@ -8,13 +8,14 @@ pub const FUNCTIONS: &[FnDecl] = &[
         module: Engine,
         name: "krkr_engine_init",
         doc: "Start the engine with `data_path` (a data folder or a data.xp3 file) as the project. \
-              Initialises storage, the TJS2 engine with all native classes, fonts and pixel \
-              routines. One instance at a time: after krkr_engine_shutdown another instance may \
-              be started.",
+              Initialises storage, the TJS2 engine with all native classes, fonts, pixel routines \
+              and the plugins compiled into the core (e.g. `System.addFont`). One instance at a \
+              time: after krkr_engine_shutdown another instance may be started.",
         c_ret: "krkr_result_t",
         rust_ret: "krkr_result_t",
         params: &[cstr("data_path")],
-        cpp_target: "TVPInitScriptEngine + TVPInitFontNames + TVPSystemInit (as tTVPApplication::StartApplication)",
+        cpp_target: "TVPInitScriptEngine + TVPInitFontNames + TVPBevyLoadInternalPlugins + TVPSystemInit \
+                     (as tTVPApplication::StartApplication)",
         cpp_body: r#"
     if (!data_path) throw std::invalid_argument("data_path is NULL");
     if (krkr_engine_state == KrkrEngineState::Running) throw std::logic_error("the engine is already running");
@@ -34,9 +35,32 @@ pub const FUNCTIONS: &[FnDecl] = &[
     TVPProjectDir = TVPNormalizeStorageName(TVPNativeProjectDir);
     TVPInitScriptEngine();
     TVPInitFontNames();
+    // Attaches the compiled-in plugins (System.addFont, ...) to their TJS
+    // classes; tTVPApplication::StartApplication does the same through
+    // TVPLoadPluigins.
+    TVPBevyLoadInternalPlugins();
     TVPSystemInit(); // appends the archive delimiter for data.xp3
     TVPSystemControl = new tTVPSystemControl();
     krkr_engine_state = KrkrEngineState::Running;
+    return KRKR_OK;"#,
+    },
+    FnDecl {
+        module: Engine,
+        name: "krkr_engine_exec_startup",
+        doc: "Run the project's start-up scripts the way Kirikiroid2 does when it \
+              launches a game: `patch.tjs` next to the data file (if present), then \
+              `startup.tjs`, and `AfterStartup.tjs` afterwards. Games ship `patch.tjs` \
+              beside `data.xp3` to fix up or extend the engine's classes -- Fal \
+              hollow ataraxia, for one, defines `GetFileSize` there -- so a script \
+              that runs after start-up may rely on it. Failures of `patch.tjs` are \
+              reported by the engine itself; an error from `startup.tjs` is returned.",
+        c_ret: "krkr_result_t",
+        rust_ret: "krkr_result_t",
+        params: &[],
+        cpp_target: "TVPExecuteStartupScript (base/ScriptMgnIntf.cpp)",
+        cpp_body: r#"
+    krkr_require_running();
+    TVPExecuteStartupScript();
     return KRKR_OK;"#,
     },
     FnDecl {
@@ -49,11 +73,34 @@ pub const FUNCTIONS: &[FnDecl] = &[
         params: &[],
         cpp_target: "TVPSystemUninit",
         cpp_body: r#"
+    if (krkr_engine_state == KrkrEngineState::ShutDown) {
+        // The engine released itself (`System.exit`, a script exception) and
+        // ran its own shutdown, plugins and all; only what the host keeps
+        // outside it is left to close.
+        delete TVPSystemControl;
+        TVPSystemControl = nullptr;
+        TVPBevyResetWindows();
+        TVPBevyResetSound();
+        krkr_clear_session_state();
+        return;
+    }
     if (krkr_engine_state != KrkrEngineState::Running) return;
     krkr_engine_state = KrkrEngineState::ShutDown;
+    // Tell the game's windows they are closing while their scripts still run:
+    // that is where a KAG game saves its system variables (volumes, message
+    // speed), and the next session reads them back instead of finding void.
+    TVPBevyCloseWindows();
+    // Uninit detaches the plugins while their TJS classes still exist (see
+    // TVPBeforeSystemUninit): the detachment also clears the per-class
+    // registration state, which would otherwise make the next session fail
+    // with "Already registerd class".
     TVPSystemUninit();
     delete TVPSystemControl;
     TVPSystemControl = nullptr;
+    // The Window objects died with the TJS engine.
+    TVPBevyResetWindows();
+    // Anything still queued for playback belongs to the session that just ended.
+    TVPBevyResetSound();
     krkr_clear_session_state();"#,
     },
     FnDecl {
@@ -63,10 +110,19 @@ pub const FUNCTIONS: &[FnDecl] = &[
         c_ret: "krkr_result_t",
         rust_ret: "krkr_result_t",
         params: &[],
-        cpp_target: "tTVPSystemControl::ApplicationIdle",
+        cpp_target: "tTVPApplication::ProcessMessages + tTVPSystemControl::ApplicationIdle",
         cpp_body: r#"
     krkr_require_running();
+    // Parts of the engine hand work to the application object instead of doing
+    // it on their own thread: the TJS Timer thread posts its notifications
+    // through `tTVPApplication::PostUserMessage`, and `ProcessMessages` is what
+    // runs them. Without it a Timer never fires, which is also why KAG's
+    // `[wait time=...]` never resumes.
+    Application->ProcessMessages();
     TVPSystemControl->ApplicationIdle();
+    // Windows are repainted here: the host owns the message loop, so nothing
+    // else would produce a frame for them.
+    TVPBevyTickWindows();
     return KRKR_OK;"#,
     },
     FnDecl {
@@ -79,6 +135,20 @@ pub const FUNCTIONS: &[FnDecl] = &[
         cpp_target: "TVPTerminated",
         cpp_body: r#"
     return TVPTerminated ? 1 : 0;"#,
+    },
+    FnDecl {
+        module: Engine,
+        name: "krkr_engine_is_running",
+        doc: "Non-zero while an instance is up. It turns zero when the session shuts down, and \
+              also when the engine released itself (`System.exit`, a script exception): from \
+              then on the interpreter is gone, the host's handles to its objects are stale, and \
+              all that is left to do is close the session.",
+        c_ret: "int",
+        rust_ret: "c_int",
+        params: &[],
+        cpp_target: "shim-side engine state",
+        cpp_body: r#"
+    return krkr_engine_alive() ? 1 : 0;"#,
     },
     FnDecl {
         module: Engine,

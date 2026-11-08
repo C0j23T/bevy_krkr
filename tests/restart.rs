@@ -48,6 +48,18 @@ fn run_session(name: &str) {
         "Object",
         "{name}: host.tjs ran"
     );
+    // A plugin is attached when a script links it, as a game does (`System`
+    // .addFont from plugins/addFont.cpp). Which modules are already attached
+    // survives a shutdown, so this also proves the next session attaches them
+    // again instead of skipping them.
+    engine
+        .exec_script(r#"Plugins.link("addFont.dll");"#, "link")
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+    assert_eq!(
+        engine.eval("typeof System.addFont").unwrap(),
+        "Object",
+        "{name}: System.addFont is missing"
+    );
     assert_eq!(
         unsafe { sys::krkr_engine_exit_requested() },
         0,

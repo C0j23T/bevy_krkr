@@ -32,7 +32,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
         cpp_target: "iTJSDispatch2::Release",
         cpp_body: r#"
     if (!parser) return;
-    if (parser->obj) parser->obj->Release();
+    if (parser->obj && krkr_engine_alive()) parser->obj->Release();
     delete parser;"#,
     },
     FnDecl {

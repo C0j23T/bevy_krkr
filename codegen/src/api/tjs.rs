@@ -29,7 +29,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
         params: &[TJS],
         cpp_target: "tTJS::Release",
         cpp_body: r#"
-    if (tjs) reinterpret_cast<tTJS *>(tjs)->Release();"#,
+    if (tjs && krkr_engine_alive()) reinterpret_cast<tTJS *>(tjs)->Release();"#,
     },
     FnDecl {
         module: Tjs2,

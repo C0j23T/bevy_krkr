@@ -79,6 +79,23 @@ impl Tjs2Engine {
         self.ptr
     }
 
+    pub fn is_running(&self) -> bool {
+        unsafe { sys::krkr_engine_is_running() != 0 }
+    }
+
+    /// Run the project's start-up scripts the way Kirikiroid2 does: `patch.tjs`
+    /// next to the data file, then `startup.tjs`, then `AfterStartup.tjs`.
+    ///
+    /// Games put engine fixes in `patch.tjs` (Fal hollow ataraxia defines
+    /// `GetFileSize` there), so anything the game runs after start-up may depend
+    /// on it; calling this instead of executing `startup.tjs` yourself is what
+    /// keeps that working.
+    pub fn exec_startup(&self) -> Result<(), Tjs2Error> {
+        // SAFETY: an engine handle exists, so the engine is initialised.
+        let code = unsafe { sys::krkr_engine_exec_startup() };
+        check(code, "exec_startup")
+    }
+
     /// Execute TJS2 source. `context` names the source in error messages.
     pub fn exec_script(&self, script: &str, context: &str) -> Result<(), Tjs2Error> {
         let script = CString::new(script)?;

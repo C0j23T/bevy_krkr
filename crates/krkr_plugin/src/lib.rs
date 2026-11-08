@@ -4,16 +4,25 @@
 //!   `krkr_engine_init` on the data path, gets the TJS2 engine, runs the host
 //!   script ([`host`]), creates the KAG parser (all as non-send resources) and
 //!   loads the start scenario.
-//! - [`KirikiriExitEvent`] is written by the plugin when script code asks the
-//!   engine to terminate, or by game code. On it, the instance is torn down in
-//!   dependency order: parser, screen, TJS2 engine, archive, engine shutdown.
-//!   After an exit another [`KirikiriEnterEvent`] starts a new instance;
+//! - [`KirikiriExitEvent`] is written by the plugin when the game ends itself
+//!   (`System.exit`, `System.terminate`, `Window.close()` on the main window),
+//!   or by host code. On it the *instance* is torn down in dependency order:
+//!   parser, screen, TJS2 engine, archive, engine shutdown. The Bevy app keeps
+//!   running — that is a different lifetime, and a host with its own menu
+//!   stays up and starts the next instance with another [`KirikiriEnterEvent`];
 //!   `krkr_engine_shutdown` resets the engine's process-global state.
+//!   Stopping the app as well is [`AppExit`], written by the host when it wants
+//!   it (the plugin acts on it too, so the instance is always released first).
 //!
 //! Kirikiri output is drawn by the camera marked with [`KirikiriCamera`]; see
-//! [`render`]. Engine log lines go to Bevy's log (`bevy_krkr::engine`).
+//! [`render`]. Bevy's input is forwarded to the game's own `Window` (keys and
+//! the pointer, touches as the left button) by [`input`], and the audio the
+//! engine itself decodes is mixed and written to the sound device by [`audio`].
+//! Engine log lines go to Bevy's log (`bevy_krkr::engine`).
 
+pub mod audio;
 pub mod host;
+pub mod input;
 pub mod render;
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -40,6 +49,9 @@ pub struct KirikiriEnterEvent {
 }
 
 /// Stop the running Kirikiri instance (or: it has asked to stop).
+///
+/// The instance only: the Bevy app runs on, and another [`KirikiriEnterEvent`]
+/// starts the next one.
 #[derive(Message, Debug, Clone, Default)]
 pub struct KirikiriExitEvent;
 
@@ -140,6 +152,14 @@ impl Plugin for BevyKrkrPlugin {
             })
             .add_plugins((Tjs2Plugin, KagPlugin, KrkrAudioPlugin, KrkrRenderPlugin))
             .add_systems(PreUpdate, handle_enter)
+            // After Bevy has collected this frame's input: what a game's own
+            // UI sees must not lag a frame behind.
+            .add_systems(
+                PreUpdate,
+                (input::forward_keys, input::forward_pointer)
+                    .chain()
+                    .after(bevy::input::InputSystems),
+            )
             .add_systems(PostUpdate, poll_engine_exit)
             .add_systems(Last, handle_exit);
     }
@@ -219,6 +239,13 @@ fn start(world: &mut World, path: &Path, config: &KirikiriConfig) -> Result<(), 
         data_path: path.to_owned(),
     });
 
+    // The device the engine's own sound buffers are mixed onto. Started before
+    // any script runs, so the first `[playbgm]` is heard; a machine without
+    // sound logs and carries on, the game is simply silent.
+    if let Some(output) = audio::start() {
+        world.insert_non_send(output);
+    }
+
     let engine = Tjs2Engine::new().map_err(|e| e.to_string())?;
     let screen = host::start(&engine, size)?;
     let mut parser = KagParser::new(&engine).map_err(|e| e.to_string())?;
@@ -239,9 +266,17 @@ fn start(world: &mut World, path: &Path, config: &KirikiriConfig) -> Result<(), 
 
 /// Drop the running instance in dependency order. Does nothing when idle.
 pub fn teardown(world: &mut World) {
+    // Stop the device first: its callback mixes the engine's buffers, which the
+    // shutdown below releases.
+    drop(world.remove_non_send::<audio::KrkrAudioOutput>());
     drop(world.remove_non_send::<KagParser>());
     if let Some(engine) = world.get_non_send::<Tjs2Engine>() {
-        host::stop(engine);
+        // The host's own objects live in the interpreter, so a game that quit
+        // with `System.exit` (which shuts the engine down itself) has already
+        // released them.
+        if engine.is_running() {
+            host::stop(engine);
+        }
     }
     drop(world.remove_non_send::<KrkrScreen>());
     drop(world.remove_non_send::<Tjs2Engine>());
@@ -259,13 +294,15 @@ pub fn teardown(world: &mut World) {
 
 fn poll_engine_exit(
     session: Option<NonSend<KrkrSession>>,
+    engine: Option<NonSend<Tjs2Engine>>,
     mut exit: MessageWriter<KirikiriExitEvent>,
 ) {
-    if session.is_none() {
+    let (Some(_), Some(engine)) = (session, engine) else {
         return;
-    }
-    // SAFETY: an instance is running; main thread via NonSend.
-    if unsafe { sys::krkr_engine_exit_requested() } != 0 {
+    };
+    // The engine is gone as well when it released itself (`System.exit`, a
+    // script exception): then there is nothing left to run, only to close.
+    if unsafe { sys::krkr_engine_exit_requested() } != 0 || !engine.is_running() {
         exit.write(KirikiriExitEvent);
     }
 }
