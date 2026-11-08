@@ -11,10 +11,12 @@
 //! To expose a new Kirikiroid2 capability, add one [`FnDecl`] to the module of
 //! its subsystem (see README.md, "Adding a binding").
 
+mod audio;
 mod engine;
 mod kag;
 mod layer;
 mod tjs;
+mod window;
 mod xp3;
 
 /// Kirikiroid2 subsystem a function belongs to. Used to group the output.
@@ -25,6 +27,7 @@ pub enum KirikiridModule {
     KagParser,
     XP3Archive,
     Visual,
+    Audio,
 }
 
 impl KirikiridModule {
@@ -34,7 +37,8 @@ impl KirikiridModule {
             Self::Tjs2 => "TJS2 runtime (src/core/tjs2, src/core/base/ScriptMgnIntf)",
             Self::KagParser => "KAG3 parser (src/core/utils/KAGParser)",
             Self::XP3Archive => "Archives (src/core/base/XP3Archive, StorageIntf)",
-            Self::Visual => "Layers / bitmaps (src/core/visual)",
+            Self::Visual => "Layers / bitmaps / Window (src/core/visual)",
+            Self::Audio => "Sound output (src/core/sound, environ/bevy/BevySound.cpp)",
         }
     }
 }
@@ -142,6 +146,8 @@ pub const GROUPS: &[&[FnDecl]] = &[
     kag::FUNCTIONS,
     xp3::FUNCTIONS,
     layer::FUNCTIONS,
+    window::FUNCTIONS,
+    audio::FUNCTIONS,
 ];
 
 /// Iterate over every function in output order.
