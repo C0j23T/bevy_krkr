@@ -1,0 +1,14 @@
+[package]
+name        = "krkr_shim"
+version     = "0.1.0"
+edition     = "2021"
+license     = "GPL-2.0-or-later"
+description = "C ABI replacements for the small system libraries the Kirikiroid2 core links against"
+publish     = false
+
+[lib]
+name = "krkr_shim"
+
+[dependencies]
+xxhash-rust = { version = "0.8", features = ["xxh32", "xxh3"] }
+lz4_flex = { version = "0.11" }

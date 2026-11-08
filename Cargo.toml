@@ -2,6 +2,7 @@
 members = [
     ".",
     "crates/krkr_sys",
+    "crates/krkr_shim",
     "crates/krkr_script",
     "crates/krkr_kag",
     "crates/krkr_audio",

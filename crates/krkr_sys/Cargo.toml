@@ -8,6 +8,7 @@ links       = "kirikiroid2"
 build       = "build.rs"
 
 [dependencies]
+krkr_shim = { path = "../krkr_shim" }
 
 [build-dependencies]
 krkr_codegen = { path = "../../codegen" }

@@ -13,27 +13,6 @@ scheduling through `bevy_kira_audio`, and resource lifecycle. There is no
 ## Layout
 
 ```
-bevy_krkr/
-├── build.rs              workspace-level env check (codegen runs in krkr_sys/build.rs)
-├── codegen/              krkr_codegen
-│   ├── src/api.rs        the C ABI surface: types, constants, callbacks
-│   ├── src/api/*.rs      one table of FnDecl per subsystem (engine, tjs, kag, xp3, layer)
-│   ├── src/port.rs       Kirikiroid2 sources / include dirs / flags / system libs to build
-│   └── templates/shim_prelude.cpp   support code shared by the generated shim
-├── crates/
-│   ├── krkr_sys/         raw FFI; src/lib.rs only include!()s the generated file
-│   ├── krkr_script/      Tjs2Engine (non-send resource), Tjs2Plugin
-│   ├── krkr_kag/         KagParser, KagCursor, KAG tag → Bevy messages
-│   ├── krkr_audio/       BGM / SE / voice channels on bevy_kira_audio
-│   └── krkr_plugin/      BevyKrkrPlugin, lifecycle, host.tjs + message window, KrkrRenderPlugin
-├── src/lib.rs            re-exports + prelude
-├── examples/minimal_kag.rs   the format: assets/game/first.ks
-├── examples/snbk.rs          a retail game archive (snbk/data.xp3)
-├── assets/game/          first.ks + bgm.wav for the example
-└── Kirikiroid2/          submodule: C0j23T/Kirikiroid2, branch bevy-port
-```
-
-```
 KirikiriEnterEvent ─▶ handle_enter ─▶ krkr_engine_init, Tjs2Engine, host.tjs, KagParser
 Update:     Tjs2Set (krkr_engine_tick) ─▶ KagSet (kag_step: KAGParser → tags → messages) ─▶ KrkrAudioSet
 PostUpdate: message_window (ShowMessageEvent → krkrBevy.showMessage in TJS2)
@@ -66,9 +45,9 @@ git submodule update --init
 
 System requirements (found through pkg-config): a C++17 compiler, libclang
 (bindgen), oniguruma, freetype2, zlib, libarchive, libpng, libjpeg-turbo,
-libwebp, vorbisfile, opusfile, lz4, xxhash, tinyxml2 and OpenCV 4 or 5
-(core/imgproc). On Arch: `pacman -S oniguruma freetype2 libpng libjpeg-turbo
-libwebp libvorbis opusfile lz4 xxhash tinyxml2 opencv clang libarchive`.
+libwebp, vorbisfile, opusfile, tinyxml2 and OpenCV 4 or 5 (core/imgproc). On
+Arch: `pacman -S oniguruma freetype2 libpng libjpeg-turbo libwebp libvorbis
+opusfile tinyxml2 opencv clang libarchive`.
 
 | Variable | Meaning |
 |---|---|

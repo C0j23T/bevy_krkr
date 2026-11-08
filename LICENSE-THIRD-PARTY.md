@@ -32,7 +32,7 @@ like bevy_krkr. The unmodified Kirikiroid2 code keeps its license below.
 
 The engine core is linked with system libraries that are not part of this
 repository: Oniguruma, FreeType, zlib, libpng, libjpeg-turbo, libwebp,
-libvorbis/libogg, opusfile/libopus, LZ4, xxHash, TinyXML-2 and OpenCV.
+libvorbis/libogg, opusfile/libopus, TinyXML-2 and OpenCV.
 A binary distribution must comply with their licenses as well.
 
 ### Generated bindings

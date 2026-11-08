@@ -17,4 +17,7 @@
 #![allow(dead_code)]
 #![allow(clippy::all)]
 
+#[used]
+static KRKR_SHIM_LINKED: extern "C" fn() = krkr_shim::krkr_shim_present;
+
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
