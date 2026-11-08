@@ -47,6 +47,46 @@ const EXTRA_SOURCES: &[&str] = &[
     "../plugins/InternalPlugins.cpp",
 ];
 
+#[derive(Debug, Clone, Copy)]
+pub struct Plugin {
+    pub source: &'static str,
+    pub module: &'static str,
+    pub internal: bool,
+    pub feature: Option<&'static str>,
+}
+
+pub const PLUGINS: &[Plugin] = &[
+    Plugin { source: "src/plugins/addFont.cpp", module: "addFont.dll", internal: false, feature: None },
+    Plugin { source: "src/plugins/csvParser.cpp", module: "csvParser.dll", internal: false, feature: None },
+    Plugin { source: "src/plugins/dirlist.cpp", module: "dirlist.dll", internal: false, feature: None },
+    Plugin { source: "src/plugins/fftgraph.cpp", module: "fftgraph.dll", internal: false, feature: None },
+    Plugin { source: "src/plugins/getabout.cpp", module: "getabout.dll", internal: false, feature: None },
+    Plugin { source: "src/plugins/getSample.cpp", module: "getSample.dll", internal: false, feature: None },
+    Plugin { source: "src/plugins/saveStruct.cpp", module: "saveStruct.dll", internal: false, feature: None },
+    Plugin { source: "src/plugins/varfile.cpp", module: "varfile.dll", internal: false, feature: None },
+    Plugin { source: "src/plugins/win32dialog.cpp", module: "win32dialog.dll", internal: false, feature: None },
+    Plugin { source: "src/plugins/wutcwf.cpp", module: "wutcwf.dll", internal: false, feature: None },
+    Plugin {
+        source: "src/core/environ/bevy/plugins/ScriptsExt.cpp",
+        module: "bevy_scripts.dll",
+        internal: true,
+        feature: None,
+    },
+    Plugin {
+        source: "src/plugins/xp3filter.cpp",
+        module: "xp3filter.dll",
+        internal: true,
+        feature: Some("plugin-xp3filter"),
+    },
+];
+
+/// Whether `plugin` is part of the build, given the features `krkr_sys` was
+/// built with.
+pub fn plugin_enabled(plugin: &Plugin, feature_on: impl Fn(&str) -> bool) -> bool {
+    plugin.feature.map_or(true, feature_on)
+}
+
+
 /// Include directories under src/core, in search order. `environ/bevy/compat`
 /// comes first: it replaces headers of cocos2d-x and of files missing from the
 /// open-source release.
@@ -80,7 +120,6 @@ pub const DEFINES: &[&str] = &[
     "KRKR_BEVY_PORT",
 ];
 
-/// Compiler flags required by the engine core's code, at any optimisation level.
 pub const FLAGS: &[&str] = &[
     // TJS2 represents empty strings as NULL tTJSVariantString pointers and
     // calls member functions on them, which test `if(!this)` (e.g.
@@ -97,6 +136,7 @@ pub const PKG_CONFIG: &[&str] = &[
     "freetype2",
     "oniguruma",
     "zlib",
+    "libarchive",
     "libpng16",
     "libjpeg",
     "libturbojpeg",

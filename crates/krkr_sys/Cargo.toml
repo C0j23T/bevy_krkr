@@ -17,8 +17,5 @@ pkg-config   = { version = "0.3", optional = true }
 
 [features]
 default  = []
-# Build the Kirikiroid2 engine core from a checkout ($KIRIKIROID2_SRC or
-# ./Kirikiroid2, bevy-port branch) and bind it. Needs libclang (bindgen), a C++17
-# compiler and the system libraries listed in codegen/src/port.rs.
-# Without it, or without a checkout, krkr_sys builds stub bindings.
 real_ffi = ["dep:bindgen", "dep:cc", "dep:pkg-config"]
+plugin-xp3filter = []
