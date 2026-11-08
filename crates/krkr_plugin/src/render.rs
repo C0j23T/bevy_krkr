@@ -75,6 +75,11 @@ fn setup_kirikiri_camera(
 }
 
 /// Copies the composited screen into the screen texture when it changed.
+///
+/// Two things can be the screen: a script-created `BitmapLayerTreeOwner`
+/// (`host.tjs`, `krkrBevy.screen`) and a Kirikiri `Window`, which is what a
+/// game's own UI is built on. A Window wins: it is a real game screen, laid
+/// over everything the host script made.
 pub(crate) fn sync_screen(
     mut commands: Commands,
     kirikiri: Option<NonSend<KrkrScreen>>,
@@ -85,9 +90,28 @@ pub(crate) fn sync_screen(
     let layer = kirikiri.as_ref().map_or(std::ptr::null_mut(), |s| s.as_ptr());
     if layer.is_null() {
         if screen.image.is_some() {
-            sprites.iter().for_each(|e| commands.entity(e).despawn());
+            sprites
+                .iter()
+                .for_each(|e| {
+                    commands.entity(e).insert(Visibility::Hidden);
+                });
             *screen = KirikiriScreenImage::default();
         }
+        return;
+    }
+
+    // A Window (KAG's KAGWindow, a game's own menus) draws the whole screen.
+    if let Some((pixels, width, height, revision)) = window_snapshot() {
+        upload(
+            &mut commands,
+            &mut screen,
+            &mut images,
+            &sprites,
+            pixels,
+            width,
+            height,
+            revision,
+        );
         return;
     }
 
@@ -111,14 +135,57 @@ pub(crate) fn sync_screen(
         }
         std::slice::from_raw_parts(ptr, width as usize * height as usize * 4)
     };
+    upload(
+        &mut commands,
+        &mut screen,
+        &mut images,
+        &sprites,
+        pixels,
+        width,
+        height,
+        revision,
+    );
+}
 
+/// Pixels of the front-most visible Kirikiri `Window`, if there is one.
+fn window_snapshot() -> Option<(&'static [u8], u32, u32, u64)> {
+    let mut width = 0u32;
+    let mut height = 0u32;
+    let mut revision = 0u64;
+    // SAFETY: called while an instance runs (the caller checked); the returned
+    // buffer is readable until the next call into the engine, and is copied
+    // before anything else is called.
+    let ptr = unsafe { sys::krkr_window_snapshot(&mut width, &mut height, &mut revision) };
+    if ptr.is_null() || width == 0 || height == 0 {
+        return None;
+    }
+    let len = width as usize * height as usize * 4;
+    // SAFETY: the C ABI returns exactly width*height*4 readable bytes.
+    let pixels = unsafe { std::slice::from_raw_parts(ptr, len) };
+    Some((pixels, width, height, revision))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn upload(
+    commands: &mut Commands,
+    screen: &mut KirikiriScreenImage,
+    images: &mut Assets<Image>,
+    sprites: &Query<Entity, With<KirikiriScreen>>,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    revision: u64,
+) {
+    if screen.revision == Some(revision) {
+        return;
+    }
     let size = UVec2::new(width, height);
     let updated = match screen.image.clone().filter(|_| screen.size == size) {
         Some(handle) => match images.get_mut(&handle) {
             Some(mut image) => {
                 match image.data.as_mut() {
-                    Some(data) => data.copy_from_slice(pixels),
-                    None => image.data = Some(pixels.to_vec()),
+                    Some(data) if data.len() == pixels.len() => data.copy_from_slice(pixels),
+                    _ => image.data = Some(pixels.to_vec()),
                 }
                 true
             }
@@ -139,13 +206,18 @@ pub(crate) fn sync_screen(
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         );
         let handle = images.add(image);
-        sprites.iter().for_each(|e| commands.entity(e).despawn());
-        commands.spawn((
-            Sprite::from_image(handle.clone()),
-            RenderLayers::layer(KIRIKIRI_RENDER_LAYER),
-            KirikiriScreen,
-            Name::new("Kirikiri screen"),
-        ));
+        if let Some(entity) = sprites.iter().next() {
+            commands
+                .entity(entity)
+                .insert((Sprite::from_image(handle.clone()), Visibility::Visible));
+        } else {
+            commands.spawn((
+                Sprite::from_image(handle.clone()),
+                RenderLayers::layer(KIRIKIRI_RENDER_LAYER),
+                KirikiriScreen,
+                Name::new("Kirikiri screen"),
+            ));
+        }
         screen.image = Some(handle);
         screen.size = size;
     }

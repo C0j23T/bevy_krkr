@@ -33,6 +33,7 @@ pub mod prelude {
     pub use krkr_audio::{BgmChannel, KrkrAudioSettings, SeChannel, VoiceChannel};
     pub use krkr_kag::events::*;
     pub use krkr_kag::{CursorState, KagCursor, KirikiriCamera};
+    pub use krkr_plugin::input::{shift_state, virtual_key, ScreenPlacement};
     pub use krkr_plugin::render::{KirikiriScreen, KirikiriScreenImage, KIRIKIRI_RENDER_LAYER};
     pub use krkr_plugin::{BevyKrkrPlugin, KirikiriEnterEvent, KirikiriExitEvent, KirikiriState};
 }
