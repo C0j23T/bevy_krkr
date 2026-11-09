@@ -80,10 +80,10 @@ pub const PLUGINS: &[Plugin] = &[
     },
 ];
 
-/// Whether `plugin` is part of the build, given the features `krkr_sys` was
-/// built with.
-pub fn plugin_enabled(plugin: &Plugin, feature_on: impl Fn(&str) -> bool) -> bool {
-    plugin.feature.is_none_or(feature_on)
+/// Whether an optional part of the build (`Some(feature)`) is in it, given the
+/// features `krkr_sys` was built with.
+pub fn enabled(feature: Option<&str>, feature_on: impl Fn(&str) -> bool) -> bool {
+    feature.is_none_or(feature_on)
 }
 
 
@@ -120,6 +120,9 @@ pub const DEFINES: &[&str] = &[
     "KRKR_BEVY_PORT",
 ];
 
+/// Defines a feature switches on: `(define, feature)`.
+pub const FEATURE_DEFINES: &[(&str, &str)] = &[("KRKR_BEVY_OPUS", "opus")];
+
 pub const FLAGS: &[&str] = &[
     // TJS2 represents empty strings as NULL tTJSVariantString pointers and
     // calls member functions on them, which test `if(!this)` (e.g.
@@ -131,15 +134,16 @@ pub const FLAGS: &[&str] = &[
     "-fno-strict-aliasing",
 ];
 
-/// System libraries, as pkg-config package names. All are linked.
-pub const PKG_CONFIG: &[&str] = &[
-    "freetype2",
-    "oniguruma",
-    "zlib",
-    "libpng16",
-    "libturbojpeg",
-    "vorbisfile",
-    "opusfile",
+/// System libraries, as pkg-config package names, and the feature that needs
+/// them (`None`: always). Every enabled one is linked.
+pub const PKG_CONFIG: &[(&str, Option<&str>)] = &[
+    ("freetype2", None),
+    ("oniguruma", None),
+    ("zlib", None),
+    ("libpng16", None),
+    ("libturbojpeg", None),
+    ("vorbisfile", None),
+    ("opusfile", Some("opus")),
 ];
 
 /// Sources of the engine core, split by language.

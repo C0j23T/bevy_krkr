@@ -42,9 +42,10 @@ git submodule update --init
 ```
 
 System requirements (found through pkg-config): a C++17 compiler, libclang
-(bindgen), oniguruma, freetype2, zlib, libpng, libjpeg-turbo, vorbisfile and
-opusfile. On Arch:
-`pacman -S oniguruma freetype2 libpng libjpeg-turbo libvorbis opusfile clang`.
+(bindgen), oniguruma, freetype2, zlib, libpng, libjpeg-turbo and vorbisfile;
+opusfile only with the `opus` feature. On Arch:
+`pacman -S oniguruma freetype2 libpng libjpeg-turbo libvorbis clang` (add
+`opusfile` to play `.opus` audio).
 
 | Variable | Meaning |
 |---|---|
@@ -71,6 +72,7 @@ creating layers. `BevyKrkrPlugin` does this automatically.
 ```sh
 cargo build                          # real bindings + Kirikiroid2 core (feature real_ffi, default)
 cargo build --no-default-features    # stub bindings, no Kirikiroid2 needed
+cargo build --features opus          # also decode .opus audio (libopusfile, ~4 MB at runtime)
 ```
 
 The first build compiles the engine core (about 15 s on 16 cores); it is

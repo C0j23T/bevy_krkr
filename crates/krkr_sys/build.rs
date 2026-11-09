@@ -101,8 +101,10 @@ mod real {
         // directives yet: they must come after the static libraries).
         let mut includes = port::include_dirs(src);
         includes.push(out_dir.to_owned());
-        for pkg in port::PKG_CONFIG {
-            includes.extend(probe(pkg, false).include_paths);
+        for (pkg, feature) in port::PKG_CONFIG {
+            if port::enabled(*feature, feature_on) {
+                includes.extend(probe(pkg, false).include_paths);
+            }
         }
 
         let sources = port::collect_sources(src).expect("list Kirikiroid2 sources");
@@ -129,6 +131,11 @@ mod real {
             for d in port::DEFINES {
                 b.define(d, None);
             }
+            for (d, feature) in port::FEATURE_DEFINES {
+                if feature_on(feature) {
+                    b.define(d, None);
+                }
+            }
         };
         let mut cpp = cc::Build::new();
         configure(&mut cpp);
@@ -141,8 +148,10 @@ mod real {
         c.compile("krkr_core_c");
 
         // 4. link the system libraries.
-        for pkg in port::PKG_CONFIG {
-            probe(pkg, true);
+        for (pkg, feature) in port::PKG_CONFIG {
+            if port::enabled(*feature, feature_on) {
+                probe(pkg, true);
+            }
         }
 
     }
@@ -150,7 +159,7 @@ mod real {
     fn write_plugins(src: &Path, out_dir: &Path) -> Vec<PathBuf> {
         let enabled: Vec<&port::Plugin> = port::PLUGINS
             .iter()
-            .filter(|plugin| port::plugin_enabled(plugin, feature_on))
+            .filter(|plugin| port::enabled(plugin.feature, feature_on))
             .collect();
 
         let mut header = String::from(
