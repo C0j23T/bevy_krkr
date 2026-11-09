@@ -5,19 +5,19 @@ use bevy::{
     camera::visibility::RenderLayers,
     prelude::*,
     render::{
+        Render, RenderApp, RenderSystems,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::RenderAssets,
         render_resource::{Extent3d, TextureDimension, TextureFormat},
         renderer::{RenderDevice, RenderQueue},
         texture::GpuImage,
-        Render, RenderApp, RenderSystems,
     },
     sprite::{Anchor, SpriteAlphaMode},
 };
 use krkr_sys as sys;
 
-use crate::host::KrkrScreen;
 use crate::KirikiriCamera;
+use crate::host::KrkrScreen;
 
 pub const KIRIKIRI_RENDER_LAYER: usize = 27;
 
@@ -117,11 +117,12 @@ fn import_texture(
     mut previous: Local<Option<AssetId<Image>>>,
 ) {
     let current = scene.0.as_ref().map(|(handle, _)| handle.id());
-    if *previous != current {
-        if let Some(id) = previous.take() {
-            images.remove(id);
-        }
+    if *previous != current
+        && let Some(id) = previous.take()
+    {
+        images.remove(id);
     }
+
     if let Some((handle, image)) = &scene.0 {
         images.insert(handle.id(), image.clone());
     }

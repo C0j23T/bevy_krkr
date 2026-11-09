@@ -115,14 +115,13 @@ fn fill<T: Copy>(
     mix: &Arc<Mutex<Vec<f32>>>,
     convert: impl Fn(f32) -> T,
 ) {
-    let frames = if channels == 0 {
-        0
+    let frames = if let Some(frames) = data.len().checked_div(channels)
+        && frames != 0
+    {
+        frames
     } else {
-        data.len() / channels
-    };
-    if frames == 0 {
         return;
-    }
+    };
     let Ok(mut mixed) = mix.lock() else { return };
     mixed.resize(frames * CHANNELS, 0.0);
     unsafe { sys::krkr_audio_mix(mixed.as_mut_ptr(), frames as u32, rate as f64) };

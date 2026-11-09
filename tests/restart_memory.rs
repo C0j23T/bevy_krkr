@@ -39,7 +39,7 @@ struct MallInfo2 {
     keepcost: usize,
 }
 
-extern "C" {
+unsafe extern "C" {
     fn mallinfo2() -> MallInfo2;
 }
 

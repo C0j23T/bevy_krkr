@@ -17,7 +17,7 @@ thiserror = "2"
 [package]
 name    = "bevy_krkr"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "GPL-2.0-or-later"
 description = "Bevy integration layer for Kirikiri2 / KAG3 (via Kirikiroid2 FFI)"
 repository  = "https://github.com/your-org/bevy_krkr"

@@ -25,7 +25,21 @@ pub fn set_render_sink(sink: RenderSink) {
     *SINK.write().unwrap() = Some(sink);
 }
 
-#[no_mangle]
+/// `int krkr_render_dispatch(TVPBevyRenderCommand*)`: hands one command to the
+/// registered [`RenderSink`]. Returns `0` on success and `-1` when the command
+/// is rejected (the reason goes to stderr) or the sink panicked.
+///
+/// The pointers inside `command` only have to live until this returns; the sink
+/// copies whatever it needs.
+///
+/// # Safety
+/// - `command` must point to an initialized, properly aligned `RenderCommand`,
+///   laid out exactly like `TVPBevyRenderCommand` in `BevyRender.h`. Null is
+///   tolerated and reported as a failure.
+/// - If `method` is non-null it must be a NUL-terminated C string, and if
+///   `data` is non-null it must cover the bitmap described by `rect`, `format`
+///   and `pitch` (`pitch` is signed and may be negative for bottom-up rows).
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_render_dispatch(command: *mut RenderCommand) -> i32 {
     let result = std::panic::catch_unwind(|| {
         let command = unsafe { command.as_mut() }.ok_or("null render command")?;

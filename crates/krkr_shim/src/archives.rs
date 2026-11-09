@@ -30,6 +30,7 @@ impl Entry {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Reader<R: Read + Seek> {
     SevenZ(ArchiveReader<R>),
     Zip(ZipArchive<R>),

@@ -1,7 +1,7 @@
 [package]
 name        = "krkr_sys"
 version     = "0.1.0"
-edition     = "2021"
+edition     = "2024"
 license     = "GPL-2.0-or-later"
 description = "Raw FFI bindings for Kirikiroid2, generated at build time"
 links       = "kirikiroid2"

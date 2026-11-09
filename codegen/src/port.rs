@@ -83,7 +83,7 @@ pub const PLUGINS: &[Plugin] = &[
 /// Whether `plugin` is part of the build, given the features `krkr_sys` was
 /// built with.
 pub fn plugin_enabled(plugin: &Plugin, feature_on: impl Fn(&str) -> bool) -> bool {
-    plugin.feature.map_or(true, feature_on)
+    plugin.feature.is_none_or(feature_on)
 }
 
 

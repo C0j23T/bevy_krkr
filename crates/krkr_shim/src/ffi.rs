@@ -1,3 +1,5 @@
+#![allow(unsafe_op_in_unsafe_fn)]
+
 //! The C ABI of this crate
 //!
 //! # Rules for this layer
@@ -12,7 +14,7 @@
 
 use std::ffi::{c_char, c_void};
 use std::io::{self, Read, Seek, SeekFrom};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::archives::{Archive, Kind};
 use crate::xml;
@@ -69,7 +71,7 @@ const FAILED: usize = usize::MAX;
 ///
 /// # Safety
 /// `input_ptr` must point to `length` readable bytes (or be null if `length` is 0).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn XXH32(input_ptr: *const c_void, length: usize, seed: u32) -> u32 {
     xxhash_rust::xxh32::xxh32(input(input_ptr, length), seed)
 }
@@ -78,7 +80,7 @@ pub unsafe extern "C" fn XXH32(input_ptr: *const c_void, length: usize, seed: u3
 ///
 /// # Safety
 /// `input_ptr` must point to `length` readable bytes (or be null if `length` is 0).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn XXH3_64bits_withSeed(
     input_ptr: *const c_void,
     length: usize,
@@ -99,7 +101,7 @@ pub unsafe extern "C" fn XXH3_64bits_withSeed(
 /// # Safety
 /// `src` must hold `src_size` bytes, `dst` must hold `dst_capacity` bytes; the
 /// buffers must not overlap.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LZ4_compress_default(
     src: *const c_void,
     dst: *mut c_void,
@@ -133,7 +135,7 @@ pub unsafe extern "C" fn LZ4_compress_default(
 /// # Safety
 /// `src` must hold `src_len` bytes, `dst` must hold `dst_len` bytes; the buffers
 /// must not overlap.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_lz4_decompress(
     src: *const c_void,
     src_len: usize,
@@ -187,7 +189,11 @@ impl Stream {
             userdata: stream.userdata,
             read: stream.read?,
             seek: stream.seek?,
-            size: if stream.size > 0 { stream.size as u64 } else { 0 },
+            size: if stream.size > 0 {
+                stream.size as u64
+            } else {
+                0
+            },
         })
     }
 }
@@ -256,7 +262,7 @@ fn kind_from_c(kind: i32) -> Option<Kind> {
 /// `stream` must be valid for the call and stay valid (its `userdata` and
 /// callbacks) until [`krkr_archive_close`]; `entries` must be readable and its
 /// callback must obey [`KrkrArchiveEntries`]'s rules.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_archive_open(
     stream: *const KrkrStream,
     kind: i32,
@@ -266,15 +272,23 @@ pub unsafe extern "C" fn krkr_archive_open(
         let (Some(stream), Some(kind)) = (Stream::from_c(stream), kind_from_c(kind)) else {
             return std::ptr::null_mut();
         };
-        let Some(archive) = Archive::open(kind, stream) else { return std::ptr::null_mut() };
-        if let Some(entries) = entries.as_ref() {
-            if let Some(entry) = entries.entry {
-                for (index, listed) in archive.entries().iter().enumerate() {
-                    let name = c_string(listed.name());
-                    entry(entries.userdata, index, name.as_ptr(), listed.size() as usize);
-                }
+        let Some(archive) = Archive::open(kind, stream) else {
+            return std::ptr::null_mut();
+        };
+        if let Some(entries) = entries.as_ref()
+            && let Some(entry) = entries.entry
+        {
+            for (index, listed) in archive.entries().iter().enumerate() {
+                let name = c_string(listed.name());
+                entry(
+                    entries.userdata,
+                    index,
+                    name.as_ptr(),
+                    listed.size() as usize,
+                );
             }
         }
+
         Box::into_raw(Box::new(archive))
     })
 }
@@ -283,7 +297,7 @@ pub unsafe extern "C" fn krkr_archive_open(
 ///
 /// # Safety
 /// `archive` must come from [`krkr_archive_open`] and not be used afterwards.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_archive_close(archive: *mut KrkrArchive) {
     if archive.is_null() {
         return;
@@ -296,7 +310,7 @@ pub unsafe extern "C" fn krkr_archive_close(archive: *mut KrkrArchive) {
 ///
 /// # Safety
 /// `archive` must be live; `buf` must hold `len` writable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_archive_read(
     archive: *mut KrkrArchive,
     index: usize,
@@ -304,7 +318,9 @@ pub unsafe extern "C" fn krkr_archive_read(
     len: usize,
 ) -> usize {
     guard(FAILED, || {
-        let Some(archive) = archive.as_ref() else { return FAILED };
+        let Some(archive) = archive.as_ref() else {
+            return FAILED;
+        };
         let out = output(buf, len);
         match archive.read(index, out) {
             Some(written) => written,
@@ -343,7 +359,7 @@ fn webp_decode(bytes: &[u8]) -> Option<(u32, u32, bool, Vec<u8>)> {
 /// # Safety
 /// `src` must hold `src_len` bytes (or be null if `src_len` is 0); `info` must
 /// be writable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_webp_info(
     src: *const c_void,
     src_len: usize,
@@ -355,7 +371,11 @@ pub unsafe extern "C" fn krkr_webp_info(
             return -1;
         };
         let (width, height) = decoder.dimensions();
-        *info = KrkrWebpInfo { width, height, has_alpha: decoder.has_alpha() as i32 };
+        *info = KrkrWebpInfo {
+            width,
+            height,
+            has_alpha: decoder.has_alpha() as i32,
+        };
         0
     })
 }
@@ -367,7 +387,7 @@ pub unsafe extern "C" fn krkr_webp_info(
 /// # Safety
 /// `src` must hold `src_len` bytes (or be null if `src_len` is 0); `dst` must
 /// hold `dst_len` writable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_webp_decode(
     src: *const c_void,
     src_len: usize,
@@ -379,8 +399,12 @@ pub unsafe extern "C" fn krkr_webp_decode(
         let Some((width, height, _, pixels)) = webp_decode(input(src, src_len)) else {
             return FAILED;
         };
-        let Some(count) = (width as usize).checked_mul(height as usize) else { return FAILED };
-        let Some(needed) = count.checked_mul(4) else { return FAILED };
+        let Some(count) = (width as usize).checked_mul(height as usize) else {
+            return FAILED;
+        };
+        let Some(needed) = count.checked_mul(4) else {
+            return FAILED;
+        };
         if count == 0 || dst.len() < needed {
             return FAILED;
         }
@@ -389,7 +413,7 @@ pub unsafe extern "C" fn krkr_webp_decode(
             // `image-webp` drops the alpha byte when the file has none.
             4 => dst.copy_from_slice(&pixels),
             3 => {
-                for (pixel, dst) in pixels.chunks_exact(3).zip(dst.chunks_exact_mut(4)) {
+                for (pixel, dst) in pixels.as_chunks::<3>().0.iter().zip(dst.as_chunks_mut::<4>().0) {
                     dst[..3].copy_from_slice(pixel);
                     dst[3] = 0xFF;
                 }
@@ -485,15 +509,21 @@ fn c_string(text: &str) -> std::ffi::CString {
 /// # Safety
 /// `path_ptr` must be NUL-terminated; `visitor` must be readable and its
 /// callbacks must obey [`KrkrPreferenceVisitor`]'s rules.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_preference_read(
     path_ptr: *const c_char,
     visitor: *const KrkrPreferenceVisitor,
 ) -> i32 {
     guard(-1, || {
-        let (Some(path), Some(visitor)) = (path(path_ptr), visitor.as_ref()) else { return -1 };
-        let Ok(xml) = std::fs::read(path) else { return -1 };
-        let Some(preference) = xml::Preference::parse(&xml) else { return -1 };
+        let (Some(path), Some(visitor)) = (path(path_ptr), visitor.as_ref()) else {
+            return -1;
+        };
+        let Ok(xml) = std::fs::read(path) else {
+            return -1;
+        };
+        let Some(preference) = xml::Preference::parse(&xml) else {
+            return -1;
+        };
 
         if let Some(entry) = visitor.entry {
             let settings = preference
@@ -526,14 +556,16 @@ pub unsafe extern "C" fn krkr_preference_read(
 /// # Safety
 /// `path_ptr` must be NUL-terminated; `records` must hold `count` readable
 /// records whose strings are NUL-terminated (or be null when `count` is 0).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_preference_write(
     path_ptr: *const c_char,
     records: *const KrkrPreferenceRecord,
     count: usize,
 ) -> i32 {
     guard(-1, || {
-        let Some(path) = path(path_ptr) else { return -1 };
+        let Some(path) = path(path_ptr) else {
+            return -1;
+        };
         let records: &[KrkrPreferenceRecord] = if records.is_null() || count == 0 {
             &[]
         } else {
@@ -568,16 +600,22 @@ pub unsafe extern "C" fn krkr_preference_write(
 /// # Safety
 /// `data` must hold `len` bytes (or be null if `len` is 0); `visitor` must be
 /// readable and its callback must obey [`KrkrTextVisitor`]'s rules.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_locale_read(
     data: *const c_void,
     len: usize,
     visitor: *const KrkrTextVisitor,
 ) -> usize {
     guard(0, || {
-        let Some(visitor) = visitor.as_ref() else { return 0 };
-        let Some(text_callback) = visitor.text else { return 0 };
-        let Some(locale) = xml::Locale::parse(input(data, len)) else { return 0 };
+        let Some(visitor) = visitor.as_ref() else {
+            return 0;
+        };
+        let Some(text_callback) = visitor.text else {
+            return 0;
+        };
+        let Some(locale) = xml::Locale::parse(input(data, len)) else {
+            return 0;
+        };
         for (id, text) in &locale.texts {
             let (id, text) = (c_string(id), c_string(text));
             text_callback(visitor.userdata, id.as_ptr(), text.as_ptr());
@@ -606,10 +644,18 @@ mod tests {
     #[test]
     fn xxhash_matches_upstream() {
         for &(data, xxh32, xxh3) in HASHES {
-            let ptr = if data.is_empty() { std::ptr::null() } else { data.as_ptr().cast() };
+            let ptr = if data.is_empty() {
+                std::ptr::null()
+            } else {
+                data.as_ptr().cast()
+            };
             unsafe {
                 assert_eq!(XXH32(ptr, data.len(), 0), xxh32, "XXH32({data:?})");
-                assert_eq!(XXH3_64bits_withSeed(ptr, data.len(), 0), xxh3, "XXH3({data:?})");
+                assert_eq!(
+                    XXH3_64bits_withSeed(ptr, data.len(), 0),
+                    xxh3,
+                    "XXH3({data:?})"
+                );
             }
         }
     }
@@ -664,8 +710,9 @@ mod tests {
             assert_eq!(roundtrip(&data), data, "len {len}");
         }
         // Incompressible data still has to survive.
-        let noise: Vec<u8> =
-            (0..8192u32).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8).collect();
+        let noise: Vec<u8> = (0..8192u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+            .collect();
         assert_eq!(roundtrip(&noise), noise);
         // A fully transparent band compresses to almost nothing.
         let zeros = vec![0u8; 16384];
@@ -701,8 +748,9 @@ mod tests {
     #[test]
     fn null_handles_are_rejected() {
         unsafe {
-            assert!(krkr_archive_open(std::ptr::null(), KRKR_ARCHIVE_7Z, std::ptr::null())
-                .is_null());
+            assert!(
+                krkr_archive_open(std::ptr::null(), KRKR_ARCHIVE_7Z, std::ptr::null()).is_null()
+            );
             assert_eq!(
                 krkr_archive_read(std::ptr::null_mut(), 0, std::ptr::null_mut(), 0),
                 usize::MAX

@@ -251,6 +251,7 @@ pub fn forward_keys(state: Res<KirikiriState>, keys: Option<Res<ButtonInput<KeyC
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn forward_pointer(
     state: Res<KirikiriState>,
     window: Query<&Window, With<PrimaryWindow>>,

@@ -1,7 +1,7 @@
 [package]
 name        = "krkr_codegen"
 version     = "0.1.0"
-edition     = "2021"
+edition     = "2024"
 description = "Binding generator for bevy_krkr: expands the C ABI table into a C header, a C++ shim over Kirikiroid2 and Rust stubs"
 
 [[bin]]
