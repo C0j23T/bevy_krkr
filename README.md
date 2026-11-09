@@ -143,8 +143,7 @@ App::new()
   advances on `KagAdvance` (left click / Enter / Space by default) and
   `KagJumpRequest`.
 - Tags without a built-in mapping arrive as `UnhandledTagEvent`.
-- Audio storage names resolve through `KrkrAudioSettings`
-  (`storage_root` + name + `default_extension`).
+- Audio storage names resolve through Kirikiri storage.
 
 ## Example
 
@@ -155,7 +154,7 @@ cargo run --example snbk                     # snbk/data.xp3
 cargo run --example snbk -- snbk/data.xp3 --game-startup
 ```
 
-`assets/game/first.ks` starts `bgm.wav` (looping, through `bevy_kira_audio`)
+`assets/game/first.ks` starts `bgm.wav` (looping, through the native sound buffers)
 and shows "Hello from Kirikiri on Bevy." in the message window. Click (or
 Enter / Space) shows the second line; a second click ends the scenario, stops
 the BGM and closes the window.

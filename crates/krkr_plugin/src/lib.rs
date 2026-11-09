@@ -17,7 +17,8 @@
 //! Kirikiri output is drawn by the camera marked with [`KirikiriCamera`]; see
 //! [`render`]. Bevy's input is forwarded to the game's own `Window` (keys and
 //! the pointer, touches as the left button) by [`input`], and the audio the
-//! engine itself decodes is mixed and written to the sound device by [`audio`].
+//! engine decodes -- a game's own `WaveSoundBuffer`s and the KAG tags the host
+//! parses -- is mixed and written to the sound device by [`audio`].
 //! Engine log lines go to Bevy's log (`bevy_krkr::engine`).
 
 pub mod audio;
@@ -35,7 +36,6 @@ use krkr_kag::{KagCursor, KagParser, KagScriptLoadedEvent};
 use krkr_script::{last_error, Tjs2Engine};
 use krkr_sys as sys;
 
-pub use krkr_audio::{BgmChannel, KrkrAudioPlugin, KrkrAudioSettings, SeChannel, VoiceChannel};
 pub use krkr_kag::{KagPlugin, KirikiriCamera};
 pub use krkr_script::Tjs2Plugin;
 pub use host::KrkrScreen;
@@ -150,7 +150,7 @@ impl Plugin for BevyKrkrPlugin {
                 start_storage: self.start_storage.clone(),
                 screen_size: self.screen_size,
             })
-            .add_plugins((Tjs2Plugin, KagPlugin, KrkrAudioPlugin, KrkrRenderPlugin))
+            .add_plugins((Tjs2Plugin, KagPlugin, KrkrRenderPlugin))
             .add_systems(PreUpdate, handle_enter)
             // After Bevy has collected this frame's input: what a game's own
             // UI sees must not lag a frame behind.
@@ -159,6 +159,10 @@ impl Plugin for BevyKrkrPlugin {
                 (input::forward_keys, input::forward_pointer)
                     .chain()
                     .after(bevy::input::InputSystems),
+            )
+            .add_systems(
+                Update,
+                (audio::kag_bgm, audio::kag_se, audio::kag_voice).after(krkr_kag::KagSet),
             )
             .add_systems(PostUpdate, poll_engine_exit)
             .add_systems(Last, handle_exit);
@@ -248,6 +252,7 @@ fn start(world: &mut World, path: &Path, config: &KirikiriConfig) -> Result<(), 
 
     let engine = Tjs2Engine::new().map_err(|e| e.to_string())?;
     let screen = host::start(&engine, size)?;
+    audio::open_kag_audio(&engine)?;
     let mut parser = KagParser::new(&engine).map_err(|e| e.to_string())?;
     parser.load(&config.start_storage).map_err(|e| e.to_string())?;
     world.insert_non_send(engine);
@@ -275,6 +280,7 @@ pub fn teardown(world: &mut World) {
         // with `System.exit` (which shuts the engine down itself) has already
         // released them.
         if engine.is_running() {
+            audio::close_kag_audio(engine);
             host::stop(engine);
         }
     }

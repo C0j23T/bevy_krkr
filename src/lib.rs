@@ -21,7 +21,7 @@
 //! }
 //! ```
 
-pub use krkr_audio as audio;
+pub use krkr_plugin::audio;
 pub use krkr_kag as kag;
 pub use krkr_plugin as plugin;
 pub use krkr_script as script;
@@ -30,7 +30,6 @@ pub use krkr_sys as sys;
 pub use krkr_plugin::BevyKrkrPlugin;
 
 pub mod prelude {
-    pub use krkr_audio::{BgmChannel, KrkrAudioSettings, SeChannel, VoiceChannel};
     pub use krkr_kag::events::*;
     pub use krkr_kag::{CursorState, KagCursor, KirikiriCamera};
     pub use krkr_plugin::input::{shift_state, virtual_key, ScreenPlacement};

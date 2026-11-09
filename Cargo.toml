@@ -5,7 +5,6 @@ members = [
     "crates/krkr_shim",
     "crates/krkr_script",
     "crates/krkr_kag",
-    "crates/krkr_audio",
     "crates/krkr_plugin",
     "codegen",
 ]
@@ -13,7 +12,6 @@ resolver = "2"
 
 [workspace.dependencies]
 bevy = { version = "0.20", default-features = false, features = ["2d", "jpeg"] }
-bevy_kira_audio = { version = "0.27", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -38,12 +36,10 @@ name = "bevy_krkr"
 [dependencies]
 krkr_plugin = { path = "crates/krkr_plugin" }
 krkr_kag    = { path = "crates/krkr_kag" }
-krkr_audio  = { path = "crates/krkr_audio" }
 krkr_script = { path = "crates/krkr_script" }
 krkr_sys    = { path = "crates/krkr_sys" }
 
 bevy = { workspace = true }
-bevy_kira_audio = { workspace = true, features = ["ogg", "mp3", "wav", "flac"] }
 
 [features]
 default  = ["real_ffi", "xp3filter"]

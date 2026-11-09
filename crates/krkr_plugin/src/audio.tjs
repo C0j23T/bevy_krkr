@@ -1,0 +1,156 @@
+// bevy_krkr host audio: the KAG audio tags on the engine's own sound buffers.
+//
+// This build of Kirikiroid2 has no mixer of its own: `WaveSoundBuffer` decodes
+// and hands PCM to the port, the port mixes it
+// (Kirikiroid2/src/core/environ/bevy/BevySound.cpp) and the host writes that one
+// stream to the device (krkr_plugin/src/audio.rs). Nothing is decoded on the
+// Rust side.
+//
+// A game that runs its own KAG plays through `WaveSoundBuffer` from its own
+// scripts and needs none of this. The tags the *host* parses only produce
+// messages (krkr_kag), so the port plays them here, on the same class -- the
+// engine's decoders, the engine's mix.
+//
+// Storage names resolve in the game's storage (`data.xp3` included).
+//
+// krkr_tjs_call passes every argument as text, so numbers are converted where
+// they are used. Volume arrives as 0.0-1.0 (krkr_kag scales KAG's 0-100);
+// WaveSoundBuffer's own volume is 0-100000.
+
+class KrkrBevyAudio
+{
+    var bgm;                // the BGM buffer, void when nothing is loaded
+    var bgmVolume = 1.0;    // [bgmopt]; applies to later [playbgm]s as well
+    var se = [];            // KAG SE buffer index -> buffer
+    var voice;
+
+    // 0.0-1.0 -> WaveSoundBuffer's full scale.
+    function amplitude(a) { return a * 100000; }
+
+    // KAG often omits the extension and the engine picks the decoder by it, so
+    // try the formats the port can mix. The list is fixed: these are the
+    // decoders this build registers (RIFF-WAV, Vorbis, Opus).
+    function resolveStorage(storage)
+    {
+        var candidates = ["", ".ogg", ".wav", ".opus"];
+        for (var i = 0; i < candidates.count; i++)
+            if (Storages.isExistentStorage(storage + candidates[i]))
+                return storage + candidates[i];
+        throw new Exception("no such audio storage: " + storage);
+    }
+
+    // [playbgm] / [fadeinbgm]
+    function playBgm(storage, loop, volume, fadeMs)
+    {
+        volume = volume * 1;
+        fadeMs = fadeMs * 1;
+        stopBgm(0);
+        var buffer = new WaveSoundBuffer(%[]);
+        // Throws for a missing storage; `bgm` stays void in that case.
+        buffer.open(resolveStorage(storage));
+        buffer.looping = loop == "true";
+        var target = amplitude(volume * bgmVolume);
+        buffer.volume = fadeMs > 0 ? 0 : target;
+        buffer.play();
+        bgm = buffer;
+        if (fadeMs > 0) buffer.fade(target, fadeMs);
+    }
+
+    // [stopbgm] / [fadeoutbgm]
+    function stopBgm(fadeMs)
+    {
+        fadeMs = fadeMs * 1;
+        if (bgm === void) return;
+        var buffer = bgm;
+        bgm = void;
+        if (fadeMs <= 0)
+        {
+            buffer.stop();
+            return;
+        }
+        // `fade` returns immediately. The timer is what stops the buffer once it
+        // has reached zero; its notifications arrive through the event queue
+        // that krkr_engine_tick drains, so they run on the main thread.
+        buffer.fade(0, fadeMs);
+        var timer = new Timer(%[]);
+        timer.onTimer = function () { timer.enabled = false; buffer.stop(); };
+        timer.interval = fadeMs + 100;
+        timer.enabled = true;
+    }
+
+    // [bgmopt] / [fadebgm]
+    function setBgmVolume(volume, fadeMs)
+    {
+        volume = volume * 1;
+        fadeMs = fadeMs * 1;
+        bgmVolume = volume;
+        if (bgm === void) return;
+        if (fadeMs > 0)
+        {
+            bgm.fade(amplitude(volume), fadeMs);
+        }
+        else
+        {
+            bgm.stopFade();
+            bgm.volume = amplitude(volume);
+        }
+    }
+
+    // [pausebgm] / [resumebgm]
+    function pauseBgm() { if (bgm !== void) bgm.paused = true; }
+    function resumeBgm() { if (bgm !== void) bgm.paused = false; }
+
+    // [playse]; `buffer` is KAG's buffer index, reused by the next [playse] on it.
+    function playSe(buffer, storage, volume, loop)
+    {
+        buffer = buffer * 1;
+        volume = volume * 1;
+        stopSe(buffer);
+        var wave = new WaveSoundBuffer(%[]);
+        wave.open(resolveStorage(storage));
+        wave.looping = loop == "true";
+        wave.volume = amplitude(volume);
+        wave.play();
+        se[buffer] = wave;
+    }
+
+    // [stopse]
+    function stopSe(buffer)
+    {
+        buffer = buffer * 1;
+        if (se[buffer] === void) return;
+        se[buffer].stop();
+        se[buffer] = void;
+    }
+
+    // [playvoice]: a new line interrupts the previous one, as in KAG.
+    function playVoice(storage, volume)
+    {
+        volume = volume * 1;
+        stopVoice();
+        var wave = new WaveSoundBuffer(%[]);
+        wave.open(resolveStorage(storage));
+        wave.volume = amplitude(volume);
+        wave.play();
+        voice = wave;
+    }
+
+    // [stopvoice]
+    function stopVoice()
+    {
+        if (voice === void) return;
+        voice.stop();
+        voice = void;
+    }
+
+    // Called by bevy_krkr when the instance stops: a buffer left playing keeps
+    // decoding into the port's queue until the engine shuts down.
+    function finalize()
+    {
+        stopBgm(0);
+        stopVoice();
+        for (var i = 0; i < se.count; i++)
+            if (se[i] !== void) se[i].stop();
+        se = [];
+    }
+}

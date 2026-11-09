@@ -1,28 +1,37 @@
-//! Sound output: the engine's audio reaches the host's device.
+//! Sound: the engine's audio reaches the host's device.
 //!
 //! Kirikiroid2 decodes BGM, SE and voice itself and pushes the PCM into an
 //! `iTVPSoundBuffer` (see `Kirikiroid2/src/core/environ/bevy/BevySound.cpp`),
-//! which keeps the queued audio and mixes it on request. This module owns the
+//! which keeps the queued audio and mixes it on request. [`start`] owns the
 //! output device and pulls that mix: one `krkr_audio_mix` call per device
 //! callback, resampled to whatever rate the device runs at.
 //!
-//! It is the engine's sound path, which is what a game that runs its own UI
-//! (`WaveSoundBuffer` in KAG's `system/bgm.tjs`) needs. The host-parsed KAG tags
-//! (`krkr_audio`, bevy_kira_audio) are a separate path; both can be up at once,
-//! the engine's mix simply comes out of this stream.
+//! It is the engine's sound path: every BGM, SE and voice a game plays is
+//! decoded and mixed by Kirikiroid2, and this stream is the only place audio
+//! leaves the port.
 //!
 //! The mix call does not touch the rest of the engine, so it is safe to make
 //! from the audio thread: buffers are created, driven and released on the main
 //! thread, and the port keeps them behind a lock and a shared registry.
+//!
+//! A game that runs its own KAG plays through `WaveSoundBuffer` from its own
+//! scripts. A scenario the *host* parses only produces messages (`krkr_kag`),
+//! so [`kag_bgm`] and friends forward them to `audio.tjs`, which plays them on
+//! that same class.
 
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use bevy::prelude::*;
+use krkr_kag::events::*;
+use krkr_script::Tjs2Engine;
 use krkr_sys as sys;
 
 const CHANNELS: usize = 2;
+
+/// TJS2 source of the KAG tag bridge (`krkr_plugin/src/audio.tjs`).
+const AUDIO_SCRIPT: &str = include_str!("audio.tjs");
 
 pub struct KrkrAudioOutput {
     _stream: cpal::Stream,
@@ -145,4 +154,137 @@ fn fill<T: Copy>(
             }
         }
     }
+}
+
+// ── KAG tags ────────────────────────────────────────────────────────────────
+
+pub fn open_kag_audio(engine: &Tjs2Engine) -> Result<(), String> {
+    engine
+        .exec_script(AUDIO_SCRIPT, "audio.tjs")
+        .map_err(|e| e.to_string())?;
+    engine
+        .exec_script("global.krkrBevyAudio = new KrkrBevyAudio();", "audio.tjs")
+        .map_err(|e| e.to_string())
+}
+
+pub fn close_kag_audio(engine: &Tjs2Engine) {
+    const TEARDOWN: &str = "if (global.krkrBevyAudio !== void) { \
+                            global.krkrBevyAudio.finalize(); global.krkrBevyAudio = void; }";
+    if let Err(e) = engine.exec_script(TEARDOWN, "bevy_krkr audio teardown") {
+        warn!("bevy_krkr: releasing the audio buffers failed: {e}");
+    }
+}
+
+fn playing_engine<'s, 'w>(
+    engine: &'s Option<NonSend<'w, Tjs2Engine>>,
+) -> Option<&'s Tjs2Engine> {
+    engine.as_ref().filter(|e| e.is_running()).map(|e| &**e)
+}
+
+fn call(engine: &Tjs2Engine, function: &str, args: &[&str]) {
+    if let Err(e) = engine.call(function, args) {
+        warn!("bevy_krkr: {function}: {e}");
+    }
+}
+
+pub fn kag_bgm(
+    engine: Option<NonSend<Tjs2Engine>>,
+    mut play: MessageReader<PlayBgmEvent>,
+    mut stop: MessageReader<StopBgmEvent>,
+    mut pause: MessageReader<PauseBgmEvent>,
+    mut resume: MessageReader<ResumeBgmEvent>,
+    mut volume: MessageReader<BgmVolumeEvent>,
+) {
+    let Some(engine) = playing_engine(&engine) else {
+        return;
+    };
+    // Stops first, then plays: `[stopbgm][playbgm]` in one frame ends with music.
+    for ev in stop.read() {
+        call(engine, "krkrBevyAudio.stopBgm", &[&ev.fade_ms.to_string()]);
+    }
+    for ev in play.read() {
+        if ev.storage.is_empty() {
+            warn!("bevy_krkr: [playbgm] without storage");
+            continue;
+        }
+        call(
+            engine,
+            "krkrBevyAudio.playBgm",
+            &[
+                &ev.storage,
+                if ev.looping { "true" } else { "false" },
+                &amplitude(ev.volume),
+                &ev.fade_ms.to_string(),
+            ],
+        );
+    }
+    for ev in volume.read() {
+        call(
+            engine,
+            "krkrBevyAudio.setBgmVolume",
+            &[&amplitude(ev.volume), &ev.fade_ms.to_string()],
+        );
+    }
+    for _ in pause.read() {
+        call(engine, "krkrBevyAudio.pauseBgm", &[]);
+    }
+    for _ in resume.read() {
+        call(engine, "krkrBevyAudio.resumeBgm", &[]);
+    }
+}
+
+pub fn kag_se(
+    engine: Option<NonSend<Tjs2Engine>>,
+    mut play: MessageReader<PlaySeEvent>,
+    mut stop: MessageReader<StopSeEvent>,
+) {
+    let Some(engine) = playing_engine(&engine) else {
+        return;
+    };
+    for ev in stop.read() {
+        call(engine, "krkrBevyAudio.stopSe", &[&ev.buffer.to_string()]);
+    }
+    for ev in play.read() {
+        if ev.storage.is_empty() {
+            warn!("bevy_krkr: [playse] without storage");
+            continue;
+        }
+        call(
+            engine,
+            "krkrBevyAudio.playSe",
+            &[
+                &ev.buffer.to_string(),
+                &ev.storage,
+                &amplitude(ev.volume),
+                if ev.looping { "true" } else { "false" },
+            ],
+        );
+    }
+}
+
+pub fn kag_voice(
+    engine: Option<NonSend<Tjs2Engine>>,
+    mut play: MessageReader<PlayVoiceEvent>,
+    mut stop: MessageReader<StopVoiceEvent>,
+) {
+    let Some(engine) = playing_engine(&engine) else {
+        return;
+    };
+    if stop.read().count() > 0 {
+        call(engine, "krkrBevyAudio.stopVoice", &[]);
+    }
+    for ev in play.read() {
+        if ev.storage.is_empty() {
+            continue;
+        }
+        call(
+            engine,
+            "krkrBevyAudio.playVoice",
+            &[&ev.storage, &amplitude(ev.volume)],
+        );
+    }
+}
+
+fn amplitude(volume: f32) -> String {
+    format!("{}", volume.clamp(0.0, 1.0))
 }
