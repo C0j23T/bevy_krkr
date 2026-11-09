@@ -3777,6 +3777,8 @@ version = "0.1.0"
 dependencies = [
  "image-webp",
  "lz4_flex",
+ "miniz_oxide 0.8.9",
+ "png",
  "quick-xml",
  "sevenz-rust2",
  "xxhash-rust",

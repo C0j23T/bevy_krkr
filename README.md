@@ -42,10 +42,10 @@ git submodule update --init
 ```
 
 System requirements (found through pkg-config): a C++17 compiler, libclang
-(bindgen), oniguruma, freetype2, zlib, libpng, libjpeg-turbo and vorbisfile;
-opusfile only with the `opus` feature. On Arch:
-`pacman -S oniguruma freetype2 libpng libjpeg-turbo libvorbis clang` (add
-`opusfile` to play `.opus` audio).
+(bindgen), oniguruma, freetype2, libjpeg-turbo and vorbisfile, plus opusfile with
+the `opus` feature. On Arch:
+`pacman -S oniguruma freetype2 libjpeg-turbo libvorbis clang` (add `opusfile` to
+play `.opus` audio).
 
 | Variable | Meaning |
 |---|---|

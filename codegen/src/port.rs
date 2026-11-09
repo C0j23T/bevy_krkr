@@ -139,8 +139,6 @@ pub const FLAGS: &[&str] = &[
 pub const PKG_CONFIG: &[(&str, Option<&str>)] = &[
     ("freetype2", None),
     ("oniguruma", None),
-    ("zlib", None),
-    ("libpng16", None),
     ("libturbojpeg", None),
     ("vorbisfile", None),
     ("opusfile", Some("opus")),
