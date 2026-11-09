@@ -131,14 +131,12 @@ pub const FLAGS: &[&str] = &[
     "-fno-strict-aliasing",
 ];
 
-// TODO：减少这里添加的库，避免同一个库添加了两个不同版本的
 /// System libraries, as pkg-config package names. All are linked.
 pub const PKG_CONFIG: &[&str] = &[
     "freetype2",
     "oniguruma",
     "zlib",
     "libpng16",
-    "libjpeg",
     "libturbojpeg",
     "vorbisfile",
     "opusfile",
