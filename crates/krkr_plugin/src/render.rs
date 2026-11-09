@@ -1,225 +1,199 @@
-//! Kirikiri screen → Bevy texture.
-//!
-//! Kirikiroid2 composites the screen's layer tree (background, message window
-//! with its rendered text, …) off-screen; see [`crate::host`]. This module
-//! copies the composited RGBA8 pixels into one Bevy [`Image`] when they
-//! changed (`krkr_layer_get_revision` hashes them), and shows it with a
-//! [`Sprite`]. The bytes go straight into the texture (`Rgba8UnormSrgb`, the
-//! byte order Kirikiroid2 renders in; no per-pixel conversion) and are
-//! uploaded to the GPU by Bevy's render-asset extraction. Nothing is read
-//! back from the GPU.
-//!
-//! The sprite is on [`KIRIKIRI_RENDER_LAYER`]. Spawn your own [`Camera2d`]
-//! and add [`KirikiriCamera`]; that layer is added to its [`RenderLayers`],
-//! so other cameras do not draw the Kirikiri screen.
+mod gpu;
 
-use bevy::asset::RenderAssetUsages;
-use bevy::camera::visibility::RenderLayers;
-use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::{
+    asset::RenderAssetUsages,
+    camera::visibility::RenderLayers,
+    prelude::*,
+    render::{
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        render_asset::RenderAssets,
+        render_resource::{Extent3d, TextureDimension, TextureFormat},
+        renderer::{RenderDevice, RenderQueue},
+        texture::GpuImage,
+        Render, RenderApp, RenderSystems,
+    },
+    sprite::{Anchor, SpriteAlphaMode},
+};
 use krkr_kag::KirikiriCamera;
 use krkr_sys as sys;
 
 use crate::host::KrkrScreen;
 
-/// Render layer used for the Kirikiri screen sprite.
 pub const KIRIKIRI_RENDER_LAYER: usize = 27;
 
-/// Marks the sprite showing the Kirikiri screen.
-#[derive(Component, Debug)]
+#[derive(Component, Reflect, Debug, Default)]
+#[reflect(Component)]
 pub struct KirikiriScreen;
 
-/// The texture holding the Kirikiri screen.
-#[derive(Resource, Debug, Default)]
-pub struct KirikiriScreenImage {
-    pub image: Option<Handle<Image>>,
+#[derive(Resource, Reflect, Debug, Default)]
+#[reflect(Resource)]
+pub struct KirikiriScene {
     pub size: UVec2,
-    revision: Option<u64>,
+    #[reflect(ignore)]
+    entity: Option<Entity>,
+    #[reflect(ignore)]
+    image: Option<Handle<Image>>,
 }
+
+#[derive(Resource, Clone, Default, ExtractResource)]
+#[extract_app(RenderApp)]
+struct SceneTexture(Option<(Handle<Image>, GpuImage)>);
 
 #[derive(Default)]
 pub struct KrkrRenderPlugin;
 
 impl Plugin for KrkrRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<KirikiriScreenImage>()
+        app.init_resource::<KirikiriScene>()
+            .init_resource::<SceneTexture>()
+            .register_type::<KirikiriScene>()
+            .register_type::<KirikiriScreen>()
+            .add_plugins(ExtractResourcePlugin::<SceneTexture>::default())
             .add_systems(
                 PostUpdate,
-                (setup_kirikiri_camera, crate::host::message_window, sync_screen).chain(),
+                (setup_camera, crate::host::message_window, show_scene)
+                    .chain()
+                    .before(bevy::asset::AssetEventSystems),
             );
-    }
-}
-
-type NewKirikiriCameras<'w, 's> =
-    Query<'w, 's, (Entity, Option<&'static RenderLayers>, Has<Camera2d>), Added<KirikiriCamera>>;
-
-/// Adds [`KIRIKIRI_RENDER_LAYER`] to cameras that just got [`KirikiriCamera`].
-fn setup_kirikiri_camera(
-    mut commands: Commands,
-    added: NewKirikiriCameras,
-    all: Query<(), With<KirikiriCamera>>,
-) {
-    for (entity, layers, is_2d) in &added {
-        if !is_2d {
-            warn!("bevy_krkr: KirikiriCamera on {entity} which has no Camera2d");
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(Render, import_texture.in_set(RenderSystems::PrepareAssets));
         }
-        let layers = layers
-            .cloned()
-            .unwrap_or_default()
-            .with(KIRIKIRI_RENDER_LAYER);
-        commands.entity(entity).insert(layers);
     }
-    if !added.is_empty() && all.iter().count() > 1 {
-        warn!("bevy_krkr: more than one KirikiriCamera; the screen is drawn by all of them");
-    }
-}
-
-/// Copies the composited screen into the screen texture when it changed.
-///
-/// Two things can be the screen: a script-created `BitmapLayerTreeOwner`
-/// (`host.tjs`, `krkrBevy.screen`) and a Kirikiri `Window`, which is what a
-/// game's own UI is built on. A Window wins: it is a real game screen, laid
-/// over everything the host script made.
-pub(crate) fn sync_screen(
-    mut commands: Commands,
-    kirikiri: Option<NonSend<KrkrScreen>>,
-    mut screen: ResMut<KirikiriScreenImage>,
-    mut images: ResMut<Assets<Image>>,
-    sprites: Query<Entity, With<KirikiriScreen>>,
-) {
-    let layer = kirikiri.as_ref().map_or(std::ptr::null_mut(), |s| s.as_ptr());
-    if layer.is_null() {
-        if screen.image.is_some() {
-            sprites
-                .iter()
-                .for_each(|e| {
-                    commands.entity(e).insert(Visibility::Hidden);
-                });
-            *screen = KirikiriScreenImage::default();
-        }
-        return;
-    }
-
-    // A Window (KAG's KAGWindow, a game's own menus) draws the whole screen.
-    if let Some((pixels, width, height, revision)) = window_snapshot() {
-        upload(
-            &mut commands,
-            &mut screen,
-            &mut images,
-            &sprites,
-            pixels,
-            width,
-            height,
-            revision,
+    fn finish(&self, app: &mut App) {
+        initialize(
+            app.world().resource::<RenderDevice>().clone(),
+            app.world().resource::<RenderQueue>().clone(),
         );
-        return;
     }
+}
 
-    // SAFETY: layer is the live handle held by KrkrScreen; main thread via NonSend.
-    let (revision, width, height) = unsafe {
-        (
-            sys::krkr_layer_get_revision(layer),
-            sys::krkr_layer_get_width(layer),
-            sys::krkr_layer_get_height(layer),
-        )
-    };
-    if screen.revision == Some(revision) || width == 0 || height == 0 {
-        return;
-    }
-    // SAFETY: the C ABI guarantees width*height*4 readable bytes for the
-    // snapshot taken by krkr_layer_get_revision, until the next call on it.
-    let pixels = unsafe {
-        let ptr = sys::krkr_layer_get_pixels(layer);
-        if ptr.is_null() {
-            return;
+pub(crate) fn reset(world: &mut World) {
+    if let Some(mut scene) = world.get_resource_mut::<KirikiriScene>() {
+        let entity = scene.entity.take();
+        scene.image = None;
+        scene.size = UVec2::ZERO;
+        if let Some(entity) = entity {
+            world.despawn(entity);
         }
-        std::slice::from_raw_parts(ptr, width as usize * height as usize * 4)
-    };
-    upload(
-        &mut commands,
-        &mut screen,
-        &mut images,
-        &sprites,
-        pixels,
-        width,
-        height,
-        revision,
-    );
-}
-
-/// Pixels of the front-most visible Kirikiri `Window`, if there is one.
-fn window_snapshot() -> Option<(&'static [u8], u32, u32, u64)> {
-    let mut width = 0u32;
-    let mut height = 0u32;
-    let mut revision = 0u64;
-    // SAFETY: called while an instance runs (the caller checked); the returned
-    // buffer is readable until the next call into the engine, and is copied
-    // before anything else is called.
-    let ptr = unsafe { sys::krkr_window_snapshot(&mut width, &mut height, &mut revision) };
-    if ptr.is_null() || width == 0 || height == 0 {
-        return None;
     }
-    let len = width as usize * height as usize * 4;
-    // SAFETY: the C ABI returns exactly width*height*4 readable bytes.
-    let pixels = unsafe { std::slice::from_raw_parts(ptr, len) };
-    Some((pixels, width, height, revision))
+    if let Some(mut texture) = world.get_resource_mut::<SceneTexture>() {
+        texture.0 = None;
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn upload(
-    commands: &mut Commands,
-    screen: &mut KirikiriScreenImage,
-    images: &mut Assets<Image>,
-    sprites: &Query<Entity, With<KirikiriScreen>>,
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-    revision: u64,
+pub fn initialize(device: RenderDevice, queue: RenderQueue) {
+    gpu::initialize(device, queue);
+}
+
+pub fn texture_usage() -> (usize, u64) {
+    gpu::texture_usage()
+}
+
+pub fn flush() {
+    gpu::flush();
+}
+
+pub fn read_pixels(texture: u64) -> Result<Vec<u8>, String> {
+    gpu::read_pixels(texture)
+}
+
+fn setup_camera(
+    mut commands: Commands,
+    cameras: Query<(Entity, Option<&RenderLayers>), Added<KirikiriCamera>>,
 ) {
-    if screen.revision == Some(revision) {
+    for (entity, layers) in &cameras {
+        commands.entity(entity).insert(
+            layers
+                .cloned()
+                .unwrap_or_default()
+                .with(KIRIKIRI_RENDER_LAYER),
+        );
+    }
+}
+
+fn import_texture(
+    scene: Res<SceneTexture>,
+    mut images: ResMut<RenderAssets<GpuImage>>,
+    mut previous: Local<Option<AssetId<Image>>>,
+) {
+    let current = scene.0.as_ref().map(|(handle, _)| handle.id());
+    if *previous != current {
+        if let Some(id) = previous.take() {
+            images.remove(id);
+        }
+    }
+    if let Some((handle, image)) = &scene.0 {
+        images.insert(handle.id(), image.clone());
+    }
+    *previous = current;
+}
+
+fn show_scene(
+    mut commands: Commands,
+    screen: Option<NonSend<KrkrScreen>>,
+    mut scene: ResMut<KirikiriScene>,
+    mut texture: ResMut<SceneTexture>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let (mut width, mut height) = (0, 0);
+    let id = screen.as_ref().map_or(0, |screen| unsafe {
+        sys::krkr_scene_build(screen.as_ptr(), &mut width, &mut height)
+    });
+    if id == 0 || width <= 0 || height <= 0 {
+        gpu::flush();
+        scene.clear(&mut commands);
+        texture.0 = None;
         return;
     }
-    let size = UVec2::new(width, height);
-    let updated = match screen.image.clone().filter(|_| screen.size == size) {
-        Some(handle) => match images.get_mut(&handle) {
-            Some(mut image) => {
-                match image.data.as_mut() {
-                    Some(data) if data.len() == pixels.len() => data.copy_from_slice(pixels),
-                    _ => image.data = Some(pixels.to_vec()),
-                }
-                true
-            }
-            None => false,
-        },
-        None => false,
+    let Some(image) = gpu::image(id) else {
+        return;
     };
-    if !updated {
-        let image = Image::new(
+    let size = UVec2::new(width as u32, height as u32);
+    let resized = scene.image.is_none() || scene.size != size;
+    if resized {
+        scene.image = Some(images.add(Image::new_uninit(
             Extent3d {
-                width,
-                height,
+                width: size.x,
+                height: size.y,
                 depth_or_array_layers: 1,
             },
             TextureDimension::D2,
-            pixels.to_vec(),
             TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        );
-        let handle = images.add(image);
-        if let Some(entity) = sprites.iter().next() {
-            commands
-                .entity(entity)
-                .insert((Sprite::from_image(handle.clone()), Visibility::Visible));
-        } else {
-            commands.spawn((
-                Sprite::from_image(handle.clone()),
-                RenderLayers::layer(KIRIKIRI_RENDER_LAYER),
-                KirikiriScreen,
-                Name::new("Kirikiri screen"),
-            ));
-        }
-        screen.image = Some(handle);
-        screen.size = size;
+            RenderAssetUsages::MAIN_WORLD,
+        )));
     }
-    screen.revision = Some(revision);
+    scene.size = size;
+    let handle = scene.image.as_ref().unwrap().clone();
+    texture.0 = Some((handle.clone(), image));
+    let mut sprite = Sprite::from_image(handle);
+    sprite.custom_size = Some(size.as_vec2());
+    sprite.alpha_mode = SpriteAlphaMode::Opaque;
+    let transform = Transform::from_xyz(-(width as f32) / 2.0, height as f32 / 2.0, 0.0);
+    if let Some(entity) = scene.entity {
+        if resized {
+            commands.entity(entity).insert((sprite, transform));
+        }
+    } else {
+        scene.entity = Some(
+            commands
+                .spawn((
+                    KirikiriScreen,
+                    sprite,
+                    transform,
+                    Anchor::TOP_LEFT,
+                    RenderLayers::layer(KIRIKIRI_RENDER_LAYER),
+                ))
+                .id(),
+        );
+    }
+}
+
+impl KirikiriScene {
+    pub fn clear(&mut self, commands: &mut Commands) {
+        if let Some(entity) = self.entity.take() {
+            commands.entity(entity).try_despawn();
+        }
+        self.image = None;
+        self.size = UVec2::ZERO;
+    }
 }

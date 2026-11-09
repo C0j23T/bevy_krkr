@@ -21,18 +21,16 @@ in full below, unmodified, as published in the Kirikiroid2 repository's
 `LICENSE` file. Every distribution of bevy_krkr, in source or binary form,
 must include this file.
 
-### Modified Kirikiroid2 sources (bevy-port branch)
+### Modified Kirikiroid2 sources
 
-bevy_krkr compiles the Kirikiroid2 engine core from a checkout on the
-`bevy-port` branch. That branch adds `src/core/environ/bevy/` (a platform
-layer replacing the cocos2d-x front end, and compatibility headers) and
-makes small, marked (`bevy port:` / `KRKR_BEVY_PORT`) changes to a few
-upstream files. These modifications are released under GPL-2.0-or-later,
-like bevy_krkr. The unmodified Kirikiroid2 code keeps its license below.
+The `bevy-render-layers` branch adds the Bevy platform bridge and replaces the
+native renderer with GPU texture commands. These modifications are released
+under GPL-2.0-or-later, like bevy_krkr. Unmodified Kirikiroid2 code keeps its
+license below.
 
 The engine core is linked with system libraries that are not part of this
 repository: Oniguruma, FreeType, zlib, libpng, libjpeg-turbo, libwebp,
-libvorbis/libogg, opusfile/libopus, TinyXML-2 and OpenCV.
+libvorbis/libogg, opusfile/libopus, TinyXML-2.
 A binary distribution must comply with their licenses as well.
 
 ### Generated bindings

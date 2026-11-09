@@ -1,8 +1,9 @@
 //! `bevy_krkr` – Kirikiri2 / KAG3 on Bevy, through Kirikiroid2.
 //!
-//! TJS2, the KAG3 parser, XP3 storage and layer compositing all run in
+//! TJS2, the KAG3 parser, XP3 storage and the layer tree all live in
 //! Kirikiroid2 (C++), reached through bindings that `crates/krkr_sys/build.rs`
-//! generates at compile time. This crate re-exports the Bevy side.
+//! generates at compile time. The host draws the layers, and this crate
+//! re-exports the Bevy side.
 //!
 //! ```no_run
 //! use bevy::prelude::*;
@@ -33,6 +34,8 @@ pub mod prelude {
     pub use krkr_kag::events::*;
     pub use krkr_kag::{CursorState, KagCursor, KirikiriCamera};
     pub use krkr_plugin::input::{shift_state, virtual_key, ScreenPlacement};
-    pub use krkr_plugin::render::{KirikiriScreen, KirikiriScreenImage, KIRIKIRI_RENDER_LAYER};
+    pub use krkr_plugin::render::{
+        KirikiriScene, KirikiriScreen, KIRIKIRI_RENDER_LAYER,
+    };
     pub use krkr_plugin::{BevyKrkrPlugin, KirikiriEnterEvent, KirikiriExitEvent, KirikiriState};
 }

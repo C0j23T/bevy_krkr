@@ -11,3 +11,5 @@ krkr_script = { path = "../krkr_script" }
 krkr_kag    = { path = "../krkr_kag" }
 cpal        = "0.18"
 bevy        = { workspace = true }
+krkr_shim = { path = "../krkr_shim" }
+bytemuck = { version = "1", features = ["derive"] }

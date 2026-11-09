@@ -2,16 +2,15 @@
 // instance starts (krkr_plugin/src/host.rs).
 //
 // A Bevy host has no Kirikiri Window owner: the screen this script builds is a
-// BitmapLayerTreeOwner whose primary layer tree Kirikiroid2 composites
-// off-screen; bevy_krkr uploads the composited pixels as a texture. The message
-// window is a Kirikiri Layer; text is laid out and rasterised by Kirikiroid2
-// (Font, drawText). The KAG tags themselves are interpreted on the Bevy side
-// (krkr_kag), which calls showMessage / clearMessage.
+// BitmapLayerTreeOwner whose layer tree the host draws itself (see
+// krkr_plugin/src/render.rs). The message window is a Kirikiri Layer; text is
+// laid out and rasterised by Kirikiroid2 (Font, drawText). The KAG tags
+// themselves are interpreted on the Bevy side (krkr_kag), which calls
+// showMessage / clearMessage.
 //
 // A game that brings its own UI (KAG's KAGWindow, compiled into every KAG3
-// game) creates a `Window` instead; the port renders that off-screen too and
-// the host shows it in place of this script's screen (see
-// krkr_plugin/src/render.rs).
+// game) creates a `Window` instead; its layer tree is drawn in place of this
+// script's screen.
 
 class KrkrBevyHost
 {

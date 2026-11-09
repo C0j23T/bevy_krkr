@@ -9,6 +9,8 @@
 //!
 //! Single test, because the sessions share the process.
 
+mod common;
+
 use std::ffi::CString;
 use std::path::PathBuf;
 
@@ -62,6 +64,7 @@ fn stop(engine: Tjs2Engine, screen: host::KrkrScreen) {
 
 #[test]
 fn a_game_can_end_the_session_and_a_new_one_can_start() {
+    common::initialize_renderer();
     // `System.exit` is the engine's own `exit()`: it tears the engine down and
     // never returns. The host must not unwind through the frames that are left,
     // and must not take its objects apart a second time either.
@@ -104,7 +107,7 @@ fn a_game_can_end_the_session_and_a_new_one_can_start() {
     // main window going away ends the application. The port hides it at once
     // and destroys it on the next tick, so a script that closed its own window
     // keeps running instead of being taken apart under its own call.
-    let (mut width, mut height) = (0u32, 0u32);
+    let (mut width, mut height) = (0, 0);
     engine
         .exec_script(
             r#"
@@ -120,8 +123,8 @@ fn a_game_can_end_the_session_and_a_new_one_can_start() {
         )
         .unwrap_or_else(|e| panic!("after exit: {e}"));
     // SAFETY: an instance is running; out-parameters are valid.
-    let shown = unsafe { sys::krkr_window_snapshot(&mut width, &mut height, std::ptr::null_mut()) };
-    assert!(!shown.is_null(), "after exit: the window is not shown");
+    let shown = unsafe { sys::krkr_scene_build(std::ptr::null_mut(), &mut width, &mut height) };
+    assert!(shown != 0, "after exit: the window is not shown");
 
     engine
         .exec_script(
@@ -140,8 +143,8 @@ fn a_game_can_end_the_session_and_a_new_one_can_start() {
     );
     // Nothing for the host to show any more, and the window still exists.
     // SAFETY: an instance is running; out-parameters are valid.
-    let hidden = unsafe { sys::krkr_window_snapshot(&mut width, &mut height, std::ptr::null_mut()) };
-    assert!(hidden.is_null(), "after exit: a closed window is shown");
+    let hidden = unsafe { sys::krkr_scene_build(std::ptr::null_mut(), &mut width, &mut height) };
+    assert!(hidden == 0, "after exit: a closed window is shown");
     assert_eq!(
         unsafe { sys::krkr_engine_exit_requested() },
         0,

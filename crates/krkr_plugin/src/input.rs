@@ -8,10 +8,10 @@
 //! "click to advance" never react.
 //!
 //! Positions arrive in Bevy's window space and are converted to the Kirikiri
-//! window's pixels through the camera and the screen sprite
-//! ([`ScreenPlacement`]), so a moved or scaled screen still gets the right
-//! coordinates. Touches are reported as the left mouse button, which is what a
-//! game written for a desktop expects.
+//! screen's pixels through the camera and the screen root ([`ScreenPlacement`]),
+//! so a moved or scaled screen still gets the right coordinates. Touches are
+//! reported as the left mouse button, which is what a game written for a
+//! desktop expects.
 //!
 //! Nothing is forwarded while no instance runs, and the engine ignores input
 //! while no `Window` of the game is visible.
@@ -25,12 +25,13 @@ use bevy::window::PrimaryWindow;
 use krkr_kag::KirikiriCamera;
 use krkr_sys as sys;
 
-use crate::render::{KirikiriScreen, KirikiriScreenImage};
+use crate::render::{KirikiriScene, KirikiriScreen};
 use crate::KirikiriState;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScreenPlacement {
-    pub center: Vec2,
+    /// World position of the screen's top left corner.
+    pub origin: Vec2,
     pub scale: Vec2,
     pub size: UVec2,
 }
@@ -40,7 +41,7 @@ impl ScreenPlacement {
         // The rotation is ignored: a screen tilted away from the camera would
         // also need a different hit test, and no host does that.
         Self {
-            center: transform.translation().truncate(),
+            origin: transform.translation().truncate(),
             scale: transform.scale().truncate(),
             size,
         }
@@ -50,10 +51,9 @@ impl ScreenPlacement {
         if self.size.x == 0 || self.size.y == 0 || self.scale.x == 0.0 || self.scale.y == 0.0 {
             return None;
         }
-        // Kirikiri pixels relative to the middle of the screen, y up.
-        let local = (world - self.center) / self.scale;
-        let x = local.x + self.size.x as f32 * 0.5;
-        let y = self.size.y as f32 * 0.5 - local.y;
+        // Kirikiri pixels from the screen's top left corner, x right, y down.
+        let local = (world - self.origin) / self.scale;
+        let (x, y) = (local.x, -local.y);
         if !(x >= 0.0 && y >= 0.0) {
             return None;
         }
@@ -257,7 +257,7 @@ pub fn forward_pointer(
     window: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<KirikiriCamera>>,
     screens: Query<&GlobalTransform, With<KirikiriScreen>>,
-    screen: Res<KirikiriScreenImage>,
+    screen: Res<KirikiriScene>,
     mouse: Option<Res<ButtonInput<MouseButton>>>,
     touches: Option<Res<Touches>>,
     // Position of the pointer the last move event reported.
@@ -341,11 +341,11 @@ pub fn forward_pointer(
 mod tests {
     use super::*;
 
-    /// An unscaled screen sprite of `size` centred on the origin, which is what
-    /// `sync_screen` spawns.
+    /// An unscaled screen of `size` centred on the origin, which is what
+    /// `show_scene` places at the screen size's middle.
     fn centred(size: UVec2) -> ScreenPlacement {
         ScreenPlacement {
-            center: Vec2::ZERO,
+            origin: Vec2::new(-(size.x as f32) / 2.0, size.y as f32 / 2.0),
             scale: Vec2::ONE,
             size,
         }
@@ -382,7 +382,7 @@ mod tests {
         // Half size, shifted right and down: one Kirikiri pixel is half a world
         // unit, and the screen now spans 400x300 world units around (100, 0).
         let screen = ScreenPlacement {
-            center: Vec2::new(100.0, 0.0),
+            origin: Vec2::new(-100.0, 150.0),
             scale: Vec2::splat(0.5),
             size: UVec2::new(800, 600),
         };
@@ -400,7 +400,7 @@ mod tests {
     fn empty_screen_has_no_pixels() {
         assert_eq!(centred(UVec2::ZERO).pixel_at(Vec2::ZERO), None);
         let flat = ScreenPlacement {
-            center: Vec2::ZERO,
+            origin: Vec2::ZERO,
             scale: Vec2::ZERO,
             size: UVec2::new(80, 60),
         };

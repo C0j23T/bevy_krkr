@@ -60,4 +60,9 @@ fn timer_fires_while_the_host_ticks() {
         .parse()
         .expect("a number");
     assert!(fired > 0, "the timer never called back");
+    engine
+        .exec_script("invalidate global.timer; global.timer = void;", "cleanup")
+        .unwrap();
+    drop(engine);
+    unsafe { sys::krkr_engine_shutdown() };
 }

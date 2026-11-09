@@ -104,8 +104,6 @@ mod real {
         for pkg in port::PKG_CONFIG {
             includes.extend(probe(pkg, false).include_paths);
         }
-        let opencv = probe_opencv(false);
-        includes.extend(opencv.0.include_paths.iter().cloned());
 
         let sources = port::collect_sources(src).expect("list Kirikiroid2 sources");
         // The directory-level `rerun-if-changed` in `main` only sees entries
@@ -146,13 +144,7 @@ mod real {
         for pkg in port::PKG_CONFIG {
             probe(pkg, true);
         }
-        let (lib, libs) = opencv;
-        for dir in &lib.link_paths {
-            println!("cargo:rustc-link-search=native={}", dir.display());
-        }
-        for name in libs {
-            println!("cargo:rustc-link-lib={name}");
-        }
+
     }
 
     fn write_plugins(src: &Path, out_dir: &Path) -> Vec<PathBuf> {
@@ -237,15 +229,7 @@ mod real {
             .unwrap_or_else(|e| panic!("krkr_sys: system library `{pkg}` not found via pkg-config: {e}"))
     }
 
-    fn probe_opencv(link: bool) -> (pkg_config::Library, &'static [&'static str]) {
-        for (pkg, libs) in port::OPENCV {
-            if let Ok(lib) = pkg_config::Config::new().cargo_metadata(link).probe(pkg) {
-                return (lib, libs);
-            }
-        }
-        let names: Vec<_> = port::OPENCV.iter().map(|(p, _)| *p).collect();
-        panic!("krkr_sys: OpenCV not found via pkg-config (tried {names:?})");
-    }
+
 }
 
 #[cfg(not(feature = "real_ffi"))]

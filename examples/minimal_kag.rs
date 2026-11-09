@@ -2,8 +2,8 @@
 //!
 //! `assets/game/first.ks` is parsed by Kirikiroid2's KAGParser through
 //! `krkr_sys`; this program only reacts to the resulting messages. The text is
-//! laid out and rasterised by Kirikiroid2 into its message-window layer and
-//! shown through the Kirikiri screen texture. The BGM is played through
+//! laid out and rasterised by Kirikiroid2 into its message-window layer, which
+//! `krkr_plugin::render` draws as a sprite. The BGM is played through
 //! `bevy_kira_audio`. Click (or press Enter / Space) to advance.
 //!
 //! ```sh

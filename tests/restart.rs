@@ -9,6 +9,8 @@
 //! Single test, because the sessions share the process: cargo runs each test in
 //! its own binary/thread set, and two of them would fight over the globals.
 
+mod common;
+
 use std::ffi::CString;
 use std::path::PathBuf;
 
@@ -87,6 +89,7 @@ fn run_session(name: &str) {
 
 #[test]
 fn restart_in_one_process() {
+    common::initialize_renderer();
     run_session("first");
     run_session("second");
     run_session("third");

@@ -1,13 +1,12 @@
 # bevy_krkr
 
-Kirikiri2 / KAG3 on [Bevy](https://bevyengine.org) 0.20, reusing
-[Kirikiroid2](https://github.com/zeas2/Kirikiroid2) for everything it already
-implements.
+Kirikiri2 / KAG3 on [Bevy](https://bevyengine.org) 0.20, using
+[Kirikiroid2](https://github.com/zeas2/Kirikiroid2) for TJS2, KAG3 and game resources.
 
-TJS2, the KAG3 parser, XP3 storage and layer compositing run in Kirikiroid2's
-C++ code. Rust reaches them through FFI bindings that are **generated at
-build time**. The Rust code covers ECS integration, texture upload, audio
-scheduling through `bevy_kira_audio`, and resource lifecycle. There is no
+TJS2, the KAG3 parser, XP3 storage and the layer tree run in Kirikiroid2's C++
+code. Rust reaches them through FFI bindings that are **generated at build
+time**. The Rust code covers ECS integration, drawing the layers, audio
+playback through the native sound buffers, and resource lifecycle. There is no
 `.ks` parser and no TJS2 parser in this repository.
 
 ## Layout
@@ -16,7 +15,8 @@ scheduling through `bevy_kira_audio`, and resource lifecycle. There is no
 KirikiriEnterEvent ─▶ handle_enter ─▶ krkr_engine_init, Tjs2Engine, host.tjs, KagParser
 Update:     Tjs2Set (krkr_engine_tick) ─▶ KagSet (kag_step: KAGParser → tags → messages) ─▶ KrkrAudioSet
 PostUpdate: message_window (ShowMessageEvent → krkrBevy.showMessage in TJS2)
-            ─▶ sync_screen (composited RGBA8 → Image → Sprite on KirikiriCamera), poll_engine_exit
+            ─▶ show_scene (layer tree → Bevy GPU composition, on KirikiriCamera)
+            , poll_engine_exit
 Last:       KirikiriExitEvent / AppExit ─▶ teardown (parser → screen → TJS2 → archive → engine)
 ```
 
@@ -28,14 +28,14 @@ files, with `cc`). It looks for the checkout in this order:
 1. `$KIRIKIROID2_SRC`, if set (an error if it is not a directory);
 2. `Kirikiroid2/` in the workspace root.
 
-The checkout must be on the **`bevy-port`** branch: it adds
+The checkout must include the **`bevy-render-layers`** changes: it adds
 `src/core/environ/bevy/` (platform layer replacing cocos2d-x, compat headers)
 and a few marked fixes, described in its `README.md`. A checkout without it
 stops the build with an explanation.
 
 It is a git submodule of this repository
 ([C0j23T/Kirikiroid2](https://github.com/C0j23T/Kirikiroid2), branch
-`bevy-port`, a fork of [zeas2/Kirikiroid2](https://github.com/zeas2/Kirikiroid2)):
+`bevy-render-layers`, a fork of [zeas2/Kirikiroid2](https://github.com/zeas2/Kirikiroid2)):
 
 ```sh
 git clone --recursive https://github.com/C0j23T/bevy_krkr
@@ -45,15 +45,29 @@ git submodule update --init
 
 System requirements (found through pkg-config): a C++17 compiler, libclang
 (bindgen), oniguruma, freetype2, zlib, libpng, libjpeg-turbo, libwebp,
-vorbisfile, opusfile, tinyxml2 and OpenCV 4 or 5 (core/imgproc). On Arch:
+vorbisfile, opusfile and tinyxml2. On Arch:
 `pacman -S oniguruma freetype2 libpng libjpeg-turbo libwebp libvorbis opusfile
-tinyxml2 opencv clang`.
+tinyxml2 clang`.
 
 | Variable | Meaning |
 |---|---|
 | `KIRIKIROID2_SRC` | Kirikiroid2 checkout (default `./Kirikiroid2`). |
 | `KRKR_CODEGEN_VERBOSE=1` | Log codegen steps. |
 | `KRKR_RESOURCE_DIR` | Extra directories (`:`-separated) searched for the fallback font `DroidSansFallback.ttf` (default: system font dirs). |
+
+## Rendering
+
+Bevy owns all GPU textures. Kirikiroid2 sends decoded pixels, glyph masks and
+texture commands through `BevyRender.cpp`; `render/gpu.rs` executes them using
+Bevy's `RenderDevice` and `RenderQueue`. The WESL kernels handle fills, copies,
+blend modes, transforms, blur, gamma and transition masks. Layer groups are
+composited before applying their opacity. The final GPU texture is registered
+as a Bevy `GpuImage` and displayed by `KirikiriCamera`.
+
+`krkr_scene_build` returns a GPU texture identity. Pixel readback happens only
+for explicit script pixel access or `render::read_pixels`, used by GPU tests.
+Raw FFI hosts must initialize the renderer with `render::initialize` before
+creating layers. `BevyKrkrPlugin` does this automatically.
 
 ## Building
 
@@ -163,7 +177,7 @@ the BGM and closes the window.
 data file (that game keeps its voice/CG/event images in **7z** archives),
 loads the scenario the archive names as its entry point and logs the tags it
 produces. Its own `startup.tjs` builds the game UI on a Kirikiri `Window`,
-which the port renders off-screen and shows like the script-created screen;
+whose layers the host draws like the script-created screen's;
 `--game-startup` runs that script and prints where it stops.
 
 That archive's `startup.tjs` currently stops at `PSBFile` (see below), so
@@ -171,19 +185,25 @@ That archive's `startup.tjs` currently stops at `PSBFile` (see below), so
 KAG-parser path (`scenario\start.ks` through `krkr_kag`, the default) does work
 and draws its message window.
 
+The following command has been checked through startup, the opening image and
+the title menu with the Bevy GPU renderer:
+
+```sh
+cargo run --example snbk -- --game-startup "test_games/与小奶猫创造家族/data.xp3" startup.tjs
+```
+
 ## Status
 
 - Working: engine start/stop, TJS2, KAGParser driving the KAG cursor, text
-  layout and rendering by Kirikiroid2 (Layer, Font, FreeType), off-screen
-  compositing uploaded as a texture, BGM/SE/voice channels, XP3/TAR/7z/ZIP
+  layout and glyph rasterization by Kirikiroid2 (Layer, Font, FreeType),
+  texture operations and layer composition on Bevy’s GPU, BGM/SE/voice channels, XP3/TAR/7z/ZIP
   reading, the compiled-in plugins, TJS `Timer` (and so KAG's
   `[wait time=...]`, transitions and auto/skip timing), engine log → Bevy log.
 - Sound: the engine's `WaveSoundBuffer` (what a game's own KAG scripts use for
   BGM, SE and voice) decodes with Kirikiroid2's decoders and the port mixes the
   PCM; the host writes that mix to the sound device
   (`Kirikiroid2/src/core/environ/bevy/BevySound.cpp`,
-  `crates/krkr_plugin/src/audio.rs`). Scripts that only know the KAG tags can go
-  through `bevy_kira_audio` instead (`krkr_audio`).
+  `crates/krkr_plugin/src/audio.rs`). Host-parsed KAG tags use the same sound buffers.
 - Input: Bevy's keyboard, mouse and touches are forwarded to the game's own
   `Window` as the TJS `onKeyDown` / `onKeyUp` / `onMouseMove` / `onMouseDown` /
   `onMouseUp` calls a native window manager would produce, with keys translated
@@ -191,9 +211,10 @@ and draws its message window.
   (`crates/krkr_plugin/src/input.rs`,
   `Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`).
 - `Window`: a game that builds its own UI (KAG's `KAGWindow`) gets a `Window`
-  that renders off-screen into a texture the host shows in place of the
-  script-created screen, with mouse/key events posted back to its TJS handlers
-  (`Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`).
+  whose layer tree the host draws in place of the script-created screen, with
+  mouse/key events posted back to its TJS handlers
+  (`Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`,
+  `Kirikiroid2/src/core/environ/bevy/BevyScene.cpp`).
 - Not taken from Kirikiroid2: input and window management (the Bevy host owns
   them), the sound device (cpal, through the mix the engine produces), video,
   BPG/JXR/PVR images. Scripts using them get a "not supported by the
@@ -201,10 +222,6 @@ and draws its message window.
 - The message window is the minimal one in `crates/krkr_plugin/src/host.tjs`;
   KAG3's `MessageLayer.tjs` system scripts are not used. Speaker names, ruby
   and per-character effects are not implemented.
-- `krkr_audio` (bevy_kira_audio) loads its files from Bevy's asset folder, so
-  the host-parsed KAG tags only play audio that sits next to the executable.
-  A game's own scripts are unaffected: they decode through the engine, which
-  reads `data.xp3` like any other storage.
 - Tested on Linux x86-64 (GCC 16) only.
 
 ## License

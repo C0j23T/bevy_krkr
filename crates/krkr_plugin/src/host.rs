@@ -4,7 +4,7 @@
 //! builds the screen (a `BitmapLayerTreeOwner`, global `krkrBevy.screen`) and
 //! a message-window Layer. [`message_window`] forwards the KAG layer's
 //! [`ShowMessageEvent`] / [`ClearMessageEvent`] to it; Kirikiroid2 lays out and
-//! rasterises the text, and [`crate::render`] uploads the composited screen.
+//! rasterises the text, and [`crate::render`] draws the layers.
 
 use std::ffi::CString;
 

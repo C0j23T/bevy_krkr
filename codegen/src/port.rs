@@ -34,12 +34,12 @@ const SOURCE_GLOBS: &[(&str, &str, &[&str])] = &[
     ("utils/encoding", "c", &[]),
     ("utils/win32", "cpp", &[]),
     ("visual", "cpp", &["Resampler", "LoadBPG", "LoadJXR", "LoadPVRv3"]),
-    ("visual/gl", "cpp", &[]),
     ("visual/win32", "cpp", &["GDIFontRasterizer", "NativeFreeTypeFace", "TVPSysFont", "VSyncTimingThread", "TVPScreen"]),
 ];
 
 /// Single files outside the globs (same as Android.mk).
 const EXTRA_SOURCES: &[&str] = &[
+    "visual/gl/blend_function.cpp",
     "environ/win32/SystemControl.cpp",
     "msg/win32/MsgImpl.cpp",
     "msg/win32/OptionsDesc.cpp",
@@ -144,15 +144,6 @@ pub const PKG_CONFIG: &[&str] = &[
     "vorbisfile",
     "opusfile",
     "tinyxml2",
-];
-
-/// OpenCV (RenderManager: resize, blur, affine/perspective transforms).
-/// `(pkg-config package, libraries to link)`, tried in order. Only the
-/// include path is taken from pkg-config; linking every OpenCV module the
-/// package lists would pull in dozens of unused libraries.
-pub const OPENCV: &[(&str, &[&str])] = &[
-    ("opencv5", &["opencv_core", "opencv_imgproc", "opencv_geometry"]),
-    ("opencv4", &["opencv_core", "opencv_imgproc"]),
 ];
 
 /// Sources of the engine core, split by language.

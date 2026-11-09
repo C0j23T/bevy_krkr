@@ -9,6 +9,8 @@
 //! owns it), while the coordinate mapping is covered by the unit tests in the
 //! module itself.
 
+mod common;
+
 use std::ffi::CString;
 use std::path::PathBuf;
 
@@ -30,6 +32,7 @@ fn press_enter(mut keys: ResMut<ButtonInput<KeyCode>>) {
 
 #[test]
 fn a_key_press_reaches_the_game() {
+    common::initialize_renderer();
     let path = data_path();
     let c_path = CString::new(path.to_string_lossy().as_bytes()).expect("no NUL in the path");
     // SAFETY: called on the test thread, once for this process.

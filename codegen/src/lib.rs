@@ -24,8 +24,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub use api::{
-    functions, CallbackType, FnDecl, KirikiridModule, Param, CALLBACK_TYPES, CONSTANTS, GROUPS,
-    OPAQUE_TYPES,
+    functions, CallbackType, FnDecl, KirikiridModule, Param, StructDecl, CALLBACK_TYPES,
+    CONSTANTS, GROUPS, OPAQUE_TYPES, STRUCTS,
 };
 
 /// Support code expanded at the top of the shim.
@@ -227,6 +227,13 @@ pub fn generate_c_header(notices: &[String]) -> String {
     for (name, doc) in OPAQUE_TYPES {
         let _ = writeln!(out, "/** {doc} */\ntypedef struct {name} {name};");
     }
+    for s in STRUCTS {
+        let _ = writeln!(out, "\n/** {} */\ntypedef struct {{", s.doc);
+        for field in s.c_fields {
+            let _ = writeln!(out, "    {field}");
+        }
+        let _ = writeln!(out, "}} {};", s.name);
+    }
     for cb in CALLBACK_TYPES {
         let _ = writeln!(out, "\n/** {} */\ntypedef void (*{})({});", cb.doc, cb.name, cb.c_params);
     }
@@ -284,6 +291,17 @@ pub fn generate_rust_stubs() -> String {
     }
     for (name, doc) in OPAQUE_TYPES {
         let _ = writeln!(out, "/// {doc}\n#[repr(C)]\npub struct {name} {{\n    _unused: [u8; 0],\n}}");
+    }
+    for s in STRUCTS {
+        let _ = writeln!(
+            out,
+            "/// {}\n#[repr(C)]\n#[derive(Debug, Clone, Copy)]\npub struct {} {{",
+            s.doc, s.name
+        );
+        for field in s.rust_fields {
+            let _ = writeln!(out, "    {field}");
+        }
+        let _ = writeln!(out, "}}");
     }
     for cb in CALLBACK_TYPES {
         let _ = writeln!(
@@ -390,6 +408,8 @@ mod tests {
     fn shim_bodies_are_guarded() {
         let shim = generate_cpp_shim(&[]);
         assert_eq!(shim.matches("} KRKR_SHIM_CATCH(").count(), functions().count());
-        assert!(shim.contains("krkr_layer_get_pixels(KrkrLayerOpaque* layer) {\n    try {"));
+        assert!(shim.contains(
+            "krkr_layer_find(const char* expr) {\n    KRKR_SHIM_ENTER(NULL);\n    try {"
+        ));
     }
 }

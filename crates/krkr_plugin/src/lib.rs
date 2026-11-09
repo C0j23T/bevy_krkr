@@ -287,6 +287,8 @@ pub fn teardown(world: &mut World) {
     drop(world.remove_non_send::<KrkrScreen>());
     drop(world.remove_non_send::<Tjs2Engine>());
     let was_running = world.remove_non_send::<KrkrSession>().is_some();
+    render::flush();
+    render::reset(world);
     if let Some(mut cursor) = world.get_resource_mut::<KagCursor>() {
         cursor.reset();
     }

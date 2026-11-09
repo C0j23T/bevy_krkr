@@ -14,6 +14,8 @@
 //! Single test: the sessions share the process, and cargo would run two tests
 //! in parallel threads over the same globals.
 
+mod common;
+
 use std::ffi::CString;
 use std::path::PathBuf;
 
@@ -63,9 +65,12 @@ fn session(name: &str) {
     assert_eq!(code, sys::KRKR_OK, "{name}: krkr_engine_init");
 
     let engine = Tjs2Engine::new().unwrap_or_else(|e| panic!("{name}: {e}"));
-    let screen = host::start(&engine, UVec2::new(800, 600)).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let screen =
+        host::start(&engine, UVec2::new(800, 600)).unwrap_or_else(|e| panic!("{name}: {e}"));
     let mut parser = KagParser::new(&engine).unwrap_or_else(|e| panic!("{name}: {e}"));
-    parser.load("first.ks").unwrap_or_else(|e| panic!("{name}: {e}"));
+    parser
+        .load("first.ks")
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
     engine.eval("1 + 1").expect("evaluation");
 
     // The plugin's order: parser, host objects, screen, engine handle, engine.
@@ -79,14 +84,17 @@ fn session(name: &str) {
 
 #[test]
 fn stopping_a_session_frees_its_memory() {
-    // First session allocates one-time process state (message strings, CPU
-    // detection, ...); measure from the second one on.
-    session("warm-up");
+    common::initialize_renderer();
+    for i in 0..8 {
+        session(&format!("warm-up {i}"));
+        assert_eq!(bevy_krkr::plugin::render::texture_usage(), (0, 0));
+    }
 
     let before = bytes_in_use();
     const SESSIONS: usize = 3;
     for i in 0..SESSIONS {
         session(&format!("measured {i}"));
+        assert_eq!(bevy_krkr::plugin::render::texture_usage(), (0, 0));
     }
     let growth = bytes_in_use().saturating_sub(before) / SESSIONS;
     println!("a stopped session keeps {growth} bytes (budget {BUDGET_PER_SESSION})");

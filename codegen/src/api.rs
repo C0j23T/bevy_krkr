@@ -15,6 +15,7 @@ mod audio;
 mod engine;
 mod kag;
 mod layer;
+mod scene;
 mod tjs;
 mod window;
 mod xp3;
@@ -114,6 +115,19 @@ pub const OPAQUE_TYPES: &[(&str, &str)] = &[
     ("KrkrLayerOpaque", "Handle to a Layer, Bitmap or BitmapLayerTreeOwner."),
 ];
 
+/// A struct the ABI passes by pointer.
+#[derive(Debug, Clone, Copy)]
+pub struct StructDecl {
+    pub name: &'static str,
+    pub doc: &'static str,
+    /// Fields as written in C, one line each.
+    pub c_fields: &'static [&'static str],
+    /// The same fields as bindgen spells them in Rust.
+    pub rust_fields: &'static [&'static str],
+}
+
+pub const STRUCTS: &[StructDecl] = &[];
+
 /// A function-pointer typedef, spelled for C and for Rust (as bindgen emits it).
 #[derive(Debug, Clone, Copy)]
 pub struct CallbackType {
@@ -137,6 +151,7 @@ pub const CALLBACK_TYPES: &[CallbackType] = &[
         c_params: "const char* message, int important, void* userdata",
         rust_params: "message: *const c_char, important: c_int, userdata: *mut c_void",
     },
+
 ];
 
 /// Every function, grouped by subsystem in output order.
@@ -147,6 +162,7 @@ pub const GROUPS: &[&[FnDecl]] = &[
     xp3::FUNCTIONS,
     layer::FUNCTIONS,
     window::FUNCTIONS,
+    scene::FUNCTIONS,
     audio::FUNCTIONS,
 ];
 

@@ -249,81 +249,20 @@ struct XP3ArchiveOpaque {
 };
 
 struct KrkrLayerOpaque {
-    iTJSDispatch2 *obj = nullptr; // Layer, Bitmap or BitmapLayerTreeOwner, owned
-    std::vector<uint8_t> pixels;  // last snapshot, RGBA8 top-down packed
-    unsigned int width = 0, height = 0;
-    uint64_t revision = 0;
-    bool has_snapshot = false;
+    iTJSDispatch2 *obj = nullptr; // a Layer, Bitmap or BitmapLayerTreeOwner, owned
 };
 
-// Where the pixels of a pixel-bearing TJS object live. Rows are read one by
-// one with GetScanLine(y): software textures may store rows compressed or
-// shared, so a single base pointer plus pitch is not enough.
-struct KrkrLayerView {
-    const tTVPNativeBaseBitmap *bmp = nullptr; // NULL: no pixels yet
-    unsigned int width = 0, height = 0;        // visible size (<= bitmap size)
-    bool opaque = false;                       // force alpha to 255 (composited screen)
-};
-
-static void krkr_bitmap_view(const tTVPNativeBaseBitmap *bmp, KrkrLayerView &view) {
-    view.bmp = bmp;
-    view.width = bmp ? bmp->GetWidth() : 0;
-    view.height = bmp ? bmp->GetHeight() : 0;
-}
-
-// Recognise the object by its native instance. Returns false if it is not a
-// Bitmap, a Layer or a BitmapLayerTreeOwner.
-static bool krkr_layer_view(iTJSDispatch2 *obj, KrkrLayerView &view) {
+// Whether `obj` is one of the TJS objects that own pixels: a Bitmap, a Layer,
+// or a BitmapLayerTreeOwner -- the layer tree `krkr_scene_build` walks.
+static bool krkr_is_layer_object(iTJSDispatch2 *obj) {
     iTJSNativeInstance *ni = nullptr;
-    if (TJS_SUCCEEDED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE, tTJSNC_BitmapLayerTreeOwner::ClassID, &ni)) && ni) {
-        // Kirikiroid2 composites the layer tree into the LayerManager's draw
-        // buffer (tTVPLayerManager::DrawCompleted) and its window shows that
-        // buffer (tTVPBasicDrawDevice::Show); the owner's own Bitmap is not
-        // updated. Read the draw buffer, cropped to the primary layer size.
-        auto *owner = static_cast<tTJSNI_BitmapLayerTreeOwner *>(ni);
-        view.opaque = true;
-        tTJSNI_BaseLayer *primary = owner->GetPrimaryLayer();
-        tTVPLayerManager *manager = primary ? primary->GetManager() : nullptr;
-        tjs_int w = 0, h = 0;
-        if (!manager || !manager->GetPrimaryLayerSize(w, h)) return true; // no primary layer yet
-        krkr_bitmap_view(manager->GetDrawBuffer(), view);
-        if (view.bmp) {
-            view.width = std::min<unsigned int>(view.width, (unsigned int)w);
-            view.height = std::min<unsigned int>(view.height, (unsigned int)h);
-        }
+    if (TJS_SUCCEEDED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE, tTJSNC_BitmapLayerTreeOwner::ClassID, &ni)) && ni)
         return true;
-    }
     ni = nullptr;
-    if (TJS_SUCCEEDED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE, tTJSNC_Bitmap::ClassID, &ni)) && ni) {
-        krkr_bitmap_view(static_cast<tTJSNI_Bitmap *>(ni)->GetBitmap(), view);
+    if (TJS_SUCCEEDED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE, tTJSNC_Bitmap::ClassID, &ni)) && ni)
         return true;
-    }
     ni = nullptr;
-    if (TJS_SUCCEEDED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID, &ni)) && ni) {
-        auto *lay = dynamic_cast<tTJSNI_BaseLayer *>(ni);
-        if (!lay) return false;
-        krkr_bitmap_view(lay->GetMainImage(), view);
+    if (TJS_SUCCEEDED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID, &ni)) && ni)
         return true;
-    }
     return false;
-}
-
-// Copy the object's pixels into the handle and recompute the revision.
-static void krkr_layer_refresh(KrkrLayerOpaque *layer) {
-    if (krkr_engine_state != KrkrEngineState::Running) return; // keep the last snapshot
-    KrkrLayerView view;
-    if (!krkr_layer_view(layer->obj, view) || !view.bmp || !view.bmp->Is32BPP()) view = KrkrLayerView();
-    layer->width = view.width;
-    layer->height = view.height;
-    size_t row = (size_t)layer->width * 4;
-    layer->pixels.resize(row * layer->height);
-    for (unsigned int y = 0; y < layer->height; ++y) {
-        uint8_t *dst = layer->pixels.data() + row * y;
-        std::memcpy(dst, view.bmp->GetScanLine(y), row);
-        if (view.opaque)
-            for (size_t x = 3; x < row; x += 4) dst[x] = 0xff;
-    }
-    uint64_t seed = ((uint64_t)layer->width << 32) | layer->height;
-    layer->revision = XXH3_64bits_withSeed(layer->pixels.data(), layer->pixels.size(), seed);
-    layer->has_snapshot = true;
 }

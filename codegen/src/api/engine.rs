@@ -80,6 +80,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
         delete TVPSystemControl;
         TVPSystemControl = nullptr;
         TVPBevyResetWindows();
+        TVPBevyResetScene();
         TVPBevyResetSound();
         krkr_clear_session_state();
         return;
@@ -99,6 +100,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
     TVPSystemControl = nullptr;
     // The Window objects died with the TJS engine.
     TVPBevyResetWindows();
+    TVPBevyResetScene();
     // Anything still queued for playback belongs to the session that just ended.
     TVPBevyResetSound();
     krkr_clear_session_state();"#,

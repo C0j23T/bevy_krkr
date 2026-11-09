@@ -8,8 +8,8 @@
 //! Defaults: `snbk/data.xp3` and `scenario\start.ks` (the archive's own entry
 //! point). The scenario is parsed by Kirikiroid2's KAG parser out of the
 //! mounted archive, and the resulting tags become Bevy messages through
-//! `krkr_kag`; the message window is drawn by the host script and reaches the
-//! window through the Kirikiri screen texture.
+//! `krkr_kag`; the message window is drawn by the host script as a Kirikiri
+//! layer, whose texture operations and composition run on Bevy’s GPU.
 //!
 //! What this archive needs on top of the plain engine:
 //! - the game keeps its voice, CG and event images in **7z** archives next to
@@ -18,9 +18,10 @@
 //!   and this example mounts every archive next to the data file so the
 //!   engine's storage layer can reach them;
 //! - its own `startup.tjs` builds the game UI on a Kirikiri `Window`. The port
-//!   implements that class by rendering it off-screen
-//!   (`Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`), so once the
-//!   game drives it the first screen reaches the host's window. That start-up
+//!   implements that class by keeping the window's layer tree
+//!   (`Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`), whose layers the
+//!   host draws itself, so once the game drives it the first screen reaches the
+//!   host's window. That start-up
 //!   currently stops earlier, at a plugin that is not available here, so the
 //!   game's own title screen does not appear yet; the scenario path below
 //!   does, and this example says which of the two is on screen;
@@ -50,6 +51,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use bevy::prelude::*;
+use bevy_inspector_egui::bevy_egui::EguiPlugin;
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_krkr::prelude::*;
 use bevy_krkr::script::Tjs2Engine;
 
@@ -91,6 +94,8 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(EguiPlugin::default())
+        .add_plugins(WorldInspectorPlugin::new())
         .add_plugins(BevyKrkrPlugin {
             start_storage: storage,
             screen_size: UVec2::new(1280, 720),
@@ -104,7 +109,7 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (mount_archives, log_kag, log_window, exit_when_done),
+            (mount_archives.before(bevy_krkr::kag::KagSet), log_kag, log_window, exit_when_done),
         )
         .run();
 }
@@ -130,6 +135,7 @@ fn mount_archives(
     mut game: ResMut<KirikiriSession>,
     engine: Option<NonSend<Tjs2Engine>>,
     mut done: Local<bool>,
+    mut cursor: ResMut<KagCursor>,
 ) {
     let Some(engine) = engine else { return };
     if *done {
@@ -167,6 +173,7 @@ fn mount_archives(
 
     let mut startup_failed = false;
     if game.game_startup {
+        cursor.reset();
         // `exec_startup` is the engine's own start-up sequence: `patch.tjs` next
         // to the data file first (games fix up the engine there -- Fal hollow
         // ataraxia defines `GetFileSize`), then `startup.tjs`, then
@@ -220,22 +227,14 @@ fn log_kag(
 
 /// Reports when the game takes the screen over with its own Kirikiri `Window`
 /// (KAG's `KAGWindow`) instead of the host script's screen.
-fn log_window(engine: Option<NonSend<Tjs2Engine>>, mut shown: Local<Option<UVec2>>) {
-    if engine.is_none() {
+fn log_window(scene: Res<KirikiriScene>, mut shown: Local<Option<UVec2>>) {
+    let size = scene.size;
+    if size == UVec2::ZERO {
+        *shown = None;
         return;
     }
-    let (mut width, mut height) = (0u32, 0u32);
-    // SAFETY: an instance is running (the engine resource exists); the NULL
-    // revision out-parameter is allowed.
-    let ptr = unsafe {
-        bevy_krkr::sys::krkr_window_snapshot(&mut width, &mut height, std::ptr::null_mut())
-    };
-    if ptr.is_null() {
-        return;
-    }
-    let size = UVec2::new(width, height);
     if *shown != Some(size) {
-        info!("snbk: the game's own window is showing ({width}x{height})");
+        info!("snbk: showing a {}x{} screen", size.x, size.y);
         *shown = Some(size);
     }
 }
@@ -262,10 +261,6 @@ fn exit_when_done(
         info!("scenario loaded: {}", e.storage);
         *since = Some(time.elapsed());
     }
-    // With `--game-startup` the game runs its own KAG loop and the storage given
-    // on the command line is only what this host parses alongside it, so its end
-    // is not the end of the session. A game whose start-up threw is a different
-    // matter: it will never get anywhere.
     let scenario_ended = !game.game_startup && ended.read().count() > 0;
     let instance_ended = exited.read().count() > 0;
     if scenario_ended || game.startup_failed || instance_ended {
@@ -273,7 +268,7 @@ fn exit_when_done(
             info!("snbk: the game ended the Kirikiri instance; this example stops too");
         }
         app_exit.write(AppExit::Success);
-    } else if since.is_some_and(|start| time.elapsed() > start + IDLE_TIMEOUT) {
+    } else if !game.game_startup && since.is_some_and(|start| time.elapsed() > start + IDLE_TIMEOUT) {
         warn!("snbk: idle for {}s, exiting", IDLE_TIMEOUT.as_secs());
         app_exit.write(AppExit::Success);
     }

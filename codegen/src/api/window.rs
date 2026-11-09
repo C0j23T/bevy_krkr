@@ -1,41 +1,9 @@
-//! The Kirikiri `Window` class: the surface a game's own UI is built on.
-//!
-//! KAG's `KAGWindow` (`system/..`/`mainwindow.tjs`) creates a `Window` and puts
-//! the message window, backgrounds and everything else in its layer tree. The
-//! port renders it off-screen
-//! (`Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`) and shows the
-//! front-most visible one, the same way it shows the script-created screen.
-//!
-//! Pixmaps and input both go through here: a snapshot of the composited window,
-//! and the engine's own input events for the window's TJS handlers.
+//! Kirikiri Window input.
 
 use super::KirikiridModule::Visual;
 use super::{p, FnDecl};
 
 pub const FUNCTIONS: &[FnDecl] = &[
-    FnDecl {
-        module: Visual,
-        name: "krkr_window_snapshot",
-        doc: "Pixels of the front-most visible Window, or NULL when there is none (or it has \
-              not drawn yet). `width*height*4` bytes of RGBA8, top-down, tightly packed; valid \
-              until the next call into the engine. The out-parameters are written only when a \
-              pointer is returned.",
-        c_ret: "const uint8_t*",
-        rust_ret: "*const u8",
-        params: &[
-            p("out_width", "unsigned int*", "*mut c_uint"),
-            p("out_height", "unsigned int*", "*mut c_uint"),
-            p("out_revision", "uint64_t*", "*mut u64"),
-        ],
-        cpp_target: "TVPBevyGetWindowPixels (environ/bevy/BevyWindowLayer.cpp)",
-        cpp_body: r#"
-    TVPBevyWindowPixels view;
-    if (!TVPBevyGetWindowPixels(view)) return nullptr;
-    if (out_width) *out_width = view.width;
-    if (out_height) *out_height = view.height;
-    if (out_revision) *out_revision = view.revision;
-    return view.pixels;"#,
-    },
     FnDecl {
         module: Visual,
         name: "krkr_window_mouse_move",
