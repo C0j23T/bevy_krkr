@@ -2,7 +2,7 @@
 //!
 //! # Safety
 //! All functions in this crate are `unsafe`. Safe wrappers are provided by
-//! the higher-level crates: `krkr_script`, `krkr_kag`.
+//! the higher-level crates: `krkr_script`, `krkr_plugin`.
 //!
 //! # Codegen
 //! This crate's content is **entirely generated** by `build.rs`.

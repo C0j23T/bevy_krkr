@@ -1,7 +1,7 @@
 //! `krkr_script` – TJS2 runtime adapter.
 //!
 //! [`Tjs2Engine`] is a handle to the Kirikiroid2 engine's TJS2 interpreter
-//! (the one with every native class registered: Layer, KAGParser, Storages…).
+//! (the one with every native class registered: Layer, Window, Storages…).
 //! It is a Bevy **non-send** resource: the interpreter is single-threaded, so
 //! it must only be touched from the main thread. The raw pointer field makes
 //! the type `!Send + !Sync`, which Bevy enforces at compile time.
@@ -122,7 +122,10 @@ impl Tjs2Engine {
     /// are passed as values, never spliced into source.
     pub fn call(&self, func_expr: &str, args: &[&str]) -> Result<String, Tjs2Error> {
         let func = CString::new(func_expr)?;
-        let args: Vec<CString> = args.iter().map(|a| CString::new(*a)).collect::<Result<_, _>>()?;
+        let args: Vec<CString> = args
+            .iter()
+            .map(|a| CString::new(*a))
+            .collect::<Result<_, _>>()?;
         let ptrs: Vec<*const c_char> = args.iter().map(|a| a.as_ptr()).collect();
         let mut out: *mut c_char = std::ptr::null_mut();
         // SAFETY: self.ptr is live; `ptrs` holds `ptrs.len()` NUL-terminated
@@ -154,7 +157,7 @@ fn check(code: sys::krkr_result_t, what: &'static str) -> Result<(), Tjs2Error> 
     }
 }
 
-/// System set for TJS2 work inside `Update`. KAG systems run after it.
+/// System set for TJS2 work inside `Update`.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tjs2Set;
 

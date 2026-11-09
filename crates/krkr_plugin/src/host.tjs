@@ -3,27 +3,16 @@
 //
 // A Bevy host has no Kirikiri Window owner: the screen this script builds is a
 // BitmapLayerTreeOwner whose primary layer tree Kirikiroid2 composites
-// off-screen; bevy_krkr uploads the composited pixels as a texture. The message
-// window is a Kirikiri Layer; text is laid out and rasterised by Kirikiroid2
-// (Font, drawText). The KAG tags themselves are interpreted on the Bevy side
-// (krkr_kag), which calls showMessage / clearMessage.
+// off-screen; bevy_krkr uploads the composited pixels as a texture.
 //
-// A game that brings its own UI (KAG's KAGWindow, compiled into every KAG3
-// game) creates a `Window` instead; the port renders that off-screen too and
-// the host shows it in place of this script's screen (see
-// krkr_plugin/src/render.rs).
+// A game that brings its own UI creates a `Window` instead; the port renders
+// that off-screen too and the host shows it in place of this script's screen
+// (see krkr_plugin/src/render.rs).
 
 class KrkrBevyHost
 {
     var screen;      // BitmapLayerTreeOwner: what bevy_krkr displays
     var base;        // primary layer: background
-    var message;     // message window layer
-    var marginX = 24;
-    var marginY = 18;
-    var lineSpacing = 6;
-    var textColor = 0xffffff;
-    var windowColor = 0xc0000000; // ARGB: translucent black
-    var text = "";
 
     function KrkrBevyHost(width, height)
     {
@@ -32,16 +21,6 @@ class KrkrBevyHost
         base.setImageSize(width, height);
         base.setSizeToImageSize();
         base.fillRect(0, 0, width, height, 0xff000000);
-
-        var h = height \ 4;
-        message = new Layer(screen, base);
-        message.type = ltAlpha;
-        message.setImageSize(width, h);
-        message.setSizeToImageSize();
-        message.setPos(0, height - h);
-        message.font.height = 24;
-        message.visible = true;
-        clearMessage();
     }
 
     function finalize()
@@ -52,40 +31,7 @@ class KrkrBevyHost
         // owner through a reference cycle, so nothing would ever reach a
         // reference count of zero. Without them a stopped instance keeps its
         // bitmaps (several megabytes) for the rest of the process.
-        if (message !== void) { invalidate message; message = void; }
         if (base !== void) { invalidate base; base = void; }
         if (screen !== void) { invalidate screen; screen = void; }
-        text = "";
     }
-
-    // Wrap `s` to the window width using the font's real glyph widths.
-    function layout(s)
-    {
-        var maxw = message.imageWidth - marginX * 2;
-        var lines = [];
-        var cur = "";
-        for (var i = 0; i < s.length; i++)
-        {
-            var c = s.charAt(i);
-            if (c == "\n") { lines.add(cur); cur = ""; continue; }
-            if (cur != "" && message.font.getTextWidth(cur + c) > maxw) { lines.add(cur); cur = ""; }
-            cur += c;
-        }
-        lines.add(cur);
-        return lines;
-    }
-
-    function redraw()
-    {
-        message.fillRect(0, 0, message.imageWidth, message.imageHeight, windowColor);
-        var lines = layout(text);
-        var y = marginY;
-        var lh = message.font.height + lineSpacing;
-        for (var i = 0; i < lines.count; i++, y += lh)
-            message.drawText(marginX, y, lines[i], textColor);
-    }
-
-    // `s` is the whole text since the last clear (ShowMessageEvent.text).
-    function showMessage(s) { text = s; redraw(); }
-    function clearMessage() { text = ""; redraw(); }
 }

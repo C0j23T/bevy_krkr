@@ -13,7 +13,6 @@ use std::ffi::CString;
 use std::path::PathBuf;
 
 use bevy::prelude::UVec2;
-use bevy_krkr::kag::KagParser;
 use bevy_krkr::plugin::host;
 use bevy_krkr::script::{last_error, Tjs2Engine};
 use bevy_krkr::sys;
@@ -23,7 +22,7 @@ fn data_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/game")
 }
 
-/// Start an instance, use it (script, host layer, KAG parser) and stop it.
+/// Start an instance, use it (script, host layer) and stop it.
 fn run_session(name: &str) {
     let path = data_path();
     let c_path = CString::new(path.to_string_lossy().as_bytes()).expect("no NUL in the path");
@@ -37,8 +36,6 @@ fn run_session(name: &str) {
 
     let engine = Tjs2Engine::new().unwrap_or_else(|e| panic!("{name}: {e}"));
     let screen = host::start(&engine, UVec2::new(800, 600)).unwrap_or_else(|e| panic!("{name}: {e}"));
-    let mut parser = KagParser::new(&engine).unwrap_or_else(|e| panic!("{name}: {e}"));
-    parser.load("first.ks").unwrap_or_else(|e| panic!("{name}: {e}"));
 
     // The interpreter runs, and the session starts without a pending exit
     // request from the previous one.
@@ -78,7 +75,6 @@ fn run_session(name: &str) {
     );
 
     // Release the handles in the plugin's order.
-    drop(parser);
     drop(screen);
     drop(engine);
     // SAFETY: every handle created above is released.

@@ -1,8 +1,7 @@
 //! The Kirikiri `Window` class: the surface a game's own UI is built on.
 //!
-//! KAG's `KAGWindow` (`system/..`/`mainwindow.tjs`) creates a `Window` and puts
-//! the message window, backgrounds and everything else in its layer tree. The
-//! port renders it off-screen
+//! A game's scripts create a `Window` and put their layers in its layer tree.
+//! The port renders it off-screen
 //! (`Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`) and shows the
 //! front-most visible one, the same way it shows the script-created screen.
 //!
@@ -39,7 +38,8 @@ pub const FUNCTIONS: &[FnDecl] = &[
     FnDecl {
         module: Visual,
         name: "krkr_window_mouse_move",
-        doc: "Post a mouse-move event to the front-most visible Window. `x`/`y` are window pixels. \
+        doc:
+            "Post a mouse-move event to the front-most visible Window. `x`/`y` are window pixels. \
               Nothing happens when no window is visible.",
         c_ret: "void",
         rust_ret: "",

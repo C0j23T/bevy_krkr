@@ -13,7 +13,6 @@
 
 mod audio;
 mod engine;
-mod kag;
 mod layer;
 mod tjs;
 mod window;
@@ -24,7 +23,6 @@ mod xp3;
 pub enum KirikiridModule {
     Engine,
     Tjs2,
-    KagParser,
     XP3Archive,
     Visual,
     Audio,
@@ -35,7 +33,6 @@ impl KirikiridModule {
         match self {
             Self::Engine => "Engine lifecycle (src/core/base/SysInitIntf, src/core/environ)",
             Self::Tjs2 => "TJS2 runtime (src/core/tjs2, src/core/base/ScriptMgnIntf)",
-            Self::KagParser => "KAG3 parser (src/core/utils/KAGParser)",
             Self::XP3Archive => "Archives (src/core/base/XP3Archive, StorageIntf)",
             Self::Visual => "Layers / bitmaps / Window (src/core/visual)",
             Self::Audio => "Sound output (src/core/sound, environ/bevy/BevySound.cpp)",
@@ -95,7 +92,6 @@ pub(crate) const fn cstr(name: &'static str) -> Param {
 }
 
 pub(crate) const TJS: Param = p("tjs", "tTJSOpaque*", "*mut tTJSOpaque");
-pub(crate) const PARSER: Param = p("parser", "KAGParserOpaque*", "*mut KAGParserOpaque");
 pub(crate) const ARCHIVE: Param = p("archive", "XP3ArchiveOpaque*", "*mut XP3ArchiveOpaque");
 pub(crate) const LAYER: Param = p("layer", "KrkrLayerOpaque*", "*mut KrkrLayerOpaque");
 
@@ -103,15 +99,19 @@ pub(crate) const LAYER: Param = p("layer", "KrkrLayerOpaque*", "*mut KrkrLayerOp
 pub const CONSTANTS: &[(&str, i32, &str)] = &[
     ("KRKR_OK", 0, "Success."),
     ("KRKR_ERROR", -1, "Failure; krkr_last_error() describes it."),
-    ("KRKR_END", 1, "The KAG scenario has no more tags."),
 ];
 
 /// `(name, doc)` for opaque handle types.
 pub const OPAQUE_TYPES: &[(&str, &str)] = &[
     ("tTJSOpaque", "Handle to the engine's TJS2 interpreter."),
-    ("KAGParserOpaque", "Handle to a KAGParser object."),
-    ("XP3ArchiveOpaque", "Handle to an opened XP3 (or TAR) archive."),
-    ("KrkrLayerOpaque", "Handle to a Layer, Bitmap or BitmapLayerTreeOwner."),
+    (
+        "XP3ArchiveOpaque",
+        "Handle to an opened XP3 (or TAR) archive.",
+    ),
+    (
+        "KrkrLayerOpaque",
+        "Handle to a Layer, Bitmap or BitmapLayerTreeOwner.",
+    ),
 ];
 
 /// A function-pointer typedef, spelled for C and for Rust (as bindgen emits it).
@@ -123,27 +123,18 @@ pub struct CallbackType {
     pub rust_params: &'static str,
 }
 
-pub const CALLBACK_TYPES: &[CallbackType] = &[
-    CallbackType {
-        name: "krkr_tag_callback_t",
-        doc: "KAG tag callback. `attrs_json` is a JSON object whose values are all strings. \
-              Text runs are tag \"ch\" with attribute \"text\".",
-        c_params: "const char* tag_name, const char* attrs_json, void* userdata",
-        rust_params: "tag_name: *const c_char, attrs_json: *const c_char, userdata: *mut c_void",
-    },
-    CallbackType {
-        name: "krkr_log_callback_t",
-        doc: "Engine log callback. `message` is UTF-8; `important` is non-zero for warnings and errors.",
-        c_params: "const char* message, int important, void* userdata",
-        rust_params: "message: *const c_char, important: c_int, userdata: *mut c_void",
-    },
-];
+pub const CALLBACK_TYPES: &[CallbackType] = &[CallbackType {
+    name: "krkr_log_callback_t",
+    doc:
+        "Engine log callback. `message` is UTF-8; `important` is non-zero for warnings and errors.",
+    c_params: "const char* message, int important, void* userdata",
+    rust_params: "message: *const c_char, important: c_int, userdata: *mut c_void",
+}];
 
 /// Every function, grouped by subsystem in output order.
 pub const GROUPS: &[&[FnDecl]] = &[
     engine::FUNCTIONS,
     tjs::FUNCTIONS,
-    kag::FUNCTIONS,
     xp3::FUNCTIONS,
     layer::FUNCTIONS,
     window::FUNCTIONS,

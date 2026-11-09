@@ -3,7 +3,6 @@
 // krkr_c_api.cpp by krkr_codegen, after the generated header include.
 
 #include "tjsCommHead.h"
-#include "tjsDictionary.h"
 #include "tjsError.h"
 #include "Application.h"
 #include "ScriptMgnIntf.h"
@@ -161,28 +160,6 @@ static char *krkr_strdup(const std::string &s) {
     return p;
 }
 
-static void krkr_json_escape(std::string &out, const std::string &s) {
-    out += '"';
-    for (unsigned char c : s) {
-        switch (c) {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default:
-            if (c < 0x20) {
-                char buf[8];
-                std::snprintf(buf, sizeof buf, "\\u%04x", c);
-                out += buf;
-            } else {
-                out += (char)c;
-            }
-        }
-    }
-    out += '"';
-}
-
 // ─── logging ────────────────────────────────────────────────────────────────
 
 static krkr_log_callback_t krkr_log_cb = nullptr;
@@ -204,45 +181,7 @@ static tTJSVariant krkr_call_method(iTJSDispatch2 *obj, const tjs_char *method,
     return result;
 }
 
-// Serialise a dictionary to a JSON object of strings, skipping `skip`.
-struct KrkrJsonCollector : public tTJSDispatch {
-    std::string json = "{";
-    bool first = true;
-    const tjs_char *skip = nullptr;
-
-    tjs_error TJS_INTF_METHOD FuncCall(tjs_uint32, const tjs_char *, tjs_uint32 *, tTJSVariant *result,
-                                       tjs_int numparams, tTJSVariant **param, iTJSDispatch2 *) override {
-        // EnumMembers calls back with (name, flags, value).
-        if (numparams < 3) return TJS_E_BADPARAMCOUNT;
-        if (result) *result = (tjs_int)1; // continue enumeration
-        if ((tjs_int)*param[1] & TJS_HIDDENMEMBER) return TJS_S_OK;
-        ttstr key(*param[0]);
-        if (skip && key == skip) return TJS_S_OK;
-        if (!first) json += ',';
-        first = false;
-        krkr_json_escape(json, key.AsStdString());
-        json += ':';
-        krkr_json_escape(json, krkr_variant_to_utf8(*param[2]));
-        return TJS_S_OK;
-    }
-};
-
-static std::string krkr_dict_to_json(iTJSDispatch2 *dict, const tjs_char *skip) {
-    KrkrJsonCollector collector;
-    collector.skip = skip;
-    tTJSVariantClosure clo(&collector, nullptr);
-    dict->EnumMembers(TJS_IGNOREPROP, &clo, dict);
-    collector.json += '}';
-    return collector.json;
-}
-
 // ─── opaque handles ─────────────────────────────────────────────────────────
-
-struct KAGParserOpaque {
-    iTJSDispatch2 *obj = nullptr; // a KAGParser instance, owned
-    krkr_tag_callback_t callback = nullptr;
-    void *userdata = nullptr;
-};
 
 struct XP3ArchiveOpaque {
     tTVPArchive *arc = nullptr; // owned (Release)

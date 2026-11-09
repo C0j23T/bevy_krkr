@@ -1,7 +1,7 @@
 //! Kirikiri screen → Bevy texture.
 //!
-//! Kirikiroid2 composites the screen's layer tree (background, message window
-//! with its rendered text, …) off-screen; see [`crate::host`]. This module
+//! Kirikiroid2 composites the screen's layer tree off-screen; see
+//! [`crate::host`]. This module
 //! copies the composited RGBA8 pixels into one Bevy [`Image`] when they
 //! changed (`krkr_layer_get_revision` hashes them), and shows it with a
 //! [`Sprite`]. The bytes go straight into the texture (`Rgba8UnormSrgb`, the
@@ -17,10 +17,10 @@ use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use krkr_kag::KirikiriCamera;
 use krkr_sys as sys;
 
 use crate::host::KrkrScreen;
+use crate::KirikiriCamera;
 
 /// Render layer used for the Kirikiri screen sprite.
 pub const KIRIKIRI_RENDER_LAYER: usize = 27;
@@ -43,10 +43,7 @@ pub struct KrkrRenderPlugin;
 impl Plugin for KrkrRenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KirikiriScreenImage>()
-            .add_systems(
-                PostUpdate,
-                (setup_kirikiri_camera, crate::host::message_window, sync_screen).chain(),
-            );
+            .add_systems(PostUpdate, (setup_kirikiri_camera, sync_screen).chain());
     }
 }
 
@@ -87,20 +84,20 @@ pub(crate) fn sync_screen(
     mut images: ResMut<Assets<Image>>,
     sprites: Query<Entity, With<KirikiriScreen>>,
 ) {
-    let layer = kirikiri.as_ref().map_or(std::ptr::null_mut(), |s| s.as_ptr());
+    let layer = kirikiri
+        .as_ref()
+        .map_or(std::ptr::null_mut(), |s| s.as_ptr());
     if layer.is_null() {
         if screen.image.is_some() {
-            sprites
-                .iter()
-                .for_each(|e| {
-                    commands.entity(e).insert(Visibility::Hidden);
-                });
+            sprites.iter().for_each(|e| {
+                commands.entity(e).insert(Visibility::Hidden);
+            });
             *screen = KirikiriScreenImage::default();
         }
         return;
     }
 
-    // A Window (KAG's KAGWindow, a game's own menus) draws the whole screen.
+    // A game's own UI, built on a Kirikiri Window, draws the whole screen.
     if let Some((pixels, width, height, revision)) = window_snapshot() {
         upload(
             &mut commands,

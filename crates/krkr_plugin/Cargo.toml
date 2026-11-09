@@ -8,8 +8,5 @@ description = "Top-level Bevy plugin assembling the bevy_krkr subsystems"
 [dependencies]
 krkr_sys    = { path = "../krkr_sys" }
 krkr_script = { path = "../krkr_script" }
-krkr_kag    = { path = "../krkr_kag" }
-# The device the engine's mixed audio is written to. The same cpal
-# bevy_kira_audio uses, so it is already compiled in.
 cpal        = "0.18"
 bevy        = { workspace = true }

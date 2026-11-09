@@ -66,7 +66,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
     FnDecl {
         module: Engine,
         name: "krkr_engine_shutdown",
-        doc: "Shut the engine down. Release every handle (TJS, parser, archive, layer) first. \
+        doc: "Shut the engine down. Release every handle (TJS, archive, layer) first. \
               The process may then start another instance with krkr_engine_init.",
         c_ret: "void",
         rust_ret: "",

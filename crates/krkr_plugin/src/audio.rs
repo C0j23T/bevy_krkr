@@ -6,10 +6,8 @@
 //! output device and pulls that mix: one `krkr_audio_mix` call per device
 //! callback, resampled to whatever rate the device runs at.
 //!
-//! It is the engine's sound path, which is what a game that runs its own UI
-//! (`WaveSoundBuffer` in KAG's `system/bgm.tjs`) needs. The host-parsed KAG tags
-//! are a separate path; both can be up at once, the engine's mix simply comes 
-//! out of this stream.
+//! It is the engine's sound path, the one a game's scripts use through
+//! `WaveSoundBuffer`.
 //!
 //! The mix call does not touch the rest of the engine, so it is safe to make
 //! from the audio thread: buffers are created, driven and released on the main
