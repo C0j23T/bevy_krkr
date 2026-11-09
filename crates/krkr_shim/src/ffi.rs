@@ -15,6 +15,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::archives::{Archive, Kind};
+use crate::xml;
 
 // ─── pointer plumbing ──────────────────────────────────────────────────────
 
@@ -149,27 +150,23 @@ pub unsafe extern "C" fn krkr_lz4_decompress(
 
 // ─── archives ──────────────────────────────────────────────────────────────
 
-/// Callbacks into the C++ `tTJSBinaryStream`. Mirrors `KrkrArchiveReader` in
-/// `environ/bevy/compat/krkr_shim.h`.
+/// The stream an archive is read from: callbacks into the C++ `tTJSBinaryStream`.
 #[repr(C)]
-pub struct KrkrArchiveReader {
+pub struct KrkrStream {
     pub userdata: *mut c_void,
-    /// Reads at most `len` bytes; returns the count, 0 at end of stream, or a
-    /// negative number on error.
+    /// Reads at most `len` bytes; the count, 0 at the end, or a negative number
+    /// on error.
     pub read: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> i64>,
-    /// `whence` is 0 (start), 1 (current) or 2 (end); returns the new absolute
+    /// `whence` is 0 (start), 1 (current) or 2 (end); the new absolute
     /// position, or a negative number on error.
     pub seek: Option<unsafe extern "C" fn(*mut c_void, i64, i32) -> i64>,
     /// Length of the stream, needed to seek from the end.
     pub size: i64,
 }
 
-/// `Read + Seek` over the C callbacks: the adapter that lets
-/// [`crate::archives::Archive`] read from a `tTJSBinaryStream` it does not own.
-///
-/// Public only because it is the type behind the `KrkrArchive *` handle; its
-/// fields and the type itself are not part of the ABI the C++ side sees.
-pub struct Source {
+/// `Read + Seek` over [`KrkrStream`]: what lets [`crate::archives::Archive`]
+/// read a `tTJSBinaryStream` it does not own.
+pub struct Stream {
     userdata: *mut c_void,
     read: unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> i64,
     seek: unsafe extern "C" fn(*mut c_void, i64, i32) -> i64,
@@ -177,25 +174,25 @@ pub struct Source {
 }
 
 // The pointers belong to the C++ side, which only ever runs one of these calls
-// at a time (the archive holds the decoder behind a mutex).
-unsafe impl Send for Source {}
+// at a time (the archive holds its decoder behind a mutex).
+unsafe impl Send for Stream {}
 
-impl Source {
+impl Stream {
     /// # Safety
-    /// `reader` must point at a valid `KrkrArchiveReader` whose callbacks stay
-    /// alive and callable until the archive is closed.
-    unsafe fn from_c(reader: *const KrkrArchiveReader) -> Option<Self> {
-        let reader = reader.as_ref()?;
+    /// `stream` must point at a valid [`KrkrStream`] whose callbacks stay alive
+    /// and callable until the archive is closed.
+    unsafe fn from_c(stream: *const KrkrStream) -> Option<Self> {
+        let stream = stream.as_ref()?;
         Some(Self {
-            userdata: reader.userdata,
-            read: reader.read?,
-            seek: reader.seek?,
-            size: if reader.size > 0 { reader.size as u64 } else { 0 },
+            userdata: stream.userdata,
+            read: stream.read?,
+            seek: stream.seek?,
+            size: if stream.size > 0 { stream.size as u64 } else { 0 },
         })
     }
 }
 
-impl Read for Source {
+impl Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -210,7 +207,7 @@ impl Read for Source {
     }
 }
 
-impl Seek for Source {
+impl Seek for Stream {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let (offset, whence) = match pos {
             SeekFrom::Start(n) => (n as i64, 0),
@@ -225,9 +222,19 @@ impl Seek for Source {
     }
 }
 
-/// The handle the C++ side holds as `KrkrArchive *`. Opaque to it: the layout
-/// is not part of the ABI.
-pub type KrkrArchive = Archive<Source>;
+/// Opaque to C++; the layout is not part of the ABI.
+pub type KrkrArchive = Archive<Stream>;
+
+/// Where [`krkr_archive_open`] reports the entry list.
+#[repr(C)]
+pub struct KrkrArchiveEntries {
+    pub userdata: *mut c_void,
+    /// `index` is what [`krkr_archive_read`] takes. `name` is UTF-8,
+    /// NUL-terminated, and lives only for the call. As with every visitor here,
+    /// it runs on this crate's stack: it must not throw and must not call back
+    /// into the shim.
+    pub entry: Option<unsafe extern "C" fn(*mut c_void, usize, *const c_char, usize)>,
+}
 
 /// `KRKR_ARCHIVE_*` in `environ/bevy/compat/krkr_shim.h`.
 pub const KRKR_ARCHIVE_7Z: i32 = 1;
@@ -241,28 +248,34 @@ fn kind_from_c(kind: i32) -> Option<Kind> {
     }
 }
 
-/// Opens `reader` as a 7z or ZIP archive and lists its entries.
-///
-/// Returns null when the stream is not an archive of `kind`; the caller
-/// (`TVPOpenArchive`) then tries the next format, so this must leave the
-/// stream seekable.
+/// Null when the stream is not an archive of `kind` or holds no files; the
+/// caller then tries the next format, so the stream is left seekable. Entries
+/// are reported through `entries` as the archive lists them.
 ///
 /// # Safety
-/// `reader` must be valid for the call and stay valid (its `userdata` and
-/// callbacks) until [`krkr_archive_close`].
+/// `stream` must be valid for the call and stay valid (its `userdata` and
+/// callbacks) until [`krkr_archive_close`]; `entries` must be readable and its
+/// callback must obey [`KrkrArchiveEntries`]'s rules.
 #[no_mangle]
 pub unsafe extern "C" fn krkr_archive_open(
-    reader: *const KrkrArchiveReader,
+    stream: *const KrkrStream,
     kind: i32,
+    entries: *const KrkrArchiveEntries,
 ) -> *mut KrkrArchive {
     guard(std::ptr::null_mut(), || {
-        let (Some(source), Some(kind)) = (Source::from_c(reader), kind_from_c(kind)) else {
+        let (Some(stream), Some(kind)) = (Stream::from_c(stream), kind_from_c(kind)) else {
             return std::ptr::null_mut();
         };
-        match Archive::open(kind, source) {
-            Some(archive) => Box::into_raw(Box::new(archive)),
-            None => std::ptr::null_mut(),
+        let Some(archive) = Archive::open(kind, stream) else { return std::ptr::null_mut() };
+        if let Some(entries) = entries.as_ref() {
+            if let Some(entry) = entries.entry {
+                for (index, listed) in archive.entries().iter().enumerate() {
+                    let name = c_string(listed.name());
+                    entry(entries.userdata, index, name.as_ptr(), listed.size() as usize);
+                }
+            }
         }
+        Box::into_raw(Box::new(archive))
     })
 }
 
@@ -278,58 +291,8 @@ pub unsafe extern "C" fn krkr_archive_close(archive: *mut KrkrArchive) {
     guard((), || drop(Box::from_raw(archive)));
 }
 
-/// Number of entries in the list.
-///
-/// # Safety
-/// `archive` must be a live archive handle.
-#[no_mangle]
-pub unsafe extern "C" fn krkr_archive_count(archive: *const KrkrArchive) -> usize {
-    archive.as_ref().map_or(0, |archive| archive.entries().len())
-}
-
-/// Uncompressed size of entry `index`, or `SIZE_MAX` for a bad index.
-///
-/// # Safety
-/// `archive` must be a live archive handle.
-#[no_mangle]
-pub unsafe extern "C" fn krkr_archive_size(archive: *const KrkrArchive, index: usize) -> usize {
-    match archive.as_ref().and_then(|archive| archive.entries().get(index)) {
-        Some(entry) => entry.size() as usize,
-        None => FAILED,
-    }
-}
-
-/// Copies entry `index`'s name into `buf` as UTF-8 and NUL-terminates it.
-///
-/// Returns the byte count without the NUL. `buf` may be null (or `len` 0) to
-/// ask for the length only, which is how the caller sizes its buffer.
-///
-/// # Safety
-/// `archive` must be live; `buf` must hold `len` writable bytes when not null.
-#[no_mangle]
-pub unsafe extern "C" fn krkr_archive_name(
-    archive: *const KrkrArchive,
-    index: usize,
-    buf: *mut c_char,
-    len: usize,
-) -> usize {
-    let Some(entry) = archive.as_ref().and_then(|archive| archive.entries().get(index)) else {
-        return FAILED;
-    };
-    let name = entry.name().as_bytes();
-    if !buf.is_null() && len > 0 {
-        let copied = name.len().min(len - 1);
-        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.cast(), copied);
-        *buf.add(copied) = 0;
-    }
-    name.len()
-}
-
-/// Decompresses entry `index` into `buf` (`len` bytes).
-///
-/// Returns the bytes written, or `SIZE_MAX` when the entry does not fit or
-/// cannot be decoded. The caller gets the exact size from [`krkr_archive_size`]
-/// first, so a short read is an error rather than something to pad.
+/// Decompresses entry `index` into `buf` and returns the bytes written, or
+/// [`FAILED`] when the entry does not fit or cannot be decoded.
 ///
 /// # Safety
 /// `archive` must be live; `buf` must hold `len` writable bytes.
@@ -347,6 +310,279 @@ pub unsafe extern "C" fn krkr_archive_read(
             Some(written) => written,
             None => FAILED,
         }
+    })
+}
+
+// ─── WebP ──────────────────────────────────────────────────────────────────
+//
+// libwebp's only user was `visual/LoadWEBP.cpp`, whose handler registers no save
+// function, so the bitstream is decoded here and the engine only asks for a
+// header and then for pixels.
+
+#[repr(C)]
+pub struct KrkrWebpInfo {
+    pub width: u32,
+    pub height: u32,
+    /// Non-zero when the file carries an alpha channel.
+    pub has_alpha: i32,
+}
+
+/// `(width, height, has_alpha, pixels)`, with 3 bytes per pixel when the file
+/// has no alpha.
+fn webp_decode(bytes: &[u8]) -> Option<(u32, u32, bool, Vec<u8>)> {
+    let mut decoder = image_webp::WebPDecoder::new(io::Cursor::new(bytes)).ok()?;
+    let (width, height) = decoder.dimensions();
+    let mut pixels = vec![0u8; decoder.output_buffer_size()?];
+    decoder.read_image(&mut pixels).ok()?;
+    Some((width, height, decoder.has_alpha(), pixels))
+}
+
+/// 0 on success, -1 when `src` is not a WebP image. Fills the header fields
+/// only; the image is not decoded.
+///
+/// # Safety
+/// `src` must hold `src_len` bytes (or be null if `src_len` is 0); `info` must
+/// be writable.
+#[no_mangle]
+pub unsafe extern "C" fn krkr_webp_info(
+    src: *const c_void,
+    src_len: usize,
+    info: *mut KrkrWebpInfo,
+) -> i32 {
+    let Some(info) = info.as_mut() else { return -1 };
+    guard(-1, || {
+        let Ok(decoder) = image_webp::WebPDecoder::new(io::Cursor::new(input(src, src_len))) else {
+            return -1;
+        };
+        let (width, height) = decoder.dimensions();
+        *info = KrkrWebpInfo { width, height, has_alpha: decoder.has_alpha() as i32 };
+        0
+    })
+}
+
+/// Writes `width * height * 4` bytes of RGBA8 — the byte order of an engine
+/// bitmap — and returns the count, or [`FAILED`] when the image does not decode
+/// or does not fit `dst_len`.
+///
+/// # Safety
+/// `src` must hold `src_len` bytes (or be null if `src_len` is 0); `dst` must
+/// hold `dst_len` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn krkr_webp_decode(
+    src: *const c_void,
+    src_len: usize,
+    dst: *mut c_void,
+    dst_len: usize,
+) -> usize {
+    let dst = output(dst, dst_len);
+    guard(FAILED, || {
+        let Some((width, height, _, pixels)) = webp_decode(input(src, src_len)) else {
+            return FAILED;
+        };
+        let Some(count) = (width as usize).checked_mul(height as usize) else { return FAILED };
+        let Some(needed) = count.checked_mul(4) else { return FAILED };
+        if count == 0 || dst.len() < needed {
+            return FAILED;
+        }
+        let dst = &mut dst[..needed];
+        match pixels.len() / count {
+            // `image-webp` drops the alpha byte when the file has none.
+            4 => dst.copy_from_slice(&pixels),
+            3 => {
+                for (pixel, dst) in pixels.chunks_exact(3).zip(dst.chunks_exact_mut(4)) {
+                    dst[..3].copy_from_slice(pixel);
+                    dst[3] = 0xFF;
+                }
+            }
+            _ => return FAILED,
+        }
+        needed
+    })
+}
+
+// ─── config files ──────────────────────────────────────────────────────────
+//
+// `environ/ConfigManager` keeps its settings and its locale table in flat XML
+// lists; see `crate::xml`.
+
+/// `KRKR_PREFERENCE_*` in `krkr_shim.h`.
+pub const KRKR_PREFERENCE_ITEM: i32 = 0;
+pub const KRKR_PREFERENCE_CUSTOM: i32 = 1;
+pub const KRKR_PREFERENCE_KEYMAP: i32 = 2;
+
+/// # Safety
+/// `ptr` must be null or point at a NUL-terminated string.
+unsafe fn text<'a>(ptr: *const c_char) -> Option<&'a str> {
+    if ptr.is_null() {
+        return None;
+    }
+    std::ffi::CStr::from_ptr(ptr).to_str().ok()
+}
+
+/// A path is bytes on Unix — the engine's directories can hold names that are
+/// not UTF-8 — so it does not go through [`text`].
+///
+/// # Safety
+/// `ptr` must be null or point at a NUL-terminated string.
+unsafe fn path(ptr: *const c_char) -> Option<std::path::PathBuf> {
+    if ptr.is_null() {
+        return None;
+    }
+    let bytes = std::ffi::CStr::from_ptr(ptr).to_bytes();
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Some(std::path::Path::new(std::ffi::OsStr::from_bytes(bytes)).to_path_buf())
+    }
+    #[cfg(not(unix))]
+    {
+        Some(std::path::PathBuf::from(std::str::from_utf8(bytes).ok()?))
+    }
+}
+
+/// Callbacks for [`krkr_preference_read`]. They run on this crate's stack, so a
+/// C++ exception escaping one aborts the process; they must not call back into
+/// the shim either. Both strings are UTF-8 and NUL-terminated, and live only
+/// for the call.
+#[repr(C)]
+pub struct KrkrPreferenceVisitor {
+    pub userdata: *mut c_void,
+    /// A setting or an extra command-line argument, `list` being
+    /// `KRKR_PREFERENCE_ITEM` or `KRKR_PREFERENCE_CUSTOM`.
+    pub entry: Option<unsafe extern "C" fn(*mut c_void, i32, *const c_char, *const c_char)>,
+    /// A key map entry, already read as numbers.
+    pub keymap: Option<unsafe extern "C" fn(*mut c_void, i32, i32)>,
+}
+
+/// Callback for [`krkr_locale_read`]; same rules as [`KrkrPreferenceVisitor`].
+#[repr(C)]
+pub struct KrkrTextVisitor {
+    pub userdata: *mut c_void,
+    pub text: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)>,
+}
+
+/// One record for [`krkr_preference_write`].
+#[repr(C)]
+pub struct KrkrPreferenceRecord {
+    /// `KRKR_PREFERENCE_ITEM`, `KRKR_PREFERENCE_CUSTOM` or `KRKR_PREFERENCE_KEYMAP`.
+    pub list: i32,
+    /// Key map entries only: the key code before and after the remap.
+    pub key: i32,
+    pub value: i32,
+    /// Settings and arguments only: UTF-8, NUL-terminated, read during the call.
+    pub key_text: *const c_char,
+    pub value_text: *const c_char,
+}
+
+/// A NUL-terminated copy to hand to a visitor. A string that is not UTF-8
+/// becomes empty rather than failing the whole file.
+fn c_string(text: &str) -> std::ffi::CString {
+    std::ffi::CString::new(text).unwrap_or_default()
+}
+
+/// 0 when the file was read and is well-formed XML, -1 otherwise.
+///
+/// # Safety
+/// `path_ptr` must be NUL-terminated; `visitor` must be readable and its
+/// callbacks must obey [`KrkrPreferenceVisitor`]'s rules.
+#[no_mangle]
+pub unsafe extern "C" fn krkr_preference_read(
+    path_ptr: *const c_char,
+    visitor: *const KrkrPreferenceVisitor,
+) -> i32 {
+    guard(-1, || {
+        let (Some(path), Some(visitor)) = (path(path_ptr), visitor.as_ref()) else { return -1 };
+        let Ok(xml) = std::fs::read(path) else { return -1 };
+        let Some(preference) = xml::Preference::parse(&xml) else { return -1 };
+
+        if let Some(entry) = visitor.entry {
+            let settings = preference
+                .items
+                .iter()
+                .map(|(key, value)| (KRKR_PREFERENCE_ITEM, key, value))
+                .chain(
+                    preference
+                        .custom_arguments
+                        .iter()
+                        .map(|(key, value)| (KRKR_PREFERENCE_CUSTOM, key, value)),
+                );
+            for (list, key, value) in settings {
+                let (key, value) = (c_string(key), c_string(value));
+                entry(visitor.userdata, list, key.as_ptr(), value.as_ptr());
+            }
+        }
+        if let Some(keymap) = visitor.keymap {
+            for &(key, value) in &preference.keymap {
+                keymap(visitor.userdata, key, value);
+            }
+        }
+        0
+    })
+}
+
+/// Writes the records in the order given, which is the order they are read
+/// back in. 0 when the file was written, -1 when it could not be.
+///
+/// # Safety
+/// `path_ptr` must be NUL-terminated; `records` must hold `count` readable
+/// records whose strings are NUL-terminated (or be null when `count` is 0).
+#[no_mangle]
+pub unsafe extern "C" fn krkr_preference_write(
+    path_ptr: *const c_char,
+    records: *const KrkrPreferenceRecord,
+    count: usize,
+) -> i32 {
+    guard(-1, || {
+        let Some(path) = path(path_ptr) else { return -1 };
+        let records: &[KrkrPreferenceRecord] = if records.is_null() || count == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(records, count)
+        };
+        let mut preference = xml::Preference::default();
+        let record_text = |ptr: *const c_char| text(ptr).unwrap_or_default().to_owned();
+        for record in records {
+            match record.list {
+                KRKR_PREFERENCE_ITEM => preference
+                    .items
+                    .push((record_text(record.key_text), record_text(record.value_text))),
+                KRKR_PREFERENCE_CUSTOM => preference
+                    .custom_arguments
+                    .push((record_text(record.key_text), record_text(record.value_text))),
+                KRKR_PREFERENCE_KEYMAP => preference.keymap.push((record.key, record.value)),
+                _ => {}
+            }
+        }
+        match std::fs::write(path, preference.to_xml()) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// The message count; a document that is not well-formed XML has none.
+///
+/// The engine reads the file itself — it can live inside an archive — so the
+/// contents come in rather than a path.
+///
+/// # Safety
+/// `data` must hold `len` bytes (or be null if `len` is 0); `visitor` must be
+/// readable and its callback must obey [`KrkrTextVisitor`]'s rules.
+#[no_mangle]
+pub unsafe extern "C" fn krkr_locale_read(
+    data: *const c_void,
+    len: usize,
+    visitor: *const KrkrTextVisitor,
+) -> usize {
+    guard(0, || {
+        let Some(visitor) = visitor.as_ref() else { return 0 };
+        let Some(text_callback) = visitor.text else { return 0 };
+        let Some(locale) = xml::Locale::parse(input(data, len)) else { return 0 };
+        for (id, text) in &locale.texts {
+            let (id, text) = (c_string(id), c_string(text));
+            text_callback(visitor.userdata, id.as_ptr(), text.as_ptr());
+        }
+        locale.texts.len()
     })
 }
 
@@ -465,10 +701,8 @@ mod tests {
     #[test]
     fn null_handles_are_rejected() {
         unsafe {
-            assert!(krkr_archive_open(std::ptr::null(), KRKR_ARCHIVE_7Z).is_null());
-            assert_eq!(krkr_archive_count(std::ptr::null()), 0);
-            assert_eq!(krkr_archive_size(std::ptr::null(), 0), usize::MAX);
-            assert_eq!(krkr_archive_name(std::ptr::null(), 0, std::ptr::null_mut(), 0), usize::MAX);
+            assert!(krkr_archive_open(std::ptr::null(), KRKR_ARCHIVE_7Z, std::ptr::null())
+                .is_null());
             assert_eq!(
                 krkr_archive_read(std::ptr::null_mut(), 0, std::ptr::null_mut(), 0),
                 usize::MAX
@@ -480,21 +714,20 @@ mod tests {
     /// An unknown archive kind is an error, not a guess.
     #[test]
     fn an_unknown_kind_is_rejected() {
-        // The stream is never reached — the kind is rejected first — but the
-        // reader still has to be well-formed, since `Source` requires both
-        // callbacks.
+        // The stream is never read — the kind is rejected first — but it still
+        // has to be well-formed, since `Stream` requires both callbacks.
         unsafe extern "C" fn read_nothing(_: *mut c_void, _: *mut c_void, _: usize) -> i64 {
             0
         }
         unsafe extern "C" fn seek_to_start(_: *mut c_void, _: i64, _: i32) -> i64 {
             0
         }
-        let reader = KrkrArchiveReader {
+        let stream = KrkrStream {
             userdata: std::ptr::null_mut(),
             read: Some(read_nothing),
             seek: Some(seek_to_start),
             size: 0,
         };
-        unsafe { assert!(krkr_archive_open(&reader, 0).is_null()) };
+        unsafe { assert!(krkr_archive_open(&stream, 0, std::ptr::null()).is_null()) };
     }
 }

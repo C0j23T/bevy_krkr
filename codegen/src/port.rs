@@ -33,7 +33,7 @@ const SOURCE_GLOBS: &[(&str, &str, &[&str])] = &[
     ("utils", "cpp", &[]),
     ("utils/encoding", "c", &[]),
     ("utils/win32", "cpp", &[]),
-    ("visual", "cpp", &["Resampler", "LoadBPG", "LoadJXR", "LoadPVRv3"]),
+    ("visual", "cpp", &["Resampler", "LoadBPG", "LoadJXR", "LoadPVRv3", "LoadWEBP"]),
     ("visual/win32", "cpp", &["GDIFontRasterizer", "NativeFreeTypeFace", "TVPSysFont", "VSyncTimingThread", "TVPScreen"]),
 ];
 
@@ -140,10 +140,8 @@ pub const PKG_CONFIG: &[&str] = &[
     "libpng16",
     "libjpeg",
     "libturbojpeg",
-    "libwebp",
     "vorbisfile",
     "opusfile",
-    "tinyxml2",
 ];
 
 /// Sources of the engine core, split by language.

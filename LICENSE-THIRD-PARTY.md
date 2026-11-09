@@ -29,8 +29,8 @@ under GPL-2.0-or-later, like bevy_krkr. Unmodified Kirikiroid2 code keeps its
 license below.
 
 The engine core is linked with system libraries that are not part of this
-repository: Oniguruma, FreeType, zlib, libpng, libjpeg-turbo, libwebp,
-libvorbis/libogg, opusfile/libopus, TinyXML-2.
+repository: Oniguruma, FreeType, zlib, libpng, libjpeg-turbo, libvorbis/libogg,
+opusfile/libopus.
 A binary distribution must comply with their licenses as well.
 
 ### Generated bindings

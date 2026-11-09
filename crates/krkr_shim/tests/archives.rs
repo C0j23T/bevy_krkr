@@ -1,20 +1,17 @@
-//! The 7z / ZIP reader, driven through the C ABI (`crates/krkr_shim/src/ffi.rs`)
-//! the way `environ/bevy/BevyArchives.cpp` drives it.
-//!
-//! What this file is for is the seam: callbacks, the name copy, the sentinels
-//! and the "leave the stream usable" contract `TVPOpenArchive` depends on. How
-//! the formats are parsed is tested in `src/archives.rs`, without any of this.
+//! The 7z / ZIP reader through the C ABI, the way `environ/bevy/Archives.cpp`
+//! drives it: the stream callbacks, the entry visitor, the sentinels, and the
+//! "leave the stream usable" contract `TVPOpenArchive` depends on. The formats
+//! themselves are tested in `src/archives.rs`.
 //!
 //! The fixtures are real archives: `sample.7z` (LZMA2, what games ship) and
 //! `sample.zip` (deflate), each holding three files — one at the root, one in a
-//! subdirectory, one with a Japanese name — plus the directory entries. Names
-//! exercise the UTF-16 → UTF-8 path that used to depend on the process locale.
+//! subdirectory, one with a Japanese name — plus the directory entries.
 
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void, CStr};
 
 use krkr_shim::ffi::{
-    krkr_archive_close, krkr_archive_count, krkr_archive_name, krkr_archive_open, krkr_archive_read,
-    krkr_archive_size, KrkrArchiveReader, KRKR_ARCHIVE_7Z, KRKR_ARCHIVE_ZIP,
+    krkr_archive_close, krkr_archive_open, krkr_archive_read, KrkrArchive, KrkrArchiveEntries,
+    KrkrStream, KRKR_ARCHIVE_7Z, KRKR_ARCHIVE_ZIP,
 };
 
 const SEVEN_Z: &[u8] = include_bytes!("data/sample.7z");
@@ -52,8 +49,8 @@ unsafe extern "C" fn seek_cb(userdata: *mut c_void, offset: i64, whence: i32) ->
     target
 }
 
-fn reader_for(stream: &mut SliceStream) -> KrkrArchiveReader {
-    KrkrArchiveReader {
+fn stream_for(stream: &mut SliceStream) -> KrkrStream {
+    KrkrStream {
         userdata: (stream as *mut SliceStream).cast(),
         read: Some(read_cb),
         seek: Some(seek_cb),
@@ -61,57 +58,58 @@ fn reader_for(stream: &mut SliceStream) -> KrkrArchiveReader {
     }
 }
 
-/// Entry names of an archive, in the order the archive lists them.
-fn names(data: &'static [u8], kind: i32) -> Option<Vec<String>> {
-    let mut stream = SliceStream { data, pos: 0 };
-    let reader = reader_for(&mut stream);
-    unsafe {
-        let archive = krkr_archive_open(&reader, kind);
-        if archive.is_null() {
-            return None;
-        }
-        let count = krkr_archive_count(archive);
-        let mut out = Vec::with_capacity(count);
-        for index in 0..count {
-            // The length-only call is what the C++ side uses to size its buffer.
-            let len = krkr_archive_name(archive, index, std::ptr::null_mut(), 0);
-            assert_ne!(len, usize::MAX);
-            let mut buf = vec![0u8; len + 1];
-            let copied = krkr_archive_name(archive, index, buf.as_mut_ptr().cast(), buf.len());
-            assert_eq!(copied, len);
-            assert_eq!(buf[len], 0, "the name must be NUL-terminated");
-            buf.truncate(len);
-            out.push(String::from_utf8(buf).expect("names are UTF-8"));
-        }
-        krkr_archive_close(archive);
-        Some(out)
-    }
+unsafe extern "C" fn collect_entry(
+    userdata: *mut c_void,
+    index: usize,
+    name: *const c_char,
+    size: usize,
+) {
+    let listed = &mut *(userdata as *mut Vec<(String, usize)>);
+    assert_eq!(listed.len(), index, "the visitor index must be the read index");
+    listed.push((CStr::from_ptr(name).to_str().expect("names are UTF-8").to_owned(), size));
 }
 
-/// Reads every entry into `(name, contents)`, checking the sizes agree.
+/// `(handle, entries as the visitor reported them)`; `None` when the stream is
+/// not an archive of `kind`.
+fn open_listed(
+    stream: &mut SliceStream,
+    kind: i32,
+) -> Option<(*mut KrkrArchive, Vec<(String, usize)>)> {
+    let mut listed = Vec::new();
+    let stream = stream_for(stream);
+    let entries = KrkrArchiveEntries {
+        userdata: (&mut listed as *mut Vec<(String, usize)>).cast(),
+        entry: Some(collect_entry),
+    };
+    let archive = unsafe { krkr_archive_open(&stream, kind, &entries) };
+    if archive.is_null() {
+        assert!(listed.is_empty(), "a rejected stream must report no entries");
+        return None;
+    }
+    Some((archive, listed))
+}
+
+/// Entry names, in the order the archive lists them.
+fn names(data: &'static [u8], kind: i32) -> Option<Vec<String>> {
+    let mut stream = SliceStream { data, pos: 0 };
+    let (archive, listed) = open_listed(&mut stream, kind)?;
+    unsafe { krkr_archive_close(archive) };
+    Some(listed.into_iter().map(|(name, _)| name).collect())
+}
+
+/// Every entry, read at the index the listing gave, into `(name, contents)`.
 fn contents(data: &'static [u8], kind: i32) -> Vec<(String, Vec<u8>)> {
     let mut stream = SliceStream { data, pos: 0 };
-    let reader = reader_for(&mut stream);
-    unsafe {
-        let archive = krkr_archive_open(&reader, kind);
-        assert!(!archive.is_null());
-        let mut out = Vec::new();
-        for index in 0..krkr_archive_count(archive) {
-            let len = krkr_archive_name(archive, index, std::ptr::null_mut(), 0);
-            let mut name = vec![0u8; len + 1];
-            krkr_archive_name(archive, index, name.as_mut_ptr().cast(), name.len());
-            name.truncate(len);
-
-            let size = krkr_archive_size(archive, index);
-            assert_ne!(size, usize::MAX);
-            let mut buf = vec![0u8; size];
-            let written = krkr_archive_read(archive, index, buf.as_mut_ptr().cast(), buf.len());
-            assert_eq!(written, size, "entry {index} did not decompress to its declared size");
-            out.push((String::from_utf8(name).unwrap(), buf));
-        }
-        krkr_archive_close(archive);
-        out
+    let (archive, listed) = open_listed(&mut stream, kind).expect("the archive opens");
+    let mut out = Vec::new();
+    for (index, (name, size)) in listed.into_iter().enumerate() {
+        let mut buf = vec![0u8; size];
+        let written = unsafe { krkr_archive_read(archive, index, buf.as_mut_ptr().cast(), buf.len()) };
+        assert_eq!(written, size, "entry {index} did not decompress to its declared size");
+        out.push((name, buf));
     }
+    unsafe { krkr_archive_close(archive) };
+    out
 }
 
 fn expected() -> Vec<(&'static str, &'static [u8])> {
@@ -179,53 +177,40 @@ fn each_kind_rejects_the_other_format() {
 #[test]
 fn a_rejected_stream_is_left_seekable() {
     let mut stream = SliceStream { data: ZIP, pos: 0 };
-    let reader = reader_for(&mut stream);
-    unsafe {
-        let archive = krkr_archive_open(&reader, KRKR_ARCHIVE_7Z);
-        assert!(archive.is_null());
-        krkr_archive_close(archive);
-    }
-    // The same stream still opens as what it is.
-    let mut stream = stream;
-    let reader = reader_for(&mut stream);
-    unsafe {
-        let archive = krkr_archive_open(&reader, KRKR_ARCHIVE_ZIP);
-        assert!(!archive.is_null(), "the stream is no longer usable");
-        krkr_archive_close(archive);
-    }
+    assert!(open_listed(&mut stream, KRKR_ARCHIVE_7Z).is_none());
+
+    let (archive, listed) = open_listed(&mut stream, KRKR_ARCHIVE_ZIP)
+        .expect("the stream is no longer usable");
+    assert_eq!(listed.len(), 3);
+    unsafe { krkr_archive_close(archive) };
 }
 
 /// Out-of-range indices report failure instead of reading past the entry list.
 #[test]
 fn a_bad_index_fails() {
     let mut stream = SliceStream { data: SEVEN_Z, pos: 0 };
-    let reader = reader_for(&mut stream);
-    unsafe {
-        let archive = krkr_archive_open(&reader, KRKR_ARCHIVE_7Z);
-        assert!(!archive.is_null());
-        let out_of_range = krkr_archive_count(archive);
-        assert_eq!(krkr_archive_size(archive, out_of_range), usize::MAX);
-        assert_eq!(krkr_archive_name(archive, out_of_range, std::ptr::null_mut(), 0), usize::MAX);
-        let mut buf = [0u8; 16];
-        assert_eq!(krkr_archive_read(archive, out_of_range, buf.as_mut_ptr().cast(), buf.len()), usize::MAX);
-        krkr_archive_close(archive);
-    }
+    let (archive, listed) = open_listed(&mut stream, KRKR_ARCHIVE_7Z).expect("opens");
+    let mut buf = [0u8; 16];
+    let written = unsafe {
+        krkr_archive_read(archive, listed.len(), buf.as_mut_ptr().cast(), buf.len())
+    };
+    assert_eq!(written, usize::MAX);
+    unsafe { krkr_archive_close(archive) };
 }
 
 /// A buffer too small for the entry is an error, not a truncated copy: the
-/// caller allocates from `krkr_archive_size`, so a mismatch means it mis-sized.
+/// caller allocates from the size the listing gave, so a mismatch means it
+/// mis-sized.
 #[test]
 fn a_short_buffer_is_refused() {
     let mut stream = SliceStream { data: SEVEN_Z, pos: 0 };
-    let reader = reader_for(&mut stream);
-    unsafe {
-        let archive = krkr_archive_open(&reader, KRKR_ARCHIVE_7Z);
-        assert!(!archive.is_null());
-        let index = (0..krkr_archive_count(archive))
-            .find(|&i| krkr_archive_size(archive, i) == 10)
-            .expect("hello.txt is 10 bytes");
-        let mut buf = [0u8; 4];
-        assert_eq!(krkr_archive_read(archive, index, buf.as_mut_ptr().cast(), buf.len()), usize::MAX);
-        krkr_archive_close(archive);
-    }
+    let (archive, listed) = open_listed(&mut stream, KRKR_ARCHIVE_7Z).expect("opens");
+    let index = listed
+        .iter()
+        .position(|(_, size)| *size == 10)
+        .expect("hello.txt is 10 bytes");
+    let mut buf = [0u8; 4];
+    let written = unsafe { krkr_archive_read(archive, index, buf.as_mut_ptr().cast(), buf.len()) };
+    assert_eq!(written, usize::MAX);
+    unsafe { krkr_archive_close(archive) };
 }

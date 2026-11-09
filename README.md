@@ -44,10 +44,9 @@ git submodule update --init
 ```
 
 System requirements (found through pkg-config): a C++17 compiler, libclang
-(bindgen), oniguruma, freetype2, zlib, libpng, libjpeg-turbo, libwebp,
-vorbisfile, opusfile and tinyxml2. On Arch:
-`pacman -S oniguruma freetype2 libpng libjpeg-turbo libwebp libvorbis opusfile
-tinyxml2 clang`.
+(bindgen), oniguruma, freetype2, zlib, libpng, libjpeg-turbo, vorbisfile and
+opusfile. On Arch:
+`pacman -S oniguruma freetype2 libpng libjpeg-turbo libvorbis opusfile clang`.
 
 | Variable | Meaning |
 |---|---|

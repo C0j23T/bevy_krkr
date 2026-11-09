@@ -3,5 +3,6 @@
 pub mod archives;
 pub mod ffi;
 pub mod render;
+pub mod xml;
 
 pub extern "C" fn krkr_shim_present() {}

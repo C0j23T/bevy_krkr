@@ -14,7 +14,7 @@
 //! What this archive needs on top of the plain engine:
 //! - the game keeps its voice, CG and event images in **7z** archives next to
 //!   `data.xp3` (`voice.xp3`, `fgimage720.xp3`, …), not in XP3. They are opened
-//!   through libarchive (`Kirikiroid2/src/core/environ/bevy/BevyArchives.cpp`),
+//!   through libarchive (`Kirikiroid2/src/core/environ/bevy/Archives.cpp`),
 //!   and this example mounts every archive next to the data file so the
 //!   engine's storage layer can reach them;
 //! - its own `startup.tjs` builds the game UI on a Kirikiri `Window`. The port
