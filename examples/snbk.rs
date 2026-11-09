@@ -42,7 +42,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy_inspector_egui::bevy_egui::EguiPlugin;
@@ -51,8 +50,6 @@ use bevy_krkr::prelude::*;
 use bevy_krkr::script::Tjs2Engine;
 
 const DEFAULT_DATA: &str = "test_games/snbk/data.xp3";
-/// How long to stay up when the game has nothing more to show.
-const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn main() {
     let mut data = None;
@@ -196,20 +193,14 @@ fn log_window(scene: Res<KirikiriScene>, mut shown: Local<Option<UVec2>>) {
 /// exactly that. This example has no screen of its own besides the game's, so
 /// it also ends the app; that decision belongs here, not in the plugin.
 fn exit_when_done(
-    time: Res<Time>,
     game: Res<Session>,
-    mut started: Local<Option<Duration>>,
     mut exited: MessageReader<KirikiriExitEvent>,
     mut app_exit: MessageWriter<AppExit>,
 ) {
-    let started = started.get_or_insert_with(|| time.elapsed());
     if exited.read().count() > 0 {
         info!("snbk: the game ended the Kirikiri instance; this example stops too");
         app_exit.write(AppExit::Success);
     } else if game.startup_failed {
-        app_exit.write(AppExit::Success);
-    } else if time.elapsed() > *started + IDLE_TIMEOUT {
-        warn!("snbk: idle for {}s, exiting", IDLE_TIMEOUT.as_secs());
         app_exit.write(AppExit::Success);
     }
 }
