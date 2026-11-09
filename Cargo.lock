@@ -1155,7 +1155,6 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_kira_audio",
- "krkr_audio",
  "krkr_kag",
  "krkr_plugin",
  "krkr_script",
@@ -3533,15 +3532,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "krkr_audio"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bevy_kira_audio",
- "krkr_kag",
-]
-
-[[package]]
 name = "krkr_codegen"
 version = "0.1.0"
 dependencies = [
@@ -3570,7 +3560,6 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "cpal 0.18.2",
- "krkr_audio",
  "krkr_kag",
  "krkr_script",
  "krkr_sys",

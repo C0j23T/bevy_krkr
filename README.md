@@ -179,12 +179,6 @@ and draws its message window.
   compositing uploaded as a texture, BGM/SE/voice channels, XP3/TAR/7z/ZIP
   reading, the compiled-in plugins, TJS `Timer` (and so KAG's
   `[wait time=...]`, transitions and auto/skip timing), engine log → Bevy log.
-- Sound: the engine's `WaveSoundBuffer` (what a game's own KAG scripts use for
-  BGM, SE and voice) decodes with Kirikiroid2's decoders and the port mixes the
-  PCM; the host writes that mix to the sound device
-  (`Kirikiroid2/src/core/environ/bevy/BevySound.cpp`,
-  `crates/krkr_plugin/src/audio.rs`). Scripts that only know the KAG tags can go
-  through `bevy_kira_audio` instead (`krkr_audio`).
 - Input: Bevy's keyboard, mouse and touches are forwarded to the game's own
   `Window` as the TJS `onKeyDown` / `onKeyUp` / `onMouseMove` / `onMouseDown` /
   `onMouseUp` calls a native window manager would produce, with keys translated
@@ -202,10 +196,6 @@ and draws its message window.
 - The message window is the minimal one in `crates/krkr_plugin/src/host.tjs`;
   KAG3's `MessageLayer.tjs` system scripts are not used. Speaker names, ruby
   and per-character effects are not implemented.
-- `krkr_audio` (bevy_kira_audio) loads its files from Bevy's asset folder, so
-  the host-parsed KAG tags only play audio that sits next to the executable.
-  A game's own scripts are unaffected: they decode through the engine, which
-  reads `data.xp3` like any other storage.
 - Tested on Linux x86-64 (GCC 16) only.
 
 ## License

@@ -35,7 +35,6 @@ use krkr_kag::{KagCursor, KagParser, KagScriptLoadedEvent};
 use krkr_script::{last_error, Tjs2Engine};
 use krkr_sys as sys;
 
-pub use krkr_audio::{BgmChannel, KrkrAudioPlugin, KrkrAudioSettings, SeChannel, VoiceChannel};
 pub use krkr_kag::{KagPlugin, KirikiriCamera};
 pub use krkr_script::Tjs2Plugin;
 pub use host::KrkrScreen;
@@ -150,7 +149,7 @@ impl Plugin for BevyKrkrPlugin {
                 start_storage: self.start_storage.clone(),
                 screen_size: self.screen_size,
             })
-            .add_plugins((Tjs2Plugin, KagPlugin, KrkrAudioPlugin, KrkrRenderPlugin))
+            .add_plugins((Tjs2Plugin, KagPlugin, KrkrRenderPlugin))
             .add_systems(PreUpdate, handle_enter)
             // After Bevy has collected this frame's input: what a game's own
             // UI sees must not lag a frame behind.

@@ -9,8 +9,7 @@
 //!
 //! KAG's scripts build their audio on `WaveSoundBuffer` (BGM, SE and voice in
 //! `system/bgm.tjs`, `se.tjs`), so this is the only path a game that runs its
-//! own UI has to sound. `krkr_audio` (bevy_kira_audio) covers the host-parsed
-//! KAG tags instead.
+//! own UI has to sound.
 
 use super::KirikiridModule::Audio;
 use super::{p, FnDecl};

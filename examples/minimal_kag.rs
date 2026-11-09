@@ -31,11 +31,6 @@ fn main() {
             ..default()
         }))
         .add_plugins(BevyKrkrPlugin::default())
-        // `[playbgm storage="bgm"]` → asset "game/bgm.wav".
-        .insert_resource(KrkrAudioSettings {
-            storage_root: "game/".into(),
-            default_extension: Some("wav".into()),
-        })
         .insert_resource(DataPath(data))
         .add_systems(Startup, setup)
         .add_systems(Update, (log_kag, exit_when_done))
