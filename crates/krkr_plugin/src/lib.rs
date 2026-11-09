@@ -1,13 +1,12 @@
 //! `krkr_plugin` – assembles bevy_krkr and owns the Kirikiri lifecycle.
 //!
 //! - Write [`KirikiriEnterEvent`] to start an instance. The plugin calls
-//!   `krkr_engine_init` on the data path, gets the TJS2 engine, runs the host
-//!   script ([`host`]), creates the KAG parser (all as non-send resources) and
-//!   loads the start scenario.
+//!   `krkr_engine_init` on the data path, gets the TJS2 engine and runs the host
+//!   script ([`host`]), all as non-send resources.
 //! - [`KirikiriExitEvent`] is written by the plugin when the game ends itself
 //!   (`System.exit`, `System.terminate`, `Window.close()` on the main window),
 //!   or by host code. On it the *instance* is torn down in dependency order:
-//!   parser, screen, TJS2 engine, archive, engine shutdown. The Bevy app keeps
+//!   screen, TJS2 engine, archive, engine shutdown. The Bevy app keeps
 //!   running — that is a different lifetime, and a host with its own menu
 //!   stays up and starts the next instance with another [`KirikiriEnterEvent`];
 //!   `krkr_engine_shutdown` resets the engine's process-global state.
@@ -17,8 +16,7 @@
 //! Kirikiri output is drawn by the camera marked with [`KirikiriCamera`]; see
 //! [`render`]. Bevy's input is forwarded to the game's own `Window` (keys and
 //! the pointer, touches as the left button) by [`input`], and the audio the
-//! engine decodes -- a game's own `WaveSoundBuffer`s and the KAG tags the host
-//! parses -- is mixed and written to the sound device by [`audio`].
+//! engine decodes is mixed and written to the sound device by [`audio`].
 //! Engine log lines go to Bevy's log (`bevy_krkr::engine`).
 
 pub mod audio;
@@ -32,14 +30,17 @@ use std::path::{Path, PathBuf};
 use bevy::app::AppExit;
 use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
-use krkr_kag::{KagCursor, KagParser, KagScriptLoadedEvent};
 use krkr_script::{last_error, Tjs2Engine};
 use krkr_sys as sys;
 
-pub use krkr_kag::{KagPlugin, KirikiriCamera};
-pub use krkr_script::Tjs2Plugin;
 pub use host::KrkrScreen;
+pub use krkr_script::Tjs2Plugin;
 pub use render::KrkrRenderPlugin;
+
+/// Marks the [`Camera2d`] that shows Kirikiri output. Add it to exactly one
+/// camera you spawn yourself; bevy_krkr does not spawn cameras.
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct KirikiriCamera;
 
 /// Start a Kirikiri instance.
 #[derive(Message, Debug, Clone)]
@@ -68,15 +69,13 @@ pub enum KirikiriState {
 /// Plugin configuration, available as a resource.
 #[derive(Resource, Debug, Clone)]
 pub struct KirikiriConfig {
-    /// Scenario loaded after start-up.
-    pub start_storage: String,
     /// Size of the Kirikiri screen in pixels.
     pub screen_size: UVec2,
 }
 
 /// Engine-level state of a running instance. Non-send resource; dropping it
 /// closes the archive and shuts the engine down, so it must outlive the
-/// [`Tjs2Engine`] and [`KagParser`] (see [`teardown`]).
+/// [`Tjs2Engine`] (see [`teardown`]).
 pub struct KrkrSession {
     archive: *mut sys::XP3ArchiveOpaque,
     data_path: PathBuf,
@@ -126,8 +125,6 @@ impl Drop for KrkrSession {
 /// Adds every bevy_krkr subsystem. Requires `DefaultPlugins` (or equivalent:
 /// assets, time, input, rendering) to be added first.
 pub struct BevyKrkrPlugin {
-    /// Scenario loaded when an instance starts. Default `"first.ks"`.
-    pub start_storage: String,
     /// Size of the Kirikiri screen. Default 800x600.
     pub screen_size: UVec2,
 }
@@ -135,7 +132,6 @@ pub struct BevyKrkrPlugin {
 impl Default for BevyKrkrPlugin {
     fn default() -> Self {
         Self {
-            start_storage: "first.ks".into(),
             screen_size: UVec2::new(800, 600),
         }
     }
@@ -147,10 +143,9 @@ impl Plugin for BevyKrkrPlugin {
             .add_message::<KirikiriExitEvent>()
             .init_resource::<KirikiriState>()
             .insert_resource(KirikiriConfig {
-                start_storage: self.start_storage.clone(),
                 screen_size: self.screen_size,
             })
-            .add_plugins((Tjs2Plugin, KagPlugin, KrkrRenderPlugin))
+            .add_plugins((Tjs2Plugin, KrkrRenderPlugin))
             .add_systems(PreUpdate, handle_enter)
             // After Bevy has collected this frame's input: what a game's own
             // UI sees must not lag a frame behind.
@@ -159,10 +154,6 @@ impl Plugin for BevyKrkrPlugin {
                 (input::forward_keys, input::forward_pointer)
                     .chain()
                     .after(bevy::input::InputSystems),
-            )
-            .add_systems(
-                Update,
-                (audio::kag_bgm, audio::kag_se, audio::kag_voice).after(krkr_kag::KagSet),
             )
             .add_systems(PostUpdate, poll_engine_exit)
             .add_systems(Last, handle_exit);
@@ -183,9 +174,8 @@ fn handle_enter(world: &mut World, reader: &mut SystemState<MessageReader<Kiriki
             continue;
         }
         let config = world.resource::<KirikiriConfig>().clone();
-        let start_storage = config.start_storage.clone();
         match start(world, &path, &config) {
-            Ok(()) => info!("bevy_krkr: started {} ({start_storage})", path.display()),
+            Ok(()) => info!("bevy_krkr: started {}", path.display()),
             Err(e) => {
                 error!("bevy_krkr: failed to start {}: {e}", path.display());
                 teardown(world);
@@ -244,7 +234,7 @@ fn start(world: &mut World, path: &Path, config: &KirikiriConfig) -> Result<(), 
     });
 
     // The device the engine's own sound buffers are mixed onto. Started before
-    // any script runs, so the first `[playbgm]` is heard; a machine without
+    // the game's scripts run, so the first BGM is heard; a machine without
     // sound logs and carries on, the game is simply silent.
     if let Some(output) = audio::start() {
         world.insert_non_send(output);
@@ -252,17 +242,9 @@ fn start(world: &mut World, path: &Path, config: &KirikiriConfig) -> Result<(), 
 
     let engine = Tjs2Engine::new().map_err(|e| e.to_string())?;
     let screen = host::start(&engine, size)?;
-    audio::open_kag_audio(&engine)?;
-    let mut parser = KagParser::new(&engine).map_err(|e| e.to_string())?;
-    parser.load(&config.start_storage).map_err(|e| e.to_string())?;
     world.insert_non_send(engine);
     world.insert_non_send(screen);
-    world.insert_non_send(parser);
 
-    world.resource_mut::<KagCursor>().start(&config.start_storage);
-    world.write_message(KagScriptLoadedEvent {
-        storage: config.start_storage.clone(),
-    });
     *world.resource_mut::<KirikiriState>() = KirikiriState::Running {
         data_path: path.to_owned(),
     };
@@ -274,13 +256,11 @@ pub fn teardown(world: &mut World) {
     // Stop the device first: its callback mixes the engine's buffers, which the
     // shutdown below releases.
     drop(world.remove_non_send::<audio::KrkrAudioOutput>());
-    drop(world.remove_non_send::<KagParser>());
     if let Some(engine) = world.get_non_send::<Tjs2Engine>() {
         // The host's own objects live in the interpreter, so a game that quit
         // with `System.exit` (which shuts the engine down itself) has already
         // released them.
         if engine.is_running() {
-            audio::close_kag_audio(engine);
             host::stop(engine);
         }
     }
@@ -289,9 +269,6 @@ pub fn teardown(world: &mut World) {
     let was_running = world.remove_non_send::<KrkrSession>().is_some();
     render::flush();
     render::reset(world);
-    if let Some(mut cursor) = world.get_resource_mut::<KagCursor>() {
-        cursor.reset();
-    }
     if let Some(mut state) = world.get_resource_mut::<KirikiriState>() {
         *state = KirikiriState::Idle;
     }

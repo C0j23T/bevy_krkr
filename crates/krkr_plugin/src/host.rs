@@ -1,15 +1,12 @@
-//! The Kirikiri side of the host: `host.tjs` and the message window.
+//! The Kirikiri side of the host: `host.tjs`.
 //!
 //! `host.tjs` runs in Kirikiroid2's TJS2 engine when an instance starts. It
-//! builds the screen (a `BitmapLayerTreeOwner`, global `krkrBevy.screen`) and
-//! a message-window Layer. [`message_window`] forwards the KAG layer's
-//! [`ShowMessageEvent`] / [`ClearMessageEvent`] to it; Kirikiroid2 lays out and
-//! rasterises the text, and [`crate::render`] draws the layers.
+//! builds the screen (a `BitmapLayerTreeOwner`, global `krkrBevy.screen`), and
+//! [`crate::render`] draws its layers.
 
 use std::ffi::CString;
 
 use bevy::prelude::*;
-use krkr_kag::{ClearMessageEvent, ShowMessageEvent};
 use krkr_script::{last_error, Tjs2Engine};
 use krkr_sys as sys;
 
@@ -45,7 +42,10 @@ pub fn start(engine: &Tjs2Engine, size: UVec2) -> Result<KrkrScreen, String> {
         .exec_script(HOST_SCRIPT, "host.tjs")
         .map_err(|e| e.to_string())?;
     // Numbers are formatted by Rust; nothing user-provided is spliced in.
-    let init = format!("global.krkrBevy = new KrkrBevyHost({}, {});", size.x, size.y);
+    let init = format!(
+        "global.krkrBevy = new KrkrBevyHost({}, {});",
+        size.x, size.y
+    );
     engine
         .exec_script(&init, "bevy_krkr")
         .map_err(|e| e.to_string())?;
@@ -70,36 +70,5 @@ pub fn stop(engine: &Tjs2Engine) {
         "if (global.krkrBevy !== void) { global.krkrBevy.finalize(); global.krkrBevy = void; }";
     if let Err(e) = engine.exec_script(TEARDOWN, "bevy_krkr teardown") {
         warn!("bevy_krkr: releasing the host objects failed: {e}");
-    }
-}
-
-/// Draws the KAG message text into the Kirikiri message window.
-pub fn message_window(
-    engine: Option<NonSend<Tjs2Engine>>,
-    mut show: MessageReader<ShowMessageEvent>,
-    mut clear: MessageReader<ClearMessageEvent>,
-) {
-    let Some(engine) = engine else {
-        show.clear();
-        clear.clear();
-        return;
-    };
-    // A game that quit with `System.exit` took the interpreter with it.
-    if !engine.is_running() {
-        show.clear();
-        clear.clear();
-        return;
-    }
-    // A clear is always followed by new text (KagCursor clears before it
-    // shows), so apply clears first, then the latest text.
-    if clear.read().count() > 0 {
-        if let Err(e) = engine.call("krkrBevy.clearMessage", &[]) {
-            warn!("bevy_krkr: clearMessage: {e}");
-        }
-    }
-    if let Some(m) = show.read().last() {
-        if let Err(e) = engine.call("krkrBevy.showMessage", &[&m.text]) {
-            warn!("bevy_krkr: showMessage: {e}");
-        }
     }
 }

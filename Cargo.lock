@@ -1230,7 +1230,6 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy-inspector-egui",
- "krkr_kag",
  "krkr_plugin",
  "krkr_script",
  "krkr_sys",
@@ -3752,24 +3751,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "krkr_kag"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "krkr_script",
- "krkr_sys",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "krkr_plugin"
 version = "0.1.0"
 dependencies = [
  "bevy",
  "bytemuck",
  "cpal 0.18.2",
- "krkr_kag",
  "krkr_script",
  "krkr_shim",
  "krkr_sys",

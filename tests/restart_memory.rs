@@ -20,7 +20,6 @@ use std::ffi::CString;
 use std::path::PathBuf;
 
 use bevy::prelude::UVec2;
-use bevy_krkr::kag::KagParser;
 use bevy_krkr::plugin::host;
 use bevy_krkr::script::Tjs2Engine;
 use bevy_krkr::sys;
@@ -65,16 +64,10 @@ fn session(name: &str) {
     assert_eq!(code, sys::KRKR_OK, "{name}: krkr_engine_init");
 
     let engine = Tjs2Engine::new().unwrap_or_else(|e| panic!("{name}: {e}"));
-    let screen =
-        host::start(&engine, UVec2::new(800, 600)).unwrap_or_else(|e| panic!("{name}: {e}"));
-    let mut parser = KagParser::new(&engine).unwrap_or_else(|e| panic!("{name}: {e}"));
-    parser
-        .load("first.ks")
-        .unwrap_or_else(|e| panic!("{name}: {e}"));
+    let screen = host::start(&engine, UVec2::new(800, 600)).unwrap_or_else(|e| panic!("{name}: {e}"));
     engine.eval("1 + 1").expect("evaluation");
 
-    // The plugin's order: parser, host objects, screen, engine handle, engine.
-    drop(parser);
+    // The plugin's order: host objects, screen, engine handle, engine.
     drop(screen);
     host::stop(&engine);
     drop(engine);

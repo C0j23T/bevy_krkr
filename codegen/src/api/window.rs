@@ -7,7 +7,8 @@ pub const FUNCTIONS: &[FnDecl] = &[
     FnDecl {
         module: Visual,
         name: "krkr_window_mouse_move",
-        doc: "Post a mouse-move event to the front-most visible Window. `x`/`y` are window pixels. \
+        doc:
+            "Post a mouse-move event to the front-most visible Window. `x`/`y` are window pixels. \
               Nothing happens when no window is visible.",
         c_ret: "void",
         rust_ret: "",

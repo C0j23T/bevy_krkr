@@ -61,7 +61,7 @@ fn sprite_tracks_gpu_texture_updates() {
             })
             .disable::<bevy::winit::WinitPlugin>(),
     );
-    app.add_plugins((bevy_krkr::kag::KagPlugin, KrkrRenderPlugin));
+    app.add_plugins(KrkrRenderPlugin);
     while app.plugins_state() != PluginsState::Ready {
         bevy::tasks::tick_global_task_pools_on_main_thread();
     }
@@ -93,10 +93,7 @@ fn sprite_tracks_gpu_texture_updates() {
     let engine = Tjs2Engine::new().unwrap();
     let screen = host::start(&engine, UVec2::splat(32)).unwrap();
     engine
-        .exec_script(
-            "krkrBevy.message.visible=false; krkrBevy.base.fillRect(0,0,32,32,0xffff0000);",
-            "presentation",
-        )
+        .exec_script("krkrBevy.base.fillRect(0,0,32,32,0xffff0000);", "presentation")
         .unwrap();
     app.world_mut().insert_non_send(screen);
     assert_eq!(capture(&mut app, &target), [255, 0, 0, 255]);

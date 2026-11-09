@@ -14,10 +14,10 @@ use bevy::{
     },
     sprite::{Anchor, SpriteAlphaMode},
 };
-use krkr_kag::KirikiriCamera;
 use krkr_sys as sys;
 
 use crate::host::KrkrScreen;
+use crate::KirikiriCamera;
 
 pub const KIRIKIRI_RENDER_LAYER: usize = 27;
 
@@ -51,7 +51,7 @@ impl Plugin for KrkrRenderPlugin {
             .add_plugins(ExtractResourcePlugin::<SceneTexture>::default())
             .add_systems(
                 PostUpdate,
-                (setup_camera, crate::host::message_window, show_scene)
+                (setup_camera, show_scene)
                     .chain()
                     .before(bevy::asset::AssetEventSystems),
             );

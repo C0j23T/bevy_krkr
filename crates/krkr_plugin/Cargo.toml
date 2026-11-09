@@ -8,7 +8,6 @@ description = "Top-level Bevy plugin assembling the bevy_krkr subsystems"
 [dependencies]
 krkr_sys    = { path = "../krkr_sys" }
 krkr_script = { path = "../krkr_script" }
-krkr_kag    = { path = "../krkr_kag" }
 cpal        = "0.18"
 bevy        = { workspace = true }
 krkr_shim = { path = "../krkr_shim" }

@@ -3,9 +3,9 @@
 //! Kirikiroid2 expects the platform to feed it input the way a native window
 //! manager would: the host posts `tTVPOn*InputEvent`s and the engine routes them
 //! to the TJS handlers of the front-most `Window` (`onMouseMove`,
-//! `onMouseDown`, `onMouseUp`, `onKeyDown`, `onKeyUp`). That is the surface
-//! KAG's own UI listens on, so without it a game's menus and its
-//! "click to advance" never react.
+//! `onMouseDown`, `onMouseUp`, `onKeyDown`, `onKeyUp`). That is the surface a
+//! game's own UI listens on, so without it its menus and its "click to
+//! advance" never react.
 //!
 //! Positions arrive in Bevy's window space and are converted to the Kirikiri
 //! screen's pixels through the camera and the screen root ([`ScreenPlacement`]),
@@ -22,11 +22,10 @@ use bevy::input::mouse::MouseButton;
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use krkr_kag::KirikiriCamera;
 use krkr_sys as sys;
 
 use crate::render::{KirikiriScene, KirikiriScreen};
-use crate::KirikiriState;
+use crate::{KirikiriCamera, KirikiriState};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScreenPlacement {

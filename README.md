@@ -3,21 +3,19 @@
 Kirikiri2 / KAG3 on [Bevy](https://bevyengine.org) 0.20, using
 [Kirikiroid2](https://github.com/zeas2/Kirikiroid2) for TJS2, KAG3 and game resources.
 
-TJS2, the KAG3 parser, XP3 storage and the layer tree run in Kirikiroid2's C++
-code. Rust reaches them through FFI bindings that are **generated at build
-time**. The Rust code covers ECS integration, drawing the layers, audio
-playback through the native sound buffers, and resource lifecycle. There is no
-`.ks` parser and no TJS2 parser in this repository.
+TJS2, XP3 storage and the layer tree run in Kirikiroid2's C++ code. Rust
+reaches them through FFI bindings that are **generated at build time**. The
+Rust code covers ECS integration, drawing the layers, audio playback through
+the native sound buffers, and resource lifecycle. There is no `.ks` parser and
+no TJS2 parser in this repository.
 
 ## Layout
 
 ```
-KirikiriEnterEvent ─▶ handle_enter ─▶ krkr_engine_init, Tjs2Engine, host.tjs, KagParser
-Update:     Tjs2Set (krkr_engine_tick) ─▶ KagSet (kag_step: KAGParser → tags → messages) ─▶ KrkrAudioSet
-PostUpdate: message_window (ShowMessageEvent → krkrBevy.showMessage in TJS2)
-            ─▶ show_scene (layer tree → Bevy GPU composition, on KirikiriCamera)
-            , poll_engine_exit
-Last:       KirikiriExitEvent / AppExit ─▶ teardown (parser → screen → TJS2 → archive → engine)
+KirikiriEnterEvent ─▶ handle_enter ─▶ krkr_engine_init, Tjs2Engine, host.tjs
+Update:     Tjs2Set (krkr_engine_tick)
+PostUpdate: show_scene (layer tree → Bevy GPU composition, on KirikiriCamera), poll_engine_exit
+Last:       KirikiriExitEvent / AppExit ─▶ teardown (screen → TJS2 → archive → engine)
 ```
 
 ## Kirikiroid2 source
@@ -91,8 +89,7 @@ generate → collect → expand):
 1. **generate**: the C ABI is declared once, as `FnDecl` tables in
    `codegen/src/api/*.rs`. Each entry has its C signature, the Rust
    signature bindgen produces, and the C++ statements that forward it to
-   Kirikiroid2 (`KAGParser.getNextTag`, `TVPExecuteExpression`,
-   `tTVPLayerManager` draw buffer, …).
+   Kirikiroid2 (`TVPExecuteExpression`, `tTVPLayerManager` draw buffer, …).
 2. **collect**: the copyright headers of the Kirikiroid2 sources the shim
    calls into are collected.
 3. **expand** into `$OUT_DIR`:
@@ -123,7 +120,7 @@ cargo run -p krkr_codegen -- --src Kirikiroid2 --out-header /tmp/krkr_c_api.h --
 2. If it needs Kirikiroid2 code that is not compiled yet, add it to
    `codegen/src/port.rs`.
 3. Wrap it safely in the crate that owns the concept (`krkr_script`,
-   `krkr_kag`, `krkr_plugin`). `krkr_sys` stays raw and Bevy-free.
+   `krkr_plugin`). `krkr_sys` stays raw and Bevy-free.
 4. `cargo test -p krkr_codegen` checks that every function is in the header,
    shim and stubs and that the Rust types follow bindgen's mapping;
    `cargo build` checks the real build.
@@ -135,7 +132,7 @@ use bevy::prelude::*;
 use bevy_krkr::prelude::*;
 
 App::new()
-    .add_plugins((DefaultPlugins, BevyKrkrPlugin::default())) // start scenario: first.ks
+    .add_plugins((DefaultPlugins, BevyKrkrPlugin::default()))
     .add_systems(Startup, |mut commands: Commands, mut enter: MessageWriter<KirikiriEnterEvent>| {
         commands.spawn((Camera2d, KirikiriCamera)); // you own the camera
         enter.write(KirikiriEnterEvent { data_xp3_path: "data.xp3".into() });
@@ -143,84 +140,67 @@ App::new()
     .run();
 ```
 
-- Bevy 0.20 calls buffered events *messages*. The KAG outputs keep their
-  `…Event` names but are `Message`s: read them with `MessageReader`.
 - `KirikiriExitEvent` is written when the game ends itself — `System.exit`,
-  `System.terminate`, or `Window.close()` on the main window, which is how a
-  KAG game quits. It stops the *instance*: KAG's system variables are saved on
-  the way out, and the Bevy app keeps running, so another `KirikiriEnterEvent`
+  `System.terminate`, or `Window.close()` on the main window. It stops the
+  *instance* and the Bevy app keeps running, so another `KirikiriEnterEvent`
   starts a game again. Write the message yourself to stop an instance. Ending
   the app is `AppExit`, a separate decision the plugin never makes for you (it
   does tear the instance down first).
-- `KagCursor` (a resource) holds the scenario position and pause state. It
-  advances on `KagAdvance` (left click / Enter / Space by default) and
-  `KagJumpRequest`.
-- Tags without a built-in mapping arrive as `UnhandledTagEvent`.
+- The plugin starts the engine and runs `host.tjs`; the game's own scripts run
+  when the host calls `Tjs2Engine::exec_startup` (see `examples/snbk.rs`).
 - Audio storage names resolve through Kirikiri storage.
 
 ## Example
 
 ```sh
-cargo run --example minimal_kag              # uses assets/game
-cargo run --example minimal_kag -- data.xp3
-cargo run --example snbk                     # snbk/data.xp3
-cargo run --example snbk -- snbk/data.xp3 --game-startup
+cargo run --example snbk                     # test_games/snbk/data.xp3
+cargo run --example snbk -- path/to/data.xp3 --dump-log engine.log
 ```
 
-`assets/game/first.ks` starts `bgm.wav` (looping, through the native sound buffers)
-and shows "Hello from Kirikiri on Bevy." in the message window. Click (or
-Enter / Space) shows the second line; a second click ends the scenario, stops
-the BGM and closes the window.
+`snbk.rs` starts a retail game archive: it mounts every archive next to the
+data file (that game keeps its voice/CG/event images in **7z** archives) and
+runs the game's own start-up scripts. Its `startup.tjs` builds the game UI on a
+Kirikiri `Window`, whose layers the host draws like the script-created
+screen's.
 
-`snbk.rs` starts a retail KAG game archive: it mounts every archive next to the
-data file (that game keeps its voice/CG/event images in **7z** archives),
-loads the scenario the archive names as its entry point and logs the tags it
-produces. Its own `startup.tjs` builds the game UI on a Kirikiri `Window`,
-whose layers the host draws like the script-created screen's;
-`--game-startup` runs that script and prints where it stops.
-
-That archive's `startup.tjs` currently stops at `PSBFile` (see below), so
-`--game-startup` does not reach the game's own title screen yet. The
-KAG-parser path (`scenario\start.ks` through `krkr_kag`, the default) does work
-and draws its message window.
+That archive's `startup.tjs` currently stops at `PSBFile` (see below), so it
+does not reach the game's own title screen yet; the example prints where it
+stopped.
 
 The following command has been checked through startup, the opening image and
 the title menu with the Bevy GPU renderer:
 
 ```sh
-cargo run --example snbk -- --game-startup "test_games/与小奶猫创造家族/data.xp3" startup.tjs
+cargo run --example snbk -- "test_games/与小奶猫创造家族/data.xp3"
 ```
 
 ## Status
 
-- Working: engine start/stop, TJS2, KAGParser driving the KAG cursor, text
-  layout and glyph rasterization by Kirikiroid2 (Layer, Font, FreeType),
-  texture operations and layer composition on Bevy’s GPU, BGM/SE/voice channels, XP3/TAR/7z/ZIP
-  reading, the compiled-in plugins, TJS `Timer` (and so KAG's
-  `[wait time=...]`, transitions and auto/skip timing), engine log → Bevy log.
-- Sound: the engine's `WaveSoundBuffer` (what a game's own KAG scripts use for
-  BGM, SE and voice) decodes with Kirikiroid2's decoders and the port mixes the
-  PCM; the host writes that mix to the sound device
+- Working: engine start/stop, TJS2, text layout and glyph rasterization by
+  Kirikiroid2 (Layer, Font, FreeType), texture operations and layer composition
+  on Bevy's GPU, BGM/SE/voice channels, XP3/TAR/7z/ZIP reading, the compiled-in
+  plugins, TJS `Timer` (and so a game's `[wait time=...]`, transitions and
+  auto/skip timing), engine log → Bevy log.
+- Sound: the engine's `WaveSoundBuffer` (what a game's scripts use for BGM, SE
+  and voice) decodes with Kirikiroid2's decoders and the port mixes the PCM;
+  the host writes that mix to the sound device
   (`Kirikiroid2/src/core/environ/bevy/BevySound.cpp`,
-  `crates/krkr_plugin/src/audio.rs`). Host-parsed KAG tags use the same sound buffers.
+  `crates/krkr_plugin/src/audio.rs`).
 - Input: Bevy's keyboard, mouse and touches are forwarded to the game's own
   `Window` as the TJS `onKeyDown` / `onKeyUp` / `onMouseMove` / `onMouseDown` /
   `onMouseUp` calls a native window manager would produce, with keys translated
   to Win32 virtual-key codes and positions to Kirikiri pixels
   (`crates/krkr_plugin/src/input.rs`,
   `Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`).
-- `Window`: a game that builds its own UI (KAG's `KAGWindow`) gets a `Window`
-  whose layer tree the host draws in place of the script-created screen, with
-  mouse/key events posted back to its TJS handlers
+- `Window`: a game that builds its own UI gets a `Window` whose layer tree the
+  host draws in place of the script-created screen, with mouse/key events
+  posted back to its TJS handlers
   (`Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`,
   `Kirikiroid2/src/core/environ/bevy/BevyScene.cpp`).
 - Not taken from Kirikiroid2: input and window management (the Bevy host owns
   them), the sound device (cpal, through the mix the engine produces), video,
   BPG/JXR/PVR images. Scripts using them get a "not supported by the
   bevy_krkr port" error.
-- The message window is the minimal one in `crates/krkr_plugin/src/host.tjs`;
-  KAG3's `MessageLayer.tjs` system scripts are not used. Speaker names, ruby
-  and per-character effects are not implemented.
 - Tested on Linux x86-64 (GCC 16) only.
 
 ## License

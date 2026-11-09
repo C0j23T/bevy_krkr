@@ -4,7 +4,6 @@ members = [
     "crates/krkr_sys",
     "crates/krkr_shim",
     "crates/krkr_script",
-    "crates/krkr_kag",
     "crates/krkr_plugin",
     "codegen",
 ]
@@ -12,10 +11,7 @@ resolver = "2"
 
 [workspace.dependencies]
 bevy = { version = "0.20", default-features = false, features = ["2d", "jpeg"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 thiserror = "2"
-tracing = "0.1"
 
 # ──────────────────────────────────────────────────────────────────────────────
 [package]
@@ -35,7 +31,6 @@ name = "bevy_krkr"
 # Runtime dependencies
 [dependencies]
 krkr_plugin = { path = "crates/krkr_plugin" }
-krkr_kag    = { path = "crates/krkr_kag" }
 krkr_script = { path = "crates/krkr_script" }
 krkr_sys    = { path = "crates/krkr_sys" }
 
@@ -48,10 +43,6 @@ bevy-inspector-egui = { git = "https://github.com/jakobhellermann/bevy-inspector
 default  = ["real_ffi", "xp3filter"]
 real_ffi = ["krkr_sys/real_ffi"]
 xp3filter = ["krkr_sys/plugin-xp3filter"]
-
-[[example]]
-name = "minimal_kag"
-path = "examples/minimal_kag.rs"
 
 [[example]]
 name = "snbk"
