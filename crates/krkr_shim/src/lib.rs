@@ -2,6 +2,7 @@
 
 pub mod archives;
 pub mod ffi;
+pub mod jpeg;
 pub mod png;
 pub mod render;
 pub mod xml;

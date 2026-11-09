@@ -1,3 +1,5 @@
+#![allow(unsafe_op_in_unsafe_fn)]
+
 //! The preference and locale files through the C ABI, the way
 //! `environ/ConfigManager` drives them: real files, visitors called from Rust,
 //! the sentinels. The format itself is tested in `src/xml.rs`.

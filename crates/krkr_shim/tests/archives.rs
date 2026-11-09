@@ -1,3 +1,5 @@
+#![allow(unsafe_op_in_unsafe_fn)]
+
 //! The 7z / ZIP reader through the C ABI, the way `environ/bevy/Archives.cpp`
 //! drives it: the stream callbacks, the entry visitor, the sentinels, and the
 //! "leave the stream usable" contract `TVPOpenArchive` depends on. The formats
