@@ -102,6 +102,14 @@ fn blend_color(d: vec3<f32>, s: vec3<f32>, mode: u32) -> vec3<f32> {
         default: { return s; }
     }
 }
+fn kirikiri_dodge(d: vec3<f32>, s: vec3<f32>, opacity: u32) -> vec3<f32> {
+    if (opacity == 0u) { return d; }
+    var source_bytes = vec3<u32>(round(clamp(s,vec3(0),vec3(1))*255.0));
+    if (opacity < 255u) { source_bytes = (source_bytes*opacity) >> vec3(8u); }
+    let destination_bytes = vec3<u32>(round(clamp(d,vec3(0),vec3(1))*255.0));
+    let reciprocal = vec3(65536u)/max(vec3(255u)-source_bytes,vec3(1u));
+    return vec3<f32>(min((destination_bytes*reciprocal) >> vec3(8u),vec3(255u)))/255.0;
+}
 fn over(d: vec4<f32>, s: vec4<f32>, opacity: f32, kind: u32) -> vec4<f32> {
     let alpha = s.a*opacity;
     let out_alpha = alpha+d.a*(1.0-alpha);
@@ -191,7 +199,13 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
             result = vec4(rgb,d.a);
         }
         case 20u: { result = vec4(mix(d.rgb,blend_color(d.rgb,s.rgb,u32(p[2].y)),s.a*opacity),d.a); }
-        case 21u: { result = vec4(mix(d.rgb,blend_color(d.rgb,s.rgb,u32(p[2].y)),opacity),d.a); }
+        case 21u: {
+            if (u32(p[2].y)==8u) {
+                result = vec4(kirikiri_dodge(d.rgb,s.rgb,u32(clamp(p[2].x,0.0,255.0))),d.a);
+            } else {
+                result = vec4(mix(d.rgb,blend_color(d.rgb,s.rgb,u32(p[2].y)),opacity),d.a);
+            }
+        }
         default: {}
     }
     textureStore(output,xy,clamp(result,vec4(0),vec4(1)));

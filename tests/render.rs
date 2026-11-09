@@ -129,6 +129,39 @@ fn gpu_layer_operations() {
         script(&engine,&format!("src.fillRect(0,0,4,4,0xff406080); dst.stretchCopy(0,0,16,16,src,0,0,4,4,{filter});"));
         near(pixel(8, 8), [64, 96, 128, 255]);
     }
+    // Kirikiri's non-Photoshop dodge scales the source BEFORE division.
+    // A white effect layer at opacity 240 must not saturate every nonzero
+    // background channel, even when that layer's own alpha is zero.
+    script(
+        &engine,
+        "src.fillRect(0,0,4,4,0x00ffffff); src.bringToFront();",
+    );
+    for opacity in [0, 128, 240, 255] {
+        for value in [0u32, 1, 17, 64, 128, 255] {
+            let color = 0xff000000 | value * 0x010101;
+            // TVPColorDodgeBlend_HDA[_o]_c and TVPRecipTable256.
+            let source = if opacity == 255 {
+                255
+            } else {
+                255 * opacity / 256
+            };
+            let reciprocal = 65536 / (255 - source).max(1);
+            let expected = if opacity == 0 {
+                value
+            } else {
+                (value * reciprocal / 256).min(255)
+            } as u8;
+            script(&engine, &format!(
+                "dst.fillRect(0,0,16,16,{color}); dst.operateRect(0,0,src,0,0,4,4,omDodge,{opacity});"
+            ));
+            assert_eq!(pixel(1, 1), [expected, expected, expected, 255]);
+            script(&engine, &format!(
+                "dst.fillRect(0,0,16,16,{color}); src.type=ltDodge; src.opacity={opacity}; src.visible=true;"
+            ));
+            assert_eq!(pixel(1, 1), [expected, expected, expected, 255]);
+            script(&engine, "src.visible=false; src.type=ltAlpha;");
+        }
+    }
     script(
         &engine,
         r#"
