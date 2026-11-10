@@ -4,6 +4,7 @@ pub mod archives;
 pub mod ffi;
 pub mod jpeg;
 pub mod png;
+mod save_image;
 pub mod render;
 pub mod video;
 pub mod xml;

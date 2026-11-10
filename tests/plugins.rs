@@ -31,6 +31,9 @@ fn every_plugin_attaches_on_link() {
     // `(module, a member the module adds, where)`.
     let expected: &[(&str, &str)] = &[
         ("layerExImage.dll", "Layer.light"),
+        ("perspective.dll", "Layer.perspectiveCopy"),
+        ("layerExRaster.dll", "Layer.copyRaster"),
+        ("layerExSave.dll", "Layer.saveLayerImagePng"),
         ("layerExMovie.dll", "Layer.openMovie"),
         ("addFont.dll", "System.addFont"),
         ("csvParser.dll", "global.CSVParser"),

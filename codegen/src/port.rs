@@ -56,6 +56,9 @@ pub struct Plugin {
 }
 
 pub const PLUGINS: &[Plugin] = &[
+    Plugin { source: "src/plugins/layerExPerspective.cpp", module: "perspective.dll", internal: false, feature: None },
+    Plugin { source: "src/core/environ/bevy/plugins/LayerExRaster.cpp", module: "layerExRaster.dll", internal: false, feature: None },
+    Plugin { source: "src/core/environ/bevy/plugins/LayerExSave.cpp", module: "layerExSave.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/LayerExMovie.cpp", module: "layerExMovie.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/LayerExImage.cpp", module: "layerExImage.dll", internal: false, feature: None },
     Plugin { source: "src/plugins/addFont.cpp", module: "addFont.dll", internal: false, feature: None },

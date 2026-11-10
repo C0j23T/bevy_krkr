@@ -6,7 +6,7 @@
 
 基本运行包括启动、标题菜单、对话、分支选择、历史记录、自动/跳过、BGM/SE/语音、普通转场、存档、读档、退出与再次启动。使用动态图层的工程还必须完成 Layer 视频播放。上游源码可取得、模块能注册或启动脚本返回成功，都不能单独证明游戏可用。
 
-已完成项列于下方；立即实现项按顺序推进，其余能力按实际工程调用补齐。原版 Kirikiroid2 的兼容结论必须以选定版本的实机运行结果为准。
+已完成项列于下方，其余能力按实际工程调用补齐。原版 Kirikiroid2 的兼容结论必须以选定版本的实机运行结果为准。
 
 ## 当前基础
 
@@ -19,29 +19,32 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 - `layerExImage.dll`
 - `layerExMovie.dll`
 - `KAGParserEx.dll`
+- `perspective.dll`
+- `layerExRaster.dll`
+- `layerExSave.dll`
 
 ## 立即实现
 
-按以下顺序推进。三项均有固定参考源码，Perspective 与 Raster 可复用现有 GPU 命令和纹理，Save 补齐显式图片导出能力。
+下一批按以下顺序推进。文字绘制优先复用现有字体与 glyph 路径；转场复用 Bevy 纹理和 GPU 命令。默认模板主要使用核心 `drawText` 和 crossfade/universal，以下优先级依据编辑器扩展能力与现有实现的可复用程度，不代表默认模板已直接依赖这些插件。
 
-| 插件 | 实现范围 | 验收 |
+| 插件 | 评估与实现范围 | 验收 |
 | --- | --- | --- |
-| `perspective.dll` | 接入现有 [`layerExPerspective.cpp`](../Kirikiroid2/src/plugins/layerExPerspective.cpp)，复用 `OperatePerspective` 和 Bevy 投影映射 | 四点透视复制；覆盖裁剪、采样、退化四边形、Alpha 和同图复制 |
-| `layerExRaster.dll` | 按 [`manual.tjs`](../layerExRaster/manual.tjs) 实现 `copyRaster(src,maxh,lines,cycle,time)`，用 GPU 逐行位移，保持未覆盖区域 | 与上游算法比较位移方向、周期、时间、边界、裁剪和 Alpha；普通效果不逐帧回读 |
-| `layerExSave.dll` | 按固定上游接口接入 PNG/TLG 保存、裁剪、差异和通道处理，复用现有编码与 Storage | 保存时才读回 GPU 快照；核对输出文件、透明度、裁剪及中文路径；异步任务持有快照，进度与完成事件回到 TJS 主线程 |
+| `layerExText.dll` / `layerExDraw.dll` | 优先补 NVL 旧版文字外观接口，再扩展渐变画刷和路径；Text 已并入 [Draw 上游](https://github.com/wamsoft/layerExDraw)，需按实际脚本适配；字体轮廓或覆盖率可由 CPU 生成，Bevy 执行填充与合成 | 旧接口参数、字体度量、描边、阴影、渐变、裁剪和 Alpha；验证菜单、对话及历史的实际文字显示，模块别名不能代替接口实现 |
+| `extrans.dll` | 先补 wave/mosaic，再补 turn、rotatezoom、rotatevanish、rotateswap、ripple；按上游 provider 生命周期和参数注册，每个效果独立增加 GPU 路径 | 固定时间点对照原 DLL 输出，覆盖首末帧、参数、Alpha、裁剪、取消及重启；普通转场不逐帧回读 |
+| `extNagano.dll` | 先补 blurfade，再评估 book、morphing 等效果；参考 [上游恢复实现](https://github.com/wamsoft/extNagano)，逐效果与 NVL DLL 对照，近似算法不得标记为像素一致 | 检查 blurfade 中间帧及端点，再为后续每个效果增加独立像素样例和实际脚本验收 |
+| `fstat.dll` | 对照 NVL 所用 DLL 确认文件属性接口，复用 Storage 路径解析；文件元数据和目录访问由 Rust 完成，C++ 适配 TJS 返回值 | 普通文件、目录、不存在路径、中文名、文件大小和时间字段；明确本地路径与 XP3 内资源的行为，错误不吞掉 |
+
+`nvl/macro.ks:13–14` 会加载 extrans/extNagano，但默认演出主要使用 crossfade/universal。模块加载语句本身不证明效果已执行；应扫描实际 `trans method` 和动态参数。`saveStruct` 的核心存档也不依赖 LayerExSave，不能把两者合并判断。
 
 ## 待实现
 
-下表以未使用相应功能的基础工程为前提。若游戏在启动、菜单或主流程中调用这些 API，对该工程立即升级为必需项；不提供吞异常或统一降级转场来掩盖缺失行为。
+若游戏在启动、菜单或主流程中调用下列 API，对该工程立即升级为必需项；不提供吞异常或统一降级转场来掩盖缺失行为。
 
 | 插件 | 功能 | 兼容方向 |
 | --- | --- | --- |
-| `layerExText.dll` / `layerExDraw.dll` | 字体外观、渐变画刷、路径和文字绘制 | Text 已并入 [Draw 上游](https://github.com/wamsoft/layerExDraw)；以 NVL 旧接口为契约补适配，复用现有字体与 glyph 路径，Bevy 执行填充/合成，必要时 CPU 生成轮廓或覆盖率；仅添加模块别名不足以兼容旧 API |
-| `extrans.dll` | wave、mosaic、turn、rotatezoom、rotatevanish、rotateswap、ripple | 按上游 provider 生命周期和参数注册，对每个效果增加 Bevy GPU 路径；已有 crossfade/universal 单独维持 |
-| `extNagano.dll` | blurfade、book、morphing 等附加转场 | 使用已接入的恢复实现作为参考，逐效果与 NVL DLL 比较；上游说明部分算法近似，不能直接承诺像素一致 |
 | `json.dll`、`lineParser.dll`、`expat.dll` | JSON、文本行、XML 数据接口 | 按项目实际调用补 TJS 对象、数据转换和编码行为；Rust 库只通过完整解析操作接入 |
 | `agg.dll` | 矢量绘制扩展 | 确认脚本 API 后接现有 Bevy 图形路径，避免每帧 CPU 图像回传 |
-| `fstat.dll`、`minizip.dll` | 文件信息、压缩包脚本操作 | 与现有 Storage/archive 能力对接；核对写入、枚举和路径语义 |
+| `minizip.dll` | 压缩包脚本操作 | 与现有 Storage/archive 能力对接；核对写入、枚举和路径语义 |
 | `clipboardEx.dll` | 剪贴板扩展 | 由宿主实现文本和必要的数据格式 |
 | `wump3.dll`、`wumsadp.dll` | MP3、MS ADPCM 音频 | 在 WaveSoundBuffer 解码路径补齐并验证 seek/loop；仅启用视频 FFmpeg 不代表音频解码已接入 |
 | `krflash.dll` | Flash 内容与交互 | 单独评估内容转换或播放器；普通 MP4 播放不等价 |
@@ -49,36 +52,21 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 | `tools/msgreceiver.dll` | 编辑器消息与调试联动 | 普通导出工程不依赖；需要联调时适配宿主消息队列 |
 | `menu.dll` 的原生 UI、系统输入框/文件选择/外链 | 平台交互 | 基础流程使用游戏自己的按钮和对话框；需系统功能时通过宿主实现，保留脚本对象状态 |
 
-`nvl/macro.ks:13–14` 会加载 extrans/extNagano，但默认演出主要使用 crossfade/universal。模块加载语句本身不证明效果已执行；应扫描实际 `trans method` 和动态参数。`saveStruct` 的核心存档也不依赖 LayerExSave，不能把两者合并判断。
-
 ## 源码与分支
 
-项目根目录仅保留待实现插件的固定参考 submodule。Image/Movie 的运行时实现位于 Kirikiroid2 的 `src/core/environ/bevy/plugins`，解析扩展位于核心 KAGParser；参考仓库不参与运行时构建。
+项目保留运行时依赖的 [`Kirikiroid2/`](../Kirikiroid2/) submodule，以及尚未接入的 [`layerExDraw/`](../layerExDraw/)、[`extrans/`](../extrans/)、[`extNagano/`](../extNagano/) 参考仓库。已实现的 Raster、Save 不再保留独立参考仓库。本机 `/home/hepta/Workspace/krkrz` 修改版可用于核对引擎能力；构建不依赖该绝对路径。
 
-版权与来源记录见 [`LICENSE-THIRD-PARTY.md`](../LICENSE-THIRD-PARTY.md)。像素测试使用已生成的参考数据，重新生成时显式提供外部上游源码目录。Raster 使用自身目录内的公共头文件。
+Image/Movie/Raster/Save 的运行时适配位于 Kirikiroid2 的 `src/core/environ/bevy/plugins`，Perspective 位于 `src/plugins/layerExPerspective.cpp`，解析扩展位于核心 KAGParser。Save 的像素分析与编辑位于 Rust shim 的 `ffi/image_ops.rs`；PNG/TLG5 编码、压缩和后台任务位于 [`crates/krkr_shim/src/save_image.rs`](../crates/krkr_shim/src/save_image.rs)，PNG 复用 Rust `png` crate；C++ 仅适配 TJS 参数、图层快照、Storage 写入和主线程事件。无需额外检出上游仓库或链接 C 编码库。
 
-| 目录 | 来源 | 固定提交 |
-| --- | --- | --- |
-| [`layerExRaster/`](../layerExRaster/) | [wamsoft/layerExRaster](https://github.com/wamsoft/layerExRaster) | `a4c9be0c7510cca552e27c0c3e931b2eaee399af` |
-| [`layerExSave/`](../layerExSave/) | [wamsoft/layerExSave](https://github.com/wamsoft/layerExSave) | `b0939dc916f1b39775768cbb25e6a54b4e217410` |
-| [`layerExDraw/`](../layerExDraw/) | [wamsoft/layerExDraw](https://github.com/wamsoft/layerExDraw) | `f665a153fa774e47069f53e303329be15975d1e0` |
-| [`extrans/`](../extrans/) | [wamsoft/extrans](https://github.com/wamsoft/extrans) | `bd0611eced7e2731a8c8403148e06abea827467e` |
-| [`extNagano/`](../extNagano/) | [wamsoft/extNagano](https://github.com/wamsoft/extNagano) | `4b403e2f684756c490975b9d1697289aa1f34240` |
-
-Movie、Perspective 与 Layer 辅助实现复用现有 [`Kirikiroid2/`](../Kirikiroid2/) submodule。已编译插件及现有 Rust shim 无需再克隆一份上游；其余插件在来源确认后按同一规则接入。
+版权、来源和版本记录见 [`LICENSE-THIRD-PARTY.md`](../LICENSE-THIRD-PARTY.md)。像素测试使用已生成的参考数据，重新生成时显式提供外部上游源码目录。后续适配仅引入实际需要的源码并保留许可证，以 NVL 模板和所选 DLL 版本确定接口范围。
 
 ```sh
 git submodule update --init --recursive
-git -C layerExRaster switch bevy-port
 ```
-
-submodule 记录提交，不记录检出的本地分支。新克隆通常处于 detached HEAD；若本地还没有分支，使用 `git -C layerExRaster switch -c bevy-port`，其余目录同理。本次未发布远端分支，因此新增条目没有把 `.gitmodules` 的远端跟踪分支设为 `bevy-port`。后续移植提交应先在可访问的 fork 发布，再更新父仓库 URL 与 gitlink；日常复现使用固定提交，不使用 `update --remote`。
-
-保留上游版权和随附许可证；依赖实际进入构建时同步维护 `LICENSE-THIRD-PARTY.md`。上游最新版可能包含 NVL Maker 旧 DLL 没有的 API，验收以模板和所选 DLL 版本为准。
 
 ## 编译、注册与 GPU 分工
 
-1. 在现有插件清单中登记模块名、源码及必要的附加编译单元。为根目录插件增加明确的工作区路径解析、include 路径和文件变更追踪，不依赖开发机器绝对路径。
+1. 在现有插件清单中登记模块名、源码及必要的附加编译单元。为附加编译单元设置 include 路径和文件变更追踪，不依赖开发机器绝对路径。
 2. Image/Movie 使用现有 ncbind 绑定并声明模块名。核心 KAGParser 不依赖 V2Link；后续转场插件的 V2Link/onV2Link 需接入现有注册生命周期，不能假定每个上游都使用 ncbind。
 3. 复用生成包装器及保留符号，确保插件进入最终静态链接。`module` 与注册名一致；游戏保留 `Plugins.link("layerExImage.dll")` 等原有调用。
 4. 按脚本需要加载接口。只有必须早于游戏初始化存在的能力才自动注册；支持重复 link，退出时在 TJS 对象仍有效期间清理回调、类和任务。
@@ -89,17 +77,18 @@ FFI 按完整操作传递字节、尺寸、pitch、纹理标识和参数。对�
 
 ## 验收与执行顺序
 
-下一批依次实现 Perspective、Raster、Save。每项完成源码接入、插件生命周期与独立行为测试后，再用实际调用该接口的游戏或样例验收；Draw 和附加转场留在后续列表。游戏若在启动或主流程中依赖其他待实现接口，优先处理该阻塞。
+下一批依次推进 Text/Draw、extrans、extNagano、fstat；各插件按表中范围分项实现与验收。已完成插件的实际工程可见交互仍需验收。游戏若在启动或主流程中依赖其他待实现接口，优先处理该阻塞。
 
 测试遵循 [编写约定](../AGENTS.md)，只运行受影响的目标：
 
 ```sh
+cargo test -p krkr_shim --test png --test zlib --test save_image --test image_ops
 cargo test --test plugins --test scripts_ext --test kag_parser
-cargo test --test layer_ex_image --test render
+cargo test --test layer_ex_plugins --test layer_ex_image --test render
 cargo test --test restart
 ```
 
-第一批检查注册及 Scripts，第二批检查 GPU 输出，第三批在修改生命周期时运行。新增插件测试按能力单独执行，使用上游算法或独立样例验证像素与参数语义，不只检查方法是否存在。改视频时再运行：
+Rust shim 测试检查编解码、元数据、压缩级别、像素操作和后台快照；后续三批分别检查注册及 Scripts、GPU 输出、重启生命周期。新增插件测试按能力单独执行，使用上游算法或独立样例验证像素与参数语义，不只检查方法是否存在。改视频时再运行：
 
 ```sh
 cargo test --features video-ffmpeg --test layer_ex_movie --test video

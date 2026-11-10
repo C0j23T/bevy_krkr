@@ -21,6 +21,13 @@ copyright (C) 1995 Alejandro Aguilar Sierra. The modified routines execute
 on the GPU. Distributions must include the full notices in
 [licenses/cximage.txt](licenses/cximage.txt).
 
+LayerExRaster adapts the algorithm by わたなべごう in
+[wamsoft/layerExRaster](https://github.com/wamsoft/layerExRaster), commit
+`a4c9be0c7510cca552e27c0c3e931b2eaee399af`; its license follows Kirikiri.
+LayerExSave adapts the image utilities and encoders by the same author in
+[wamsoft/layerExSave](https://github.com/wamsoft/layerExSave), commit
+`b0939dc916f1b39775768cbb25e6a54b4e217410`. Its license follows Kirikiri.
+
 ## Kirikiroid2
 
 bevy_krkr uses code from Kirikiroid2 (<https://github.com/zeas2/Kirikiroid2>).
@@ -43,8 +50,7 @@ under GPL-2.0-or-later, like bevy_krkr. Unmodified Kirikiroid2 code keeps its
 license below.
 
 The engine core is linked with system libraries that are not part of this
-repository: Oniguruma, FreeType, zlib, libpng, libjpeg-turbo, libvorbis/libogg,
-opusfile/libopus.
+repository: Oniguruma, FreeType, libvorbis/libogg and opusfile/libopus.
 A binary distribution must comply with their licenses as well.
 
 ### Generated bindings

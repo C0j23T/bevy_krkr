@@ -8,7 +8,7 @@ pub const KRKR_PNG_GRAY: i32 = 1;
 pub const KRKR_PNG_INDEX: i32 = 2;
 
 #[repr(C)]
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct KrkrPngInfo {
     pub width: u32,
     pub height: u32,

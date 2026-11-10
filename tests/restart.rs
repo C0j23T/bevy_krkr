@@ -58,7 +58,7 @@ fn run_session(name: &str) {
     // survives a shutdown, so this also proves the next session attaches them
     // again instead of skipping them.
     engine
-        .exec_script(r#"Plugins.link("addFont.dll");"#, "link")
+        .exec_script(r#"Plugins.link("addFont.dll"); Plugins.link("perspective.dll"); Plugins.link("layerExRaster.dll"); Plugins.link("layerExSave.dll");"#, "link")
         .unwrap_or_else(|e| panic!("{name}: {e}"));
     assert_eq!(
         engine.eval("typeof System.addFont").unwrap(),

@@ -101,6 +101,7 @@ mod real {
         // directives yet: they must come after the static libraries).
         let mut includes = port::include_dirs(src);
         includes.push(out_dir.to_owned());
+        includes.push(src.join("src/plugins/ncbind"));
         for (pkg, feature) in port::PKG_CONFIG {
             if port::enabled(*feature, feature_on) {
                 includes.extend(probe(pkg, false).include_paths);
@@ -141,6 +142,7 @@ mod real {
         configure(&mut cpp);
         let plugins = write_plugins(src, out_dir);
         cpp.cpp(true).std("c++17").files(&sources.cpp).files(&plugins).file(&shim);
+        println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/LayerExSaveUtils.inc").display());
         cpp.compile("krkr_core");
         let mut c = cc::Build::new();
         configure(&mut c);
