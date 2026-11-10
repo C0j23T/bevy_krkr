@@ -9,6 +9,9 @@ Rust code covers ECS integration, drawing the layers, audio playback through
 the native sound buffers, and resource lifecycle. There is no `.ks` parser and
 no TJS2 parser in this repository.
 
+NVL Maker / KAGeX plugin priorities, source submodules, GPU integration and
+validation are described in [the compatibility plan](docs/nvl-maker-compatibility.md).
+
 ## Layout
 
 ```
