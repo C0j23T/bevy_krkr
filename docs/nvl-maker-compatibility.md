@@ -22,6 +22,7 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 - `perspective.dll`
 - `layerExRaster.dll`
 - `layerExSave.dll`
+- `fstat.dll`
 
 ## 立即实现
 
@@ -32,7 +33,6 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 | `layerExText.dll` / `layerExDraw.dll` | 优先补 NVL 旧版文字外观接口，再扩展渐变画刷和路径；Text 已并入 [Draw 上游](https://github.com/wamsoft/layerExDraw)，需按实际脚本适配；字体轮廓或覆盖率可由 CPU 生成，Bevy 执行填充与合成 | 旧接口参数、字体度量、描边、阴影、渐变、裁剪和 Alpha；验证菜单、对话及历史的实际文字显示，模块别名不能代替接口实现 |
 | `extrans.dll` | 先补 wave/mosaic，再补 turn、rotatezoom、rotatevanish、rotateswap、ripple；按上游 provider 生命周期和参数注册，每个效果独立增加 GPU 路径 | 固定时间点对照原 DLL 输出，覆盖首末帧、参数、Alpha、裁剪、取消及重启；普通转场不逐帧回读 |
 | `extNagano.dll` | 先补 blurfade，再评估 book、morphing 等效果；参考 [上游恢复实现](https://github.com/wamsoft/extNagano)，逐效果与 NVL DLL 对照，近似算法不得标记为像素一致 | 检查 blurfade 中间帧及端点，再为后续每个效果增加独立像素样例和实际脚本验收 |
-| `fstat.dll` | 对照 NVL 所用 DLL 确认文件属性接口，复用 Storage 路径解析；文件元数据和目录访问由 Rust 完成，C++ 适配 TJS 返回值 | 普通文件、目录、不存在路径、中文名、文件大小和时间字段；明确本地路径与 XP3 内资源的行为，错误不吞掉 |
 
 `nvl/macro.ks:13–14` 会加载 extrans/extNagano，但默认演出主要使用 crossfade/universal。模块加载语句本身不证明效果已执行；应扫描实际 `trans method` 和动态参数。`saveStruct` 的核心存档也不依赖 LayerExSave，不能把两者合并判断。
 

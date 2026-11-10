@@ -61,6 +61,7 @@ pub const PLUGINS: &[Plugin] = &[
     Plugin { source: "src/core/environ/bevy/plugins/LayerExSave.cpp", module: "layerExSave.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/LayerExMovie.cpp", module: "layerExMovie.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/LayerExImage.cpp", module: "layerExImage.dll", internal: false, feature: None },
+    Plugin { source: "src/core/environ/bevy/plugins/Fstat.cpp", module: "fstat.dll", internal: false, feature: None },
     Plugin { source: "src/plugins/addFont.cpp", module: "addFont.dll", internal: false, feature: None },
     Plugin { source: "src/plugins/csvParser.cpp", module: "csvParser.dll", internal: false, feature: None },
     Plugin { source: "src/plugins/dirlist.cpp", module: "dirlist.dll", internal: false, feature: None },

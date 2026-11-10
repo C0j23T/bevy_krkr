@@ -51,6 +51,94 @@ fn every_plugin_attaches_on_link() {
         assert_ne!(before, "Object", "{module}: {member} existed before linking");
         assert_eq!(after, "Object", "{module}: {member} is missing after linking");
     }
+    assert_ne!(engine.eval("typeof Storages.fstat").unwrap(), "Object");
+    engine
+        .exec_script(r#"Plugins.link("fstat.dll");"#, "link fstat")
+        .unwrap();
+    assert_eq!(engine.eval("typeof Storages.fstat").unwrap(), "Object");
+    assert_eq!(
+        engine.eval("Storages.fstat('bgm.wav').size").unwrap(),
+        "88244"
+    );
+    for member in [
+        "moveFile",
+        "deleteFile",
+        "copyFile",
+        "createDirectory",
+        "removeDirectory",
+        "isExistentDirectory",
+    ] {
+        assert_eq!(
+            engine.eval(&format!("typeof Storages.{member}")).unwrap(),
+            "Object"
+        );
+    }
+
+    let test_dir = std::env::temp_dir().join(format!("bevy_krkr_fstat_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&test_dir);
+    std::fs::create_dir(&test_dir).expect("create fstat test directory");
+    let storage_name =
+        |path: &std::path::Path| format!("file://./{}", path.strip_prefix("/").unwrap().display());
+    let source = test_dir.join("source.txt");
+    let moved = test_dir.join("moved.txt");
+    let copied = test_dir.join("copied.txt");
+    std::fs::write(&source, "fstat").expect("write fstat test file");
+    engine
+        .exec_script(
+            &format!(
+                "Storages.moveFile({:?}, {:?});",
+                storage_name(&source),
+                storage_name(&moved)
+            ),
+            "fstat move",
+        )
+        .unwrap();
+    assert!(!source.exists());
+    assert_eq!(std::fs::read_to_string(&moved).unwrap(), "fstat");
+    engine
+        .exec_script(
+            &format!(
+                "Storages.copyFile({:?}, {:?}, false);",
+                storage_name(&moved),
+                storage_name(&copied)
+            ),
+            "fstat copy",
+        )
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&copied).unwrap(), "fstat");
+    engine
+        .exec_script(
+            &format!("Storages.deleteFile({:?});", storage_name(&copied)),
+            "fstat delete",
+        )
+        .unwrap();
+    assert!(!copied.exists());
+
+    let created_dir = test_dir.join("created");
+    let created_dir_name = format!("{}/", storage_name(&created_dir));
+    engine
+        .exec_script(
+            &format!("Storages.createDirectory({created_dir_name:?});"),
+            "fstat mkdir",
+        )
+        .unwrap();
+    assert!(created_dir.is_dir());
+    assert_eq!(
+        engine
+            .eval(&format!(
+                "Storages.isExistentDirectory({created_dir_name:?})"
+            ))
+            .unwrap(),
+        "1"
+    );
+    engine
+        .exec_script(
+            &format!("Storages.removeDirectory({created_dir_name:?});"),
+            "fstat rmdir",
+        )
+        .unwrap();
+    assert!(!created_dir.exists());
+    std::fs::remove_dir_all(test_dir).expect("clean up fstat test directory");
 
     // `Scripts.foreach` / `Scripts.getObjectKeys` come from the module the
     // engine attaches itself.
