@@ -442,13 +442,24 @@ impl Gpu {
     fn draw(&mut self, c: &RenderCommand) -> Result<(), String> {
         self.draw_with_source(c, None)
     }
-    fn draw_with_source(&mut self, c: &RenderCommand, source: Option<Texture>) -> Result<(), String> {
+    fn draw_with_source(
+        &mut self,
+        c: &RenderCommand,
+        source: Option<Texture>,
+    ) -> Result<(), String> {
         if c.method.is_null() {
             return Err("missing texture operation".into());
         }
         let method = unsafe { CStr::from_ptr(c.method) }
             .to_str()
             .map_err(|e| e.to_string())?;
+        if method == "LayerExGaussian" {
+            let mut pass = *c;
+            pass.method = c"LayerExGaussianH".as_ptr();
+            self.draw(&pass)?;
+            pass.method = c"LayerExGaussianV".as_ptr();
+            return self.draw(&pass);
+        }
         let (operation, kind, blend) = operation(method)?;
         let old = self.texture(c.target)?;
         let inputs = [
@@ -494,6 +505,17 @@ impl Gpu {
                 }
             }
         }
+        let gaussian_data;
+        let data: &[[f32; 4]] = if operation == 28 || operation == 29 {
+            let weights = gaussian_weights(c.parameters[4])?;
+            data[3][1] = weights.len() as f32;
+            let mut extended = data.to_vec();
+            extended.extend(weights.into_iter().map(|w| [w, 0.0, 0.0, 0.0]));
+            gaussian_data = extended;
+            &gaussian_data
+        } else {
+            &data
+        };
         let output = self
             .device
             .create_texture(&descriptor(old.width(), old.height()));
@@ -509,7 +531,7 @@ impl Gpu {
             .collect();
         let buffer = self.device.create_buffer_with_data(&BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(&data),
+            contents: bytemuck::cast_slice(data),
             usage: BufferUsages::STORAGE,
         });
         let mut entries: Vec<_> = views
@@ -590,6 +612,14 @@ fn operation(name: &str) -> Result<(u32, u32, u32), String> {
     let op = match base {
         "Copy" => 0,
         "VideoColor" => 22,
+        "LayerMovieAlpha" => 30,
+        "LayerExLight" => 23,
+        "LayerExColorize" => 24,
+        "LayerExModulate" => 25,
+        "LayerExNoise" => 26,
+        "LayerExWhiteNoise" => 27,
+        "LayerExGaussianH" => 28,
+        "LayerExGaussianV" => 29,
         "FillARGB" => 1,
         "FillColor" => 2,
         "FillMask" => 3,
@@ -621,7 +651,7 @@ fn operation(name: &str) -> Result<(u32, u32, u32), String> {
                     4
                 },
                 0,
-            ))
+            ));
         }
         _ => {
             let (photoshop, base) = base.strip_prefix("Ps").map_or((false, base), |s| (true, s));
@@ -710,4 +740,42 @@ pub(crate) fn color_video(
     command.source_rects[0] = command.rect.map(|v| v as f32);
     command.parameters[4..8].copy_from_slice(&color.map(|v| v as f32));
     gpu.draw_with_source(&command, Some(image.0.clone()))
+}
+
+fn gaussian_weights(radius: f32) -> Result<Vec<f32>, String> {
+    if !radius.is_finite() || radius.abs() > 16384.0 {
+        return Err("invalid gaussianBlur radius".into());
+    }
+    let sigma = (0.5 * radius).abs() + 0.25;
+    let extent = sigma * 2.0;
+    let length = (2.0 * (extent - 0.5).ceil() + 1.0) as usize;
+    let mid = length / 2;
+    let mut weights = vec![0.0; length];
+    for i in mid + 1..length {
+        let base = i as f32 - mid as f32 - 0.5;
+        weights[i] = (1..=50)
+            .map(|j| {
+                let x = base + 0.02 * j as f32;
+                if x <= extent {
+                    (-x * x / (2.0 * sigma * sigma)).exp()
+                } else {
+                    0.0
+                }
+            })
+            .sum::<f32>()
+            / 50.0;
+        weights[length - 1 - i] = weights[i];
+    }
+    weights[mid] = (0..=50)
+        .map(|j| {
+            let x = 0.5 + 0.02 * j as f32;
+            (-x * x / (2.0 * sigma * sigma)).exp()
+        })
+        .sum::<f32>()
+        / 51.0;
+    let sum: f32 = weights.iter().sum();
+    for w in &mut weights {
+        *w /= sum;
+    }
+    Ok(weights)
 }

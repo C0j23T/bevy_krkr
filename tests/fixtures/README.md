@@ -23,3 +23,28 @@ ffmpeg -f lavfi -i color=c=red:s=64x64:r=10:d=1 \
   -map 0:v -map 1:v -map 2:a -map 3:a -c:v libx264 -pix_fmt yuv420p \
   -c:a aac -shortest -y multistream.mp4
 ```
+
+`layer-ex-image.rgba` contains reference output from the pinned upstream
+[wamsoft/layerExImage](https://github.com/wamsoft/layerExImage) at commit
+`3aff625dba5c545ba722bb43b0a5ca1ad4f4336d`. Regenerate it from an external checkout
+with `python3 tests/fixtures/generate_layer_ex_image.py /path/to/layerExImage`.
+The generator verifies the upstream source hashes; running tests only needs the
+committed RGBA fixture. Cases are 16×16 light,
+colorize (partial blend), modulate, Gaussian blur; 3×2 Gaussian blur; and
+16×16 colorize (full blend), with varying RGB and Alpha. The last two cases
+also exercise a negative CPU pitch. The test compares GPU output with these
+independent CPU reference pixels.
+
+`layer-alpha.mkv` contains a red left half and a gray right half. It checks
+LayerExMovie's packed mask layout separately from native video Alpha.
+
+```sh
+ffmpeg -f lavfi -i color=c=red:s=64x64:r=10:d=0.4 \
+  -f lavfi -i color=c=gray:s=64x64:r=10:d=0.4 \
+  -filter_complex '[0:v][1:v]hstack[v]' -map '[v]' -c:v ffv1 -y layer-alpha.mkv
+```
+
+`pack_xp3.py SOURCE_DIRECTORY OUTPUT.xp3` packages an export into an unencrypted
+XP3 with compressed segments and index. The NVL acceptance test accepts either
+the source directory or this archive via `NVL_MAKER_DATA`, and copies its input
+to an isolated temporary project before writing any savedata.

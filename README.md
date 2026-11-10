@@ -9,8 +9,15 @@ Rust code covers ECS integration, drawing the layers, audio playback through
 the native sound buffers, and resource lifecycle. There is no `.ks` parser and
 no TJS2 parser in this repository.
 
-NVL Maker / KAGeX plugin priorities, source submodules, GPU integration and
-validation are described in [the compatibility plan](docs/nvl-maker-compatibility.md).
+The core parser includes the KAGParserEx extensions. `layerExImage.dll` runs
+its six image operations on the Bevy GPU; `layerExMovie.dll` uses the existing
+video backend to update ordinary Layer textures. The NVL Maker template test
+covers gameplay, save/load and restarting a session. Supported behavior and
+remaining work are listed in [the compatibility document](docs/nvl-maker-compatibility.md).
+
+Workspace builds default to one job to keep compiler and linker I/O bounded.
+The workspace VS Code settings disable automatic rust-analyzer checks on save;
+run the affected test targets explicitly.
 
 ## Layout
 

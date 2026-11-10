@@ -30,6 +30,8 @@ fn every_plugin_attaches_on_link() {
 
     // `(module, a member the module adds, where)`.
     let expected: &[(&str, &str)] = &[
+        ("layerExImage.dll", "Layer.light"),
+        ("layerExMovie.dll", "Layer.openMovie"),
         ("addFont.dll", "System.addFont"),
         ("csvParser.dll", "global.CSVParser"),
         ("fftgraph.dll", "global.drawFFTGraph"),
@@ -48,7 +50,7 @@ fn every_plugin_attaches_on_link() {
     }
 
     // `Scripts.foreach` / `Scripts.getObjectKeys` come from the module the
-    // engine attaches itself (the KAGParserEx.dll replacement).
+    // engine attaches itself.
     assert_eq!(engine.eval("typeof Scripts.foreach").unwrap(), "Object");
     assert_eq!(engine.eval("typeof Scripts.getObjectKeys").unwrap(), "Object");
 
@@ -59,9 +61,9 @@ fn every_plugin_attaches_on_link() {
         .exec_script(r#"Plugins.link("xp3filter.dll");"#, "link")
         .expect("Plugins.link(xp3filter.dll)");
 
-    // A module that is not part of the build links to nothing rather than
-    // failing, which is how a game discovers a plugin it cannot have.
+    // KAGParserEx semantics are built into the single core KAGParser class.
     engine
         .exec_script(r#"Plugins.link("KAGParserEx.dll");"#, "link")
         .expect("Plugins.link(KAGParserEx.dll)");
+    assert_eq!(engine.eval("typeof (new KAGParser()).paramMacros").unwrap(), "Object");
 }

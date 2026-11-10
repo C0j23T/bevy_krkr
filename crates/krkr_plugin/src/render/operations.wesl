@@ -143,6 +143,27 @@ fn inside(at: vec2<f32>) -> bool {
     let e = vec4(edge(a,b,at),edge(b,d,at),edge(d,c,at),edge(c,a,at));
     return all(e>=vec4(0)) || all(e<=vec4(0));
 }
+fn hue_rgb(n1: f32, n2: f32, input: f32) -> f32 {
+    var h = input;
+    if h > 360.0 { h -= 360.0; } else if h < 0.0 { h += 360.0; }
+    if h < 60.0 { return n1+(n2-n1)*h/60.0; }
+    if h < 180.0 { return n2; }
+    if h < 240.0 { return n1+(n2-n1)*(240.0-h)/60.0; }
+    return n1;
+}
+fn hsl_rgb(h: f32, s: f32, l: f32) -> vec3<f32> {
+    let n2 = select(l+s-l*s,l*(1.0+s),l<=0.5);
+    let n1 = 2.0*l-n2;
+    if s == 0.0 { return vec3(l); }
+    return vec3(hue_rgb(n1,n2,h+120.0),hue_rgb(n1,n2,h),hue_rgb(n1,n2,h-120.0));
+}
+fn hash_noise(input: u32) -> f32 {
+    var x = input;
+    x ^= x >> 16u; x *= 0x7feb352du; x ^= x >> 15u;
+    x *= 0x846ca68bu; x ^= x >> 16u;
+    return f32(x)/4294967295.0;
+}
+
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let xy = vec2<i32>(invocation.xy)+vec2<i32>(max(p[0].xy,vec2(0)));
@@ -205,6 +226,70 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
             } else {
                 result = vec4(mix(d.rgb,blend_color(d.rgb,s.rgb,u32(p[2].y)),opacity),d.a);
             }
+        }
+        case 30u: {
+            let mask = fetch(source,vec2<i32>(floor(coordinate(0u,at)))+vec2(i32(p[3].x),0));
+            result = vec4(s.rgb,mask.r);
+        }
+        case 23u: {
+            let rgb = floor(d.rgb*255.0+0.5);
+            result = vec4(clamp(trunc((rgb-128.0)*((100.0+trunc(p[3].y))/100.0)+trunc(p[3].x)+128.0),vec3(0),vec3(255))/255.0,d.a);
+        }
+        case 24u: {
+            let rgb = vec3<i32>(floor(d.rgb*255.0+0.5));
+            let hi = max(max(rgb.r,rgb.g),rgb.b);
+            let lo = min(min(rgb.r,rgb.g),rgb.b);
+            let l = ((hi+lo)*255+255)/510;
+            let h = f32(i32(p[3].x)&255)*360.0/255.0;
+            let sat = f32(i32(p[3].y)&255)/255.0;
+            let colored = trunc(hsl_rgb(h,sat,f32(l)/255.0)*255.0);
+            let a = p[3].z;
+            var out = floor((colored*a+vec3<f32>(rgb)*(256.0-a))/256.0);
+            if p[3].w != 0.0 { out = colored; }
+            result = vec4(out/255.0,d.a);
+        }
+        case 25u: {
+            let hi = max(max(d.r,d.g),d.b); let lo = min(min(d.r,d.g),d.b);
+            let delta = hi-lo; let add = hi+lo;
+            var l = add/2.0; var sat = 0.0; var h = 0.0;
+            if delta != 0.0 {
+                sat = delta/select(2.0-add,add,l<0.5);
+                if d.r == hi { h = (d.g-d.b)/delta; }
+                else if d.g == hi { h = 2.0+(d.b-d.r)/delta; }
+                else { h = 4.0+(d.r-d.g)/delta; }
+                h /= 6.0;
+            }
+            h = fract(h+trunc(p[3].x)/360.0);
+            let ds = trunc(p[3].y)/100.0; let dl = trunc(p[3].z)/100.0;
+            sat += select(sat,1.0-sat,ds>0.0)*ds;
+            l += select(l,1.0-l,dl>0.0)*dl;
+            result = vec4(trunc(hsl_rgb(h*360.0,sat,l)*255.0)/255.0,d.a);
+        }
+        case 26u,27u: {
+            let seed = u32(xy.x)+u32(xy.y)*textureDimensions(output).x+u32(p[3].w)*747796405u;
+            let n = vec3(hash_noise(seed),hash_noise(seed+0x1234567u),hash_noise(seed+0x7654321u));
+            if op == 27u { result = vec4(vec3(floor(n.x*255.0)/255.0),d.a); }
+            else { result = vec4(clamp(floor(d.rgb*255.0+0.5)+trunc((n-0.5)*trunc(p[3].x)),vec3(0),vec3(255))/255.0,d.a); }
+        }
+        case 28u,29u: {
+            let length = i32(p[3].y); let mid = length/2;
+            let axis = select(0,1,op==29u);
+            let low = i32(p[0][axis]); let high = i32(p[0][axis+2]);
+            let row = xy[axis]-low; let size = high-low;
+            var sum = vec4(0.0); var scale = 0.0;
+            for (var j=0;j<length;j++) {
+                let position = row+j-mid;
+                if position>=0 && position<size {
+                    var at = xy; at[axis] = position+low;
+                    let w = p[26+u32(j)].x;
+                    scale += w;
+                    // Upstream's small-image branch indexes the numerator by source row.
+                    var numerator = w;
+                    if length>size { numerator = p[26+u32(position)].x; }
+                    sum += floor(fetch(previous,at)*255.0+0.5)*numerator;
+                }
+            }
+            result = vec4<f32>(vec4<u32>(floor(sum/scale+0.5)) & vec4<u32>(255u))/255.0;
         }
         case 22u: {
             if (all(p[3] == vec4(0.0,1.0,0.0,1.0))) {
