@@ -486,7 +486,11 @@ impl Gpu {
         for i in 0..4 {
             data[2 + i].copy_from_slice(&c.parameters[i * 4..i * 4 + 4]);
         }
-        data[2][1] = blend as f32;
+        if operation == 35 {
+            data[1][2] = 0.0;
+        } else {
+            data[2][1] = blend as f32;
+        }
         data[6..9].copy_from_slice(&c.source_rects);
         for i in 0..4 {
             data[9 + i * 2].copy_from_slice(&c.points[i][..4]);
@@ -510,7 +514,7 @@ impl Gpu {
             }
         }
         let gaussian_data;
-        let data: &[[f32; 4]] = if operation == 31 {
+        let data: &[[f32; 4]] = if operation == 31 || operation == 32 {
             if c.data.is_null() || c.pitch != old.height() as i32 { return Err("invalid raster shifts".into()); }
             let shifts = unsafe { std::slice::from_raw_parts(c.data.cast::<f32>(), c.pitch as usize) };
             let mut extended = data.to_vec();
@@ -625,6 +629,10 @@ fn operation(name: &str) -> Result<(u32, u32, u32), String> {
         "VideoColor" => 22,
         "LayerMovieAlpha" => 30,
         "LayerExRaster" => 31,
+        "LayerExTextPaint" => 35,
+        "ExtraWave" => 32,
+        "ExtraMosaic" => 33,
+        "ExtraBlurFade" => 34,
         "LayerExLight" => 23,
         "LayerExColorize" => 24,
         "LayerExModulate" => 25,

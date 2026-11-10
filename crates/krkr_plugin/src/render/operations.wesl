@@ -164,6 +164,30 @@ fn hash_noise(input: u32) -> f32 {
     return f32(x)/4294967295.0;
 }
 
+fn transition_blend(a: vec4<f32>, b: vec4<f32>, ratio: f32, layer: u32) -> vec4<f32> {
+    let f = ratio/255.0;
+    if layer==1u { return vec4(mix(a.rgb,b.rgb,f),1.0); }
+    let alpha = mix(a.a,b.a,f);
+    if layer==2u { return vec4(mix(a.rgb*a.a,b.rgb*b.a,f)/max(alpha,0.000001),alpha); }
+    return mix(a,b,f);
+}
+fn transition_blur(t: texture_2d<f32>, xy: vec2<i32>, radius: vec2<i32>, bilinear: bool) -> vec4<f32> {
+    if bilinear {
+        let stride=radius*2+1;
+        let lo=xy/stride*stride; let hi=min(lo+stride,vec2<i32>(textureDimensions(t))-1);
+        let f=vec2<f32>(xy-lo)/max(vec2<f32>(hi-lo),vec2(1));
+        return mix(mix(fetch(t,lo),fetch(t,vec2(hi.x,lo.y)),f.x),mix(fetch(t,vec2(lo.x,hi.y)),fetch(t,hi),f.x),f.y);
+    }
+    var sum=vec4(0.0);
+    let lo=max(xy-radius,vec2(0)); let hi=min(xy+radius,vec2<i32>(textureDimensions(t))-1);
+    for(var y=lo.y;y<=hi.y;y++) {
+        var row=vec4(0.0);
+        for(var x=lo.x;x<=hi.x;x++) { row+=round(fetch(t,vec2(x,y))*255.0); }
+        sum+=floor(row/f32(hi.x-lo.x+1));
+    }
+    return floor(sum/f32(hi.y-lo.y+1))/255.0;
+}
+
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let xy = vec2<i32>(invocation.xy)+vec2<i32>(max(p[0].xy,vec2(0)));
@@ -226,6 +250,51 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
             } else {
                 result = vec4(mix(d.rgb,blend_color(d.rgb,s.rgb,u32(p[2].y)),opacity),d.a);
             }
+        }
+        case 35u: {
+            let origin=xy-vec2<i32>(p[3].yz);
+            var coverage=0.0; let radius=i32(ceil(p[3].x));
+            for(var y=-radius;y<=radius;y++) { for(var x=-radius;x<=radius;x++) {
+                if f32(x*x+y*y)<=p[3].x*p[3].x+0.5 {
+                    let q=origin+vec2(x,y);
+                    if all(q>=vec2(0)) && all(q<vec2<i32>(textureDimensions(source))) { coverage=max(coverage,fetch(source,q).a); }
+                }
+            } }
+            let direction=p[4].zw-p[4].xy;
+            var amount=0.0;
+            if p[3].w!=0.0 {
+                amount=dot(vec2<f32>(origin)-p[4].xy,direction)/max(dot(direction,direction),0.000001);
+                let wrap=u32(p[3].z);
+                if wrap==0u { amount=fract(amount); }
+                else if wrap==1u { amount=1.0-abs((fract(amount*0.5)*2.0)-1.0); }
+                else if wrap==2u { amount=fract(amount); }
+                else if wrap==3u { amount=1.0-abs((fract(amount*0.5)*2.0)-1.0); }
+                else { amount=clamp(amount,0.0,1.0); }
+            }
+            let ink=mix(p[2],p[5],amount);
+            result=over(old,vec4(ink.rgb,ink.a*coverage),1.0,1u);
+        }
+        case 32u: {
+            let q=vec2<i32>(floor(coordinate(0u,at)));
+            let shift=i32(p[26u+u32(q.y)].x);
+            let origin=q-vec2(shift,0);
+            result=color;
+            if origin.x>=0 && origin.x<i32(textureDimensions(source).x) {
+                let q2=vec2<i32>(floor(coordinate(1u,at)))-vec2(shift,0);
+                result=transition_blend(fetch(source,origin),fetch(destination,q2),p[2].x,u32(p[2].z));
+            }
+        }
+        case 33u: {
+            let size=max(p[3].x,2.0); let offset=p[3].yz;
+            let q=floor(coordinate(0u,at));
+            let origin=vec2<i32>(floor((q-offset)/size)*size+offset+floor(size/2.0));
+            let q2=origin+vec2<i32>(p[7].xy-p[6].xy);
+            result=mix(fetch(source,origin),fetch(destination,q2),opacity);
+        }
+        case 34u: {
+            let a=transition_blur(source,vec2<i32>(floor(coordinate(0u,at))),vec2<i32>(p[3].xy),p[4].x==1.0);
+            let b=transition_blur(destination,vec2<i32>(floor(coordinate(1u,at))),vec2<i32>(p[3].zw),p[4].x==1.0);
+            result=mix(a,b,opacity);
         }
         case 31u: {
             let shift = i32(p[26u+u32(xy.y)].x);

@@ -141,6 +141,7 @@ mod real {
         let mut cpp = cc::Build::new();
         configure(&mut cpp);
         let plugins = write_plugins(src, out_dir);
+        println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/ExtraTrans.h").display());
         cpp.cpp(true).std("c++17").files(&sources.cpp).files(&plugins).file(&shim);
         println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/LayerExSaveUtils.inc").display());
         cpp.compile("krkr_core");

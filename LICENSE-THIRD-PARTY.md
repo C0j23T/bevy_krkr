@@ -28,6 +28,24 @@ LayerExSave adapts the image utilities and encoders by the same author in
 [wamsoft/layerExSave](https://github.com/wamsoft/layerExSave), commit
 `b0939dc916f1b39775768cbb25e6a54b4e217410`. Its license follows Kirikiri.
 
+The portable Text/Draw subset follows the interface by Go Watanabe (わたなべごう)
+in [wamsoft/layerExDraw](https://github.com/wamsoft/layerExDraw), commit
+`f665a153fa774e47069f53e303329be15975d1e0`. Its license follows Kirikiri.
+The implementation uses FreeType coverage and Bevy GPU composition rather than GDI+.
+
+Wave and mosaic adapt the algorithms by W.Dee and contributors in
+[wamsoft/extrans](https://github.com/wamsoft/extrans), commit
+`bd0611eced7e2731a8c8403148e06abea827467e`. Copyright (C) 2000 W.Dee
+<dee@kikyou.info> and contributors; license follows Kirikiri.
+
+Blurfade follows the recovered implementation in
+[wamsoft/extNagano](https://github.com/wamsoft/extNagano), commit
+`4b403e2f684756c490975b9d1697289aa1f34240`. The repository credits
+ヤマモト / Shun / chiyoclone.net / シノハラ (tp_stub: W.Dee), and follows
+Kirikiri's license. The recovered algorithm contains approximations; neither
+it nor this GPU implementation establishes pixel identity with the original DLL.
+Kirikiri's full notices and redistribution conditions are reproduced below.
+
 ## Kirikiroid2
 
 bevy_krkr uses code from Kirikiroid2 (<https://github.com/zeas2/Kirikiroid2>).

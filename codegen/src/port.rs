@@ -56,6 +56,9 @@ pub struct Plugin {
 }
 
 pub const PLUGINS: &[Plugin] = &[
+    Plugin { source: "src/core/environ/bevy/plugins/LayerExDraw.cpp", module: "layerExDraw.dll", internal: false, feature: None },
+    Plugin { source: "src/core/environ/bevy/plugins/Extrans.cpp", module: "extrans.dll", internal: false, feature: None },
+    Plugin { source: "src/core/environ/bevy/plugins/ExtNagano.cpp", module: "extNagano.dll", internal: false, feature: None },
     Plugin { source: "src/plugins/layerExPerspective.cpp", module: "perspective.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/LayerExRaster.cpp", module: "layerExRaster.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/LayerExSave.cpp", module: "layerExSave.dll", internal: false, feature: None },

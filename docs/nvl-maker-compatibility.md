@@ -24,15 +24,22 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 - `layerExSave.dll`
 - `fstat.dll`
 
-## 立即实现
+本批已接入以下插件的明确子集，尚未实现的接口仍列在后续范围，不能据此宣称整个原 DLL 已兼容：
 
-下一批按以下顺序推进。文字绘制优先复用现有字体与 glyph 路径；转场复用 Bevy 纹理和 GPU 命令。默认模板主要使用核心 `drawText` 和 crossfade/universal，以下优先级依据编辑器扩展能力与现有实现的可复用程度，不代表默认模板已直接依赖这些插件。
+- `layerExText.dll` / `layerExDraw.dll`：共享文字适配子集，提供 `GdiPlus.Font`、`Appearance.clear/addBrush/addPen`、`Layer.drawString/drawPathString/measureString/measureStringInternal` 和系统字体列表。支持实色、指定两端点的线性渐变、偏移、裁剪、Alpha、字体 ascent/descent/leading/行距；CPU 生成字体覆盖率，GPU 完成扩张与着色合成。`drawPathString` 以覆盖率扩张近似描边。私有字体加载明确报不支持；GDI+ Brush 类型/渐变变体、完整 Font/Path/Matrix API、Layer 几何绘制、变换、图像绘制及记录接口尚未实现，不能据此宣称插件整体兼容。
+- `extrans.dll`：已实现 `wave`、`mosaic`，保留 time、振幅/频率/波形、背景色和最大方块参数，使用纹理 provider 与 GPU 命令。
+- `extNagano.dll`：已实现 `blurfade` 的 `prerender:0` 路径，支持 exponent、blur1/blur2、单轴宽度及 type 0/1。算法以恢复源码为参考，不保证与原 DLL 像素一致；`prerender:1/2` 明确报错。其余效果尚未注册。
+
+## 立即实现
 
 | 插件 | 评估与实现范围 | 验收 |
 | --- | --- | --- |
-| `layerExText.dll` / `layerExDraw.dll` | 优先补 NVL 旧版文字外观接口，再扩展渐变画刷和路径；Text 已并入 [Draw 上游](https://github.com/wamsoft/layerExDraw)，需按实际脚本适配；字体轮廓或覆盖率可由 CPU 生成，Bevy 执行填充与合成 | 旧接口参数、字体度量、描边、阴影、渐变、裁剪和 Alpha；验证菜单、对话及历史的实际文字显示，模块别名不能代替接口实现 |
-| `extrans.dll` | 先补 wave/mosaic，再补 turn、rotatezoom、rotatevanish、rotateswap、ripple；按上游 provider 生命周期和参数注册，每个效果独立增加 GPU 路径 | 固定时间点对照原 DLL 输出，覆盖首末帧、参数、Alpha、裁剪、取消及重启；普通转场不逐帧回读 |
-| `extNagano.dll` | 先补 blurfade，再评估 book、morphing 等效果；参考 [上游恢复实现](https://github.com/wamsoft/extNagano)，逐效果与 NVL DLL 对照，近似算法不得标记为像素一致 | 检查 blurfade 中间帧及端点，再为后续每个效果增加独立像素样例和实际脚本验收 |
+| Text/Draw 后续接口 | 补充矩形/路径、渐变 rect/angle/wrapMode、完整字体度量、变换和私有字体 API；根据实际脚本补齐旧版文字参数 | 与所选原 DLL 对照菜单、对话、历史字体布局及路径像素；当前独立样例不能替代 GDI+ 一致性验收 |
+| extrans 后续效果 | turn、rotatezoom、rotatevanish、rotateswap、ripple | 每个效果独立 GPU 路径与固定时间点像素对照 |
+| extNagano 后续效果 | blurfade prerender 缓存与原 DLL 精度；再补 book、morphing 等 | 中间帧、透明源与参数对照，不以近似算法声明像素一致 |
+| `json.dll` / `lineParser.dll` | 提升到下一批：解析操作不依赖图形后端，易用独立样例验证；先确定原插件的类名与编码、异常语义 | 嵌套值、转义、Unicode、空行及坏输入 |
+| `expat.dll` | 提升到下一批：Rust shim 已有 `quick-xml`，可按完整 XML 解析操作接入，无需新增 pkg-config 包 | 元素/属性/文本回调顺序、实体、编码、错误位置及 Storage 输入 |
+| `minizip.dll` | 提升到下一批：shim 已有 `zip`；复用归档依赖，由 C++ 适配 Storage 与 TJS | 写入/枚举/读回、中文路径、重复项及损坏数据 |
 
 `nvl/macro.ks:13–14` 会加载 extrans/extNagano，但默认演出主要使用 crossfade/universal。模块加载语句本身不证明效果已执行；应扫描实际 `trans method` 和动态参数。`saveStruct` 的核心存档也不依赖 LayerExSave，不能把两者合并判断。
 
@@ -42,9 +49,7 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 
 | 插件 | 功能 | 兼容方向 |
 | --- | --- | --- |
-| `json.dll`、`lineParser.dll`、`expat.dll` | JSON、文本行、XML 数据接口 | 按项目实际调用补 TJS 对象、数据转换和编码行为；Rust 库只通过完整解析操作接入 |
 | `agg.dll` | 矢量绘制扩展 | 确认脚本 API 后接现有 Bevy 图形路径，避免每帧 CPU 图像回传 |
-| `minizip.dll` | 压缩包脚本操作 | 与现有 Storage/archive 能力对接；核对写入、枚举和路径语义 |
 | `clipboardEx.dll` | 剪贴板扩展 | 由宿主实现文本和必要的数据格式 |
 | `wump3.dll`、`wumsadp.dll` | MP3、MS ADPCM 音频 | 在 WaveSoundBuffer 解码路径补齐并验证 seek/loop；仅启用视频 FFmpeg 不代表音频解码已接入 |
 | `krflash.dll` | Flash 内容与交互 | 单独评估内容转换或播放器；普通 MP4 播放不等价 |
@@ -54,7 +59,7 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 
 ## 源码与分支
 
-项目保留运行时依赖的 [`Kirikiroid2/`](../Kirikiroid2/) submodule，以及尚未接入的 [`layerExDraw/`](../layerExDraw/)、[`extrans/`](../extrans/)、[`extNagano/`](../extNagano/) 参考仓库。已实现的 Raster、Save 不再保留独立参考仓库。本机 `/home/hepta/Workspace/krkrz` 修改版可用于核对引擎能力；构建不依赖该绝对路径。
+项目保留运行时依赖的 [`Kirikiroid2/`](../Kirikiroid2/) submodule；[`layerExDraw/`](../layerExDraw/)、[`extrans/`](../extrans/)、[`extNagano/`](../extNagano/) 参考 submodule 暂时保留，直至剩余接口完成并通过验收。已实现的 Raster、Save 也不保留独立参考仓库。本机 `/home/hepta/Workspace/krkrz` 修改版用于核对字体度量与转场语义，字体边界查询也补上与绘制相同的缺字后备字体查找；构建不依赖该绝对路径。Kirikiroid2 的转场采用纹理 provider，不能直接编译使用扫描线的原插件。
 
 Image/Movie/Raster/Save 的运行时适配位于 Kirikiroid2 的 `src/core/environ/bevy/plugins`，Perspective 位于 `src/plugins/layerExPerspective.cpp`，解析扩展位于核心 KAGParser。Save 的像素分析与编辑位于 Rust shim 的 `ffi/image_ops.rs`；PNG/TLG5 编码、压缩和后台任务位于 [`crates/krkr_shim/src/save_image.rs`](../crates/krkr_shim/src/save_image.rs)，PNG 复用 Rust `png` crate；C++ 仅适配 TJS 参数、图层快照、Storage 写入和主线程事件。无需额外检出上游仓库或链接 C 编码库。
 
@@ -77,16 +82,19 @@ FFI 按完整操作传递字节、尺寸、pitch、纹理标识和参数。对�
 
 ## 验收与执行顺序
 
-下一批依次推进 Text/Draw、extrans、extNagano、fstat；各插件按表中范围分项实现与验收。已完成插件的实际工程可见交互仍需验收。游戏若在启动或主流程中依赖其他待实现接口，优先处理该阻塞。
+下一批推进上表中的剩余图形接口及数据解析/归档插件，各插件按范围分项实现与验收。已完成插件的实际工程可见交互仍需验收。游戏若在启动或主流程中依赖其他待实现接口，优先处理该阻塞。
 
 测试遵循 [编写约定](../AGENTS.md)，只运行受影响的目标：
 
 ```sh
 cargo test -p krkr_shim --test png --test zlib --test save_image --test image_ops
+cargo test --test extra_plugins
 cargo test --test plugins --test scripts_ext --test kag_parser
 cargo test --test layer_ex_plugins --test layer_ex_image --test render
 cargo test --test restart
 ```
+
+`extra_plugins` 检查文字覆盖率、实色/描边/渐变/裁剪，独立计算 wave/mosaic/blurfade 在 0/25/50/75/100 的逐像素输出，并重复启动引擎检查 provider 清理。另有 type 1 和 exponent 样例；透明源覆盖半透明实色混合；原 DLL 精度仍需扩展验收。
 
 Rust shim 测试检查编解码、元数据、压缩级别、像素操作和后台快照；后续三批分别检查注册及 Scripts、GPU 输出、重启生命周期。新增插件测试按能力单独执行，使用上游算法或独立样例验证像素与参数语义，不只检查方法是否存在。改视频时再运行：
 
