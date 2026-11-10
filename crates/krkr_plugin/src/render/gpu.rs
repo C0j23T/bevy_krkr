@@ -497,7 +497,11 @@ impl Gpu {
                 let matrix = if c.sources[i] == 0 || (i == 1 && c.sources[i] == c.target) {
                     Mat3::IDENTITY
                 } else {
-                    mapping(&c.points[0], &c.points[i + 1], c.geometry)?
+                    match mapping(&c.points[0], &c.points[i + 1], c.geometry) {
+                        Ok(matrix) => matrix,
+                        Err(_) if c.geometry == 4 => return Ok(()),
+                        Err(error) => return Err(error),
+                    }
                 };
                 let rows = matrix.transpose().to_cols_array_2d();
                 for j in 0..3 {
@@ -506,7 +510,14 @@ impl Gpu {
             }
         }
         let gaussian_data;
-        let data: &[[f32; 4]] = if operation == 28 || operation == 29 {
+        let data: &[[f32; 4]] = if operation == 31 {
+            if c.data.is_null() || c.pitch != old.height() as i32 { return Err("invalid raster shifts".into()); }
+            let shifts = unsafe { std::slice::from_raw_parts(c.data.cast::<f32>(), c.pitch as usize) };
+            let mut extended = data.to_vec();
+            extended.extend(shifts.iter().map(|s| [*s, 0.0, 0.0, 0.0]));
+            gaussian_data = extended;
+            &gaussian_data
+        } else if operation == 28 || operation == 29 {
             let weights = gaussian_weights(c.parameters[4])?;
             data[3][1] = weights.len() as f32;
             let mut extended = data.to_vec();
@@ -613,6 +624,7 @@ fn operation(name: &str) -> Result<(u32, u32, u32), String> {
         "Copy" => 0,
         "VideoColor" => 22,
         "LayerMovieAlpha" => 30,
+        "LayerExRaster" => 31,
         "LayerExLight" => 23,
         "LayerExColorize" => 24,
         "LayerExModulate" => 25,

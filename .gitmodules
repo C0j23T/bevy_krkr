@@ -2,12 +2,6 @@
 	path = Kirikiroid2
 	url = https://github.com/C0j23T/Kirikiroid2.git
 	branch = bevy-port
-[submodule "layerExRaster"]
-	path = layerExRaster
-	url = https://github.com/wamsoft/layerExRaster.git
-[submodule "layerExSave"]
-	path = layerExSave
-	url = https://github.com/wamsoft/layerExSave.git
 [submodule "layerExDraw"]
 	path = layerExDraw
 	url = https://github.com/wamsoft/layerExDraw.git

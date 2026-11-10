@@ -227,6 +227,11 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 result = vec4(mix(d.rgb,blend_color(d.rgb,s.rgb,u32(p[2].y)),opacity),d.a);
             }
         }
+        case 31u: {
+            let shift = i32(p[26u+u32(xy.y)].x);
+            let origin = xy-vec2(shift,0);
+            if f32(origin.x)>=p[0].x && f32(origin.x)<p[0].z { result = fetch(source,origin); }
+        }
         case 30u: {
             let mask = fetch(source,vec2<i32>(floor(coordinate(0u,at)))+vec2(i32(p[3].x),0));
             result = vec4(s.rgb,mask.r);
