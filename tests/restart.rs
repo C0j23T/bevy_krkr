@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use bevy::prelude::UVec2;
 use bevy_krkr::plugin::host;
-use bevy_krkr::script::{last_error, Tjs2Engine};
+use bevy_krkr::script::{Tjs2Engine, last_error};
 use bevy_krkr::sys;
 
 /// `assets/game` of the workspace.
@@ -34,10 +34,16 @@ fn run_session(name: &str) {
         sys::krkr_engine_set_screen_size(800, 600);
         sys::krkr_engine_init(c_path.as_ptr())
     };
-    assert_eq!(code, sys::KRKR_OK, "{name}: krkr_engine_init: {}", last_error());
+    assert_eq!(
+        code,
+        sys::KRKR_OK,
+        "{name}: krkr_engine_init: {}",
+        last_error()
+    );
 
     let engine = Tjs2Engine::new().unwrap_or_else(|e| panic!("{name}: {e}"));
-    let screen = host::start(&engine, UVec2::new(800, 600)).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let screen =
+        host::start(&engine, UVec2::new(800, 600)).unwrap_or_else(|e| panic!("{name}: {e}"));
 
     // The interpreter runs, and the session starts without a pending exit
     // request from the previous one.
@@ -64,6 +70,20 @@ fn run_session(name: &str) {
         0,
         "{name}: exit request left over from a previous session"
     );
+
+    engine
+        .exec_script(
+            r#"
+        global.menuWindow = new Window();
+        global.item = new MenuItem(menuWindow, "Restart menu");
+        menuWindow.menu.add(item);
+        if (menuWindow.menu.children.count != 1) throw "menu child missing";
+        if (item.caption != "Restart menu") throw "menu caption missing";
+        if (MenuItem.textToKeycode["bksp"] != 8) throw "shortcut cache missing";
+    "#,
+            "menu restart",
+        )
+        .unwrap();
 
     // Engine error messages come from a table the engine frees when a session
     // ends; it has to be usable again in the next one rather than dangle.

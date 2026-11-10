@@ -1,5 +1,5 @@
 //! `Scripts.foreach` / `Scripts.getObjectKeys`, which the engine has to
-//! provide itself (they ship in the closed-source `KAGParserEx.dll`).
+//! provide for the supported KAGeX scripts.
 //!
 //! KAG's system scripts call them with a `this` of `void`, and pass the result
 //! of `getObjectKeys` straight into an argument list with `*`, so both the

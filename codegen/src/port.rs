@@ -68,7 +68,7 @@ pub const PLUGINS: &[Plugin] = &[
     Plugin { source: "src/plugins/wutcwf.cpp", module: "wutcwf.dll", internal: false, feature: None },
     Plugin {
         source: "src/core/environ/bevy/plugins/ScriptsExt.cpp",
-        module: "bevy_scripts.dll",
+        module: "yz_scripts_ext.dll",
         internal: true,
         feature: None,
     },
