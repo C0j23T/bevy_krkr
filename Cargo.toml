@@ -44,6 +44,8 @@ default  = ["real_ffi", "xp3filter", "opus"]
 real_ffi = ["krkr_sys/real_ffi"]
 xp3filter = ["krkr_sys/plugin-xp3filter"]
 opus = ["krkr_sys/opus"]
+video-ffmpeg = ["krkr_plugin/video-ffmpeg"]
+video-bundled = ["video-ffmpeg", "krkr_plugin/video-bundled"]
 
 [[example]]
 name = "snbk"

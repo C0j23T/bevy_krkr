@@ -5,6 +5,7 @@ pub mod ffi;
 pub mod jpeg;
 pub mod png;
 pub mod render;
+pub mod video;
 pub mod xml;
 
 pub extern "C" fn krkr_shim_present() {}

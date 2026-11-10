@@ -1,18 +1,4 @@
-//! Sound: the engine's audio reaches the host's device.
-//!
-//! Kirikiroid2 decodes BGM, SE and voice itself and pushes the PCM into an
-//! `iTVPSoundBuffer` (see `Kirikiroid2/src/core/environ/bevy/BevySound.cpp`),
-//! which keeps the queued audio and mixes it on request. [`start`] owns the
-//! output device and pulls that mix: one `krkr_audio_mix` call per device
-//! callback, resampled to whatever rate the device runs at.
-//!
-//! It is the engine's sound path: every BGM, SE and voice a game plays is
-//! decoded and mixed by Kirikiroid2, and this stream is the only place audio
-//! leaves the port.
-//!
-//! The mix call does not touch the rest of the engine, so it is safe to make
-//! from the audio thread: buffers are created, driven and released on the main
-//! thread, and the port keeps them behind a lock and a shared registry.
+//! Mixes engine and video audio into the host sound device.
 
 use std::sync::{Arc, Mutex};
 
@@ -125,6 +111,8 @@ fn fill<T: Copy>(
     let Ok(mut mixed) = mix.lock() else { return };
     mixed.resize(frames * CHANNELS, 0.0);
     unsafe { sys::krkr_audio_mix(mixed.as_mut_ptr(), frames as u32, rate as f64) };
+    #[cfg(feature = "video-ffmpeg")]
+    crate::video::audio::mix(&mut mixed, rate as f64);
 
     for frame in 0..frames {
         let left = mixed[frame * CHANNELS];

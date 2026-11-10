@@ -81,6 +81,55 @@ Stub mode (no feature, or no checkout found at the default path, which prints
 a warning) gives `krkr_sys` functions with the same signatures that panic
 with their name. Everything compiles and the unit tests run.
 
+## Video
+
+Enable `video-ffmpeg` and add `KrkrVideoPlugin::default()` alongside
+`BevyKrkrPlugin`:
+
+```rust
+app.add_plugins((BevyKrkrPlugin::default(), KrkrVideoPlugin::default()));
+```
+
+The video plugin requires hardware decoding. Set
+`KrkrVideoPlugin { hardware: false }` to select software decoding explicitly.
+
+Kirikiri submits compressed media bytes and playback commands. Rust owns the
+decoder, bounded background frame queue, playback clock and PCM mixer. Frames
+are uploaded directly to the existing GPU textures; overlay playback uses the
+scene compositor. Play, pause, stop, seek, rate, visibility, volume,
+balance, looping and frame/end events use the original `VideoOverlay` API.
+Playback rates also change audio pitch. Compressed files are held in memory.
+
+The hardware path selects VAAPI/CUDA/Vulkan on Linux, D3D11VA/CUDA on Windows,
+VideoToolbox on Apple platforms and MediaCodec on Android. The installed or
+supplied FFmpeg build must enable the chosen decoder. Hardware frames are
+transferred to CPU memory before the Rust GPU upload; native decoder surfaces
+are not imported into wgpu. Android uses NDK MediaCodec without a Java
+surface. Android/iOS builds and device playback have not been validated.
+Audio and video streams can be counted and selected by their type-relative index.
+Layer buffers, mixing bitmaps, mixer properties, stop frames, audio disabling
+and color controls follow KRMoviePlayer's unsupported behavior.
+
+The extra Bevy color, mixer and layer-buffer implementations are preserved
+under `#if 0` in `BevyVideo.cpp`. Unsupported setters do nothing; getters
+return fixed defaults. EOF looping seeks to the configured beginning frame,
+as in KRMoviePlayer; segment end handling belongs to VideoOverlay.
+
+`video-ffmpeg` uses an externally supplied FFmpeg 9 build. `FFMPEG_DIR` can
+point to its `include/` and `lib/` directories. `video-bundled` asks Cargo to
+build and statically link FFmpeg; native build tools are still required, and
+the build enables platform hardware decoding options and portable CPU code.
+Choose linking and build features in the final application so other FFmpeg
+users can share the same `ffmpeg-sys-next` dependency.
+
+The generated 64×64 red/green H.264/AAC fixture exercises playback, pause,
+seek, audio, visibility, end events, looping and stream switching:
+
+```sh
+cargo test --features video-ffmpeg --test video
+KRKR_TEST_HARDWARE=1 cargo test --features video-ffmpeg --test video
+```
+
 ## Codegen
 
 Pipeline, in `crates/krkr_sys/build.rs` (modelled on bevy_mod_scripting's
@@ -198,7 +247,7 @@ cargo run --example snbk -- "test_games/与小奶猫创造家族/data.xp3"
   (`Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`,
   `Kirikiroid2/src/core/environ/bevy/BevyScene.cpp`).
 - Not taken from Kirikiroid2: input and window management (the Bevy host owns
-  them), the sound device (cpal, through the mix the engine produces), video,
+  them), the sound device (cpal, through the mix the engine produces),
   BPG/JXR/PVR images. Scripts using them get a "not supported by the
   bevy_krkr port" error.
 - Tested on Linux x86-64 (GCC 16) only.

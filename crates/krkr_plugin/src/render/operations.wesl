@@ -206,6 +206,19 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 result = vec4(mix(d.rgb,blend_color(d.rgb,s.rgb,u32(p[2].y)),opacity),d.a);
             }
         }
+        case 22u: {
+            if (all(p[3] == vec4(0.0,1.0,0.0,1.0))) {
+                result = s;
+            } else {
+                let y = dot(s.rgb,vec3(0.299,0.587,0.114));
+                let cb = (s.b-y)/1.772;
+                let cr = (s.r-y)/1.402;
+                let angle = radians(p[3].z);
+                let chroma = vec2(cb*cos(angle)-cr*sin(angle),cb*sin(angle)+cr*cos(angle))*p[3].w;
+                let luma = y*p[3].y+p[3].x;
+                result = vec4(luma+1.402*chroma.y,luma-0.344136*chroma.x-0.714136*chroma.y,luma+1.772*chroma.x,s.a);
+            }
+        }
         default: {}
     }
     textureStore(output,xy,clamp(result,vec4(0),vec4(1)));

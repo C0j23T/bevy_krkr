@@ -17,6 +17,7 @@
 #include "LayerManager.h"
 #include "SystemControl.h"
 #include "BevyPlatform.h"
+#include "BevyVideo.h"
 
 #include <algorithm>
 #include <csetjmp>

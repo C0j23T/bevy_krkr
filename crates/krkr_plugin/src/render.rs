@@ -1,4 +1,4 @@
-mod gpu;
+pub(crate) mod gpu;
 
 use bevy::{
     asset::RenderAssetUsages,

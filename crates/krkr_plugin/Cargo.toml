@@ -12,3 +12,10 @@ cpal        = "0.18"
 bevy        = { workspace = true }
 krkr_shim = { path = "../krkr_shim" }
 bytemuck = { version = "1", features = ["derive"] }
+ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-scaling", "software-resampling"], optional = true }
+
+ffmpeg-sys-next = { version = "9", default-features = false, optional = true }
+
+[features]
+video-ffmpeg = ["dep:ffmpeg-next"]
+video-bundled = ["video-ffmpeg", "dep:ffmpeg-sys-next", "ffmpeg-sys-next/build-videotoolbox", "ffmpeg-sys-next/build-mediacodec", "ffmpeg-sys-next/build-lib-d3d11va", "ffmpeg-sys-next/build-vaapi", "ffmpeg-sys-next/build-portable"]

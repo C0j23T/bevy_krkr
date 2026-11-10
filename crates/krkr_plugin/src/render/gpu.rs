@@ -440,6 +440,9 @@ impl Gpu {
         self.draw(&c)
     }
     fn draw(&mut self, c: &RenderCommand) -> Result<(), String> {
+        self.draw_with_source(c, None)
+    }
+    fn draw_with_source(&mut self, c: &RenderCommand, source: Option<Texture>) -> Result<(), String> {
         if c.method.is_null() {
             return Err("missing texture operation".into());
         }
@@ -449,7 +452,7 @@ impl Gpu {
         let (operation, kind, blend) = operation(method)?;
         let old = self.texture(c.target)?;
         let inputs = [
-            self.texture(c.sources[0])?,
+            source.map_or_else(|| self.texture(c.sources[0]), Ok)?,
             self.texture(c.sources[1])?,
             self.texture(c.sources[2])?,
             old.clone(),
@@ -586,6 +589,7 @@ fn operation(name: &str) -> Result<(u32, u32, u32), String> {
         .trim_end_matches("_a");
     let op = match base {
         "Copy" => 0,
+        "VideoColor" => 22,
         "FillARGB" => 1,
         "FillColor" => 2,
         "FillMask" => 3,
@@ -642,4 +646,68 @@ fn operation(name: &str) -> Result<(u32, u32, u32), String> {
         }
     };
     Ok((op, kind, 0))
+}
+
+#[cfg(feature = "video-ffmpeg")]
+pub(crate) struct VideoTexture(Texture);
+
+#[cfg(feature = "video-ffmpeg")]
+pub(crate) fn upload_video(
+    image: &mut Option<VideoTexture>,
+    width: u32,
+    height: u32,
+    pitch: u32,
+    pixels: &[u8],
+) -> Result<(), String> {
+    let mut guard = GPU.lock().map_err(|_| "GPU renderer poisoned")?;
+    let gpu = guard.as_mut().ok_or("GPU renderer unavailable")?;
+    if width == 0
+        || height == 0
+        || pitch < width.saturating_mul(4)
+        || pixels.len() < pitch as usize * height as usize
+    {
+        return Err("invalid video frame".into());
+    }
+    if image
+        .as_ref()
+        .is_none_or(|image| image.0.width() != width || image.0.height() != height)
+    {
+        *image = Some(VideoTexture(
+            gpu.device.create_texture(&descriptor(width, height)),
+        ));
+    }
+    let texture = &image.as_ref().unwrap().0;
+    gpu.flush();
+    gpu.queue.write_texture(
+        texture.as_image_copy(),
+        pixels,
+        TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(pitch),
+            rows_per_image: Some(height),
+        },
+        texture.size(),
+    );
+    Ok(())
+}
+
+#[cfg(feature = "video-ffmpeg")]
+pub(crate) fn color_video(
+    target: u64,
+    image: &VideoTexture,
+    color: [f64; 4],
+) -> Result<(), String> {
+    let mut guard = GPU.lock().map_err(|_| "GPU renderer poisoned")?;
+    let gpu = guard.as_mut().ok_or("GPU renderer unavailable")?;
+    let texture = gpu.texture(target)?;
+    if texture.size() != image.0.size() {
+        return Err("video texture dimensions do not match".into());
+    }
+    let mut command: RenderCommand = unsafe { std::mem::zeroed() };
+    command.method = c"VideoColor".as_ptr();
+    command.target = target;
+    command.rect = [0, 0, texture.width() as i32, texture.height() as i32];
+    command.source_rects[0] = command.rect.map(|v| v as f32);
+    command.parameters[4..8].copy_from_slice(&color.map(|v| v as f32));
+    gpu.draw_with_source(&command, Some(image.0.clone()))
 }

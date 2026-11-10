@@ -23,6 +23,8 @@ pub mod audio;
 pub mod host;
 pub mod input;
 pub mod render;
+#[cfg(feature = "video-ffmpeg")]
+pub mod video;
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::{Path, PathBuf};

@@ -68,28 +68,30 @@ fn main() {
     let data = data.unwrap_or_else(|| DEFAULT_DATA.into());
     info!("snbk: data={data}");
 
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "bevy_krkr – snbk/data.xp3".into(),
-                resolution: (1280, 720).into(),
-                ..default()
-            }),
+    let mut app = App::new();
+    #[cfg(feature = "video-ffmpeg")]
+    app.add_plugins(KrkrVideoPlugin::default());
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "bevy_krkr – snbk/data.xp3".into(),
+            resolution: (1280, 720).into(),
             ..default()
-        }))
-        .add_plugins(EguiPlugin::default())
-        .add_plugins(WorldInspectorPlugin::new())
-        .add_plugins(BevyKrkrPlugin {
-            screen_size: UVec2::new(1280, 720),
-        })
-        .insert_resource(Session {
-            data,
-            dump_log,
-            startup_failed: false,
-        })
-        .add_systems(Startup, setup)
-        .add_systems(Update, (start_game, log_window, exit_when_done))
-        .run();
+        }),
+        ..default()
+    }))
+    .add_plugins(EguiPlugin::default())
+    .add_plugins(WorldInspectorPlugin::new())
+    .add_plugins(BevyKrkrPlugin {
+        screen_size: UVec2::new(1280, 720),
+    })
+    .insert_resource(Session {
+        data,
+        dump_log,
+        startup_failed: false,
+    })
+    .add_systems(Startup, setup)
+    .add_systems(Update, (start_game, log_window, exit_when_done))
+    .run();
 }
 
 #[derive(Resource)]

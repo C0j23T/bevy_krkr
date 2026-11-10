@@ -24,6 +24,8 @@
 
 pub use krkr_plugin::audio;
 pub use krkr_plugin as plugin;
+#[cfg(feature = "video-ffmpeg")]
+pub use krkr_plugin::video;
 pub use krkr_script as script;
 pub use krkr_sys as sys;
 
@@ -34,6 +36,8 @@ pub mod prelude {
     pub use krkr_plugin::render::{
         KirikiriScene, KirikiriScreen, KIRIKIRI_RENDER_LAYER,
     };
+    #[cfg(feature = "video-ffmpeg")]
+    pub use krkr_plugin::video::KrkrVideoPlugin;
     pub use krkr_plugin::{
         BevyKrkrPlugin, KirikiriCamera, KirikiriEnterEvent, KirikiriExitEvent, KirikiriState,
     };

@@ -82,6 +82,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
         TVPBevyResetWindows();
         TVPBevyResetScene();
         TVPBevyResetSound();
+        TVPBevyResetVideo();
         krkr_clear_session_state();
         return;
     }
@@ -103,6 +104,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
     TVPBevyResetScene();
     // Anything still queued for playback belongs to the session that just ended.
     TVPBevyResetSound();
+    TVPBevyResetVideo();
     krkr_clear_session_state();"#,
     },
     FnDecl {
@@ -115,15 +117,9 @@ pub const FUNCTIONS: &[FnDecl] = &[
         cpp_target: "tTVPApplication::ProcessMessages + tTVPSystemControl::ApplicationIdle",
         cpp_body: r#"
     krkr_require_running();
-    // Parts of the engine hand work to the application object instead of doing
-    // it on their own thread: the TJS Timer thread posts its notifications
-    // through `tTVPApplication::PostUserMessage`, and `ProcessMessages` is what
-    // runs them. Without it a Timer never fires, which is also why KAG's
-    // `[wait time=...]` never resumes.
     Application->ProcessMessages();
     TVPSystemControl->ApplicationIdle();
-    // Windows are repainted here: the host owns the message loop, so nothing
-    // else would produce a frame for them.
+    TVPBevyTickVideo();
     TVPBevyTickWindows();
     return KRKR_OK;"#,
     },
