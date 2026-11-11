@@ -296,6 +296,75 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
             let b=transition_blur(destination,vec2<i32>(floor(coordinate(1u,at))),vec2<i32>(p[3].zw),p[4].x==1.0);
             result=mix(a,b,opacity);
         }
+        case 36u: {
+            let logical=xy-vec2<i32>(p[0].xy)+vec2<i32>(p[2].zw);
+            let tile=logical/64;
+            let phase=clamp(i32(p[3].x)-(tile.x-tile.y)*2,0,63);
+            let local=logical-tile*64;
+            var q=logical;
+            var covered=true;
+            if phase!=0 && phase!=63 {
+                let j=26u+u32((phase*64+local.y)*2);
+                let row=bitcast<vec4<i32>>(p[j]);
+                let step=bitcast<vec4<i32>>(p[j+1u]);
+                covered=local.x>=row.x && local.x<row.x+row.y;
+                q=tile*64+((row.zw+(local.x-row.x)*step.xy)>>vec2<u32>(16));
+                covered=covered && all(q>=vec2(0)) && all(q<vec2<i32>(p[3].yz));
+            }
+            result=color;
+            if covered {
+                if phase<32 { result=fetch(source,q+vec2<i32>(p[6].xy-p[2].zw)); }
+                else { result=fetch(destination,q+vec2<i32>(p[7].xy-p[2].zw)); }
+                let gloss=array(0,0,0,0,16,48,80,128,192,128,80,48,16);
+                if phase<13 {
+                    let amount=f32(gloss[u32(phase)]);
+                    let bytes=round(result*255.0);
+                    result=floor(bytes+(vec4(255.0,255.0,255.0,0.0)-bytes)*amount/256.0)/255.0;
+                }
+            }
+        }
+        case 37u: {
+            let logical=xy-vec2<i32>(p[0].xy)+vec2<i32>(p[2].zw);
+            result=color;
+            if logical.y>=0 && logical.y<i32(p[3].z) {
+                let j=26u+u32(logical.y)*10u;
+                let count=bitcast<vec4<i32>>(p[j]).x;
+                for(var i=0;i<count;i++) {
+                    let region=bitcast<vec4<i32>>(p[j+5u+u32(i)]);
+                    if logical.x<region.x || logical.x>=region.y || region.z==0 { continue; }
+                    let k=j+1u+u32(region.z-1)*2u;
+                    let row=bitcast<vec4<i32>>(p[k]);
+                    let stepy=bitcast<vec4<i32>>(p[k+1u]).x;
+                    let q=(row.yz+(logical.x-row.x)*vec2(row.w,stepy))>>vec2<u32>(16);
+                    if all(q>=vec2(0)) && all(q<vec2<i32>(p[3].yz)) {
+                        if region.z==1 { result=fetch(source,q+vec2<i32>(p[6].xy-p[2].zw)); }
+                        else { result=fetch(destination,q+vec2<i32>(p[7].xy-p[2].zw)); }
+                    }
+                }
+            }
+        }
+        case 38u: {
+            let f=opacity; let center=vec2(p[3].yz); let delta=at-center;
+            let distance=length(vec2(delta.x,delta.y/max(p[4].x,0.0001)));
+            let envelope=sin(clamp(distance/max(f32(textureDimensions(source).x),1.0),0.0,1.0)*3.14159265);
+            let phase=distance/max(p[3].w,1.0)*6.2831853-p[4].y*f*6.2831853;
+            let drift=sin(phase)*envelope*p[4].z*sin(3.14159265*f);
+            let direction=normalize(delta+vec2(0.0001));
+            let mapped=vec2<i32>(at+direction*drift);
+            result=mix(fetch(source,mapped),fetch(destination,mapped),f);
+        }
+        case 39u: {
+            let f=opacity; let kind=p[3].x;
+            if kind==1.0 {
+                let fold=clamp(f*2.0-at.x/max(p[0].z-p[0].x,1.0),0.0,1.0);
+                let x=select(at.x,2.0*f*(p[0].z-p[0].x)-at.x,at.x>f*(p[0].z-p[0].x));
+                result=mix(fetch(source,vec2<i32>(i32(x),i32(at.y))),fetch(destination,vec2<i32>(at)),fold);
+            } else {
+                let n=fract(sin(dot(floor(at/8.0),vec2(12.9898,78.233)))*43758.5453);
+                let edge=clamp(f*1.15-n*0.3,0.0,1.0);
+                result=mix(fetch(source,vec2<i32>(at)),fetch(destination,vec2<i32>(at)),edge);
+            }
+        }
         case 31u: {
             let shift = i32(p[26u+u32(xy.y)].x);
             let origin = xy-vec2(shift,0);

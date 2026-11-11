@@ -521,6 +521,16 @@ impl Gpu {
             extended.extend(shifts.iter().map(|s| [*s, 0.0, 0.0, 0.0]));
             gaussian_data = extended;
             &gaussian_data
+        } else if operation == 36 || operation == 37 {
+            let expected = if operation == 36 { 64 * 64 * 2 } else { c.parameters[6] as i32 * 10 };
+            if c.data.is_null() || c.pitch != expected || expected <= 0 {
+                return Err("invalid transition geometry".into());
+            }
+            let records = unsafe { std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), expected as usize) };
+            let mut extended = data.to_vec();
+            extended.extend_from_slice(records);
+            gaussian_data = extended;
+            &gaussian_data
         } else if operation == 28 || operation == 29 {
             let weights = gaussian_weights(c.parameters[4])?;
             data[3][1] = weights.len() as f32;
@@ -531,6 +541,7 @@ impl Gpu {
         } else {
             &data
         };
+        
         let output = self
             .device
             .create_texture(&descriptor(old.width(), old.height()));
@@ -633,6 +644,10 @@ fn operation(name: &str) -> Result<(u32, u32, u32), String> {
         "ExtraWave" => 32,
         "ExtraMosaic" => 33,
         "ExtraBlurFade" => 34,
+        "ExtraTurn" => 36,
+        "ExtraRotate" => 37,
+        "ExtraRipple" => 38,
+        "ExtraNagano" => 39,
         "LayerExLight" => 23,
         "LayerExColorize" => 24,
         "LayerExModulate" => 25,

@@ -266,6 +266,32 @@ fn text_and_gpu_transitions_restart() {
             run("global.tick=100;");
             frame();
         }
+        for method in ["turn", "rotatezoom", "rotatevanish", "rotateswap", "ripple", "book", "morphing"] {
+            run(&format!(r#"
+                d.type=ltOpaque; s.type=ltOpaque; d.visible=true; s.visible=false;
+                d.fillRect(0,0,32,24,0xffcc2040); s.fillRect(0,0,32,24,0xff20a0d0);
+                global.tick=0;
+                d.beginTransition("{method}",false,s,%[time:100,selfupdate:true,callback:function(){{return tick;}},centerx:16,centery:12,rwidth:16,roundness:1,speed:6,maxdrift:4]);
+            "#));
+            frame();
+            run("global.tick=50;");
+            let middle = frame();
+            assert!(middle.chunks_exact(4).any(|pixel| pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0), "{method} rendered a blank frame");
+            run("global.tick=100;");
+            let final_frame = frame();
+            assert_eq!(&final_frame[(12 * 32 + 16) * 4..][..4], &[32, 160, 208, 255], "{method} final frame");
+            run("d.stopTransition();");
+        }
+        for prerender in [0, 1, 2] {
+            run("d.stopTransition();");
+            run(&format!(r#"global.tick=0; d.beginTransition("blurfade",false,s,%[time:100,prerender:{prerender},selfupdate:true,callback:function(){{return tick;}}]);"#));
+            frame();
+            run("global.tick=50;");
+            assert!(!frame().is_empty());
+            run("global.tick=100;");
+            frame();
+            run("d.stopTransition();");
+        }
         run(
             r#"global.bad=0; try { d.beginTransition("wave",false,s,%[time:100,wavetype:9]); } catch(e) { bad=1; }"#,
         );

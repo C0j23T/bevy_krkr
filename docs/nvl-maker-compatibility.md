@@ -23,20 +23,19 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 - `layerExRaster.dll`
 - `layerExSave.dll`
 - `fstat.dll`
+- `extrans.dll`
 
 本批已接入以下插件的明确子集，尚未实现的接口仍列在后续范围，不能据此宣称整个原 DLL 已兼容：
 
 - `layerExText.dll` / `layerExDraw.dll`：共享文字适配子集，提供 `GdiPlus.Font`、`Appearance.clear/addBrush/addPen`、`Layer.drawString/drawPathString/measureString/measureStringInternal` 和系统字体列表。支持实色、指定两端点的线性渐变、偏移、裁剪、Alpha、字体 ascent/descent/leading/行距；CPU 生成字体覆盖率，GPU 完成扩张与着色合成。`drawPathString` 以覆盖率扩张近似描边。私有字体加载明确报不支持；GDI+ Brush 类型/渐变变体、完整 Font/Path/Matrix API、Layer 几何绘制、变换、图像绘制及记录接口尚未实现，不能据此宣称插件整体兼容。
-- `extrans.dll`：已实现 `wave`、`mosaic`，保留 time、振幅/频率/波形、背景色和最大方块参数，使用纹理 provider 与 GPU 命令。
-- `extNagano.dll`：已实现 `blurfade` 的 `prerender:0` 路径，支持 exponent、blur1/blur2、单轴宽度及 type 0/1。算法以恢复源码为参考，不保证与原 DLL 像素一致；`prerender:1/2` 明确报错。其余效果尚未注册。
+- `extNagano.dll`：`blurfade` 接受 `prerender:0/1/2`，当前三种模式均使用 GPU 实时路径；支持 exponent、blur1/blur2、单轴宽度及 type 0/1。另注册 `book` 与 `morphing` 的 GPU 路径，前者为页面折叠近似，后者为块状阈值混合；均未与原 DLL 完成逐像素对照。`3duniversal`、`scanline`、`zoomfade`、`rgbfade`、`spin`、`flutter`、`imagewipe`、`honeyturn`、`multiripple` 尚未实现。
 
 ## 立即实现
 
 | 插件 | 评估与实现范围 | 验收 |
 | --- | --- | --- |
 | Text/Draw 后续接口 | 补充矩形/路径、渐变 rect/angle/wrapMode、完整字体度量、变换和私有字体 API；根据实际脚本补齐旧版文字参数 | 与所选原 DLL 对照菜单、对话、历史字体布局及路径像素；当前独立样例不能替代 GDI+ 一致性验收 |
-| extrans 后续效果 | turn、rotatezoom、rotatevanish、rotateswap、ripple | 每个效果独立 GPU 路径与固定时间点像素对照 |
-| extNagano 后续效果 | blurfade prerender 缓存与原 DLL 精度；再补 book、morphing 等 | 中间帧、透明源与参数对照，不以近似算法声明像素一致 |
+| extNagano 后续效果 | 实现 3duniversal、scanline、zoomfade、rgbfade、spin、flutter、imagewipe、honeyturn、multiripple；补 blurfade prerender 缓存与原 DLL 精度 | 中间帧、透明源与参数对照，不以近似算法声明像素一致 |
 | `json.dll` / `lineParser.dll` | 提升到下一批：解析操作不依赖图形后端，易用独立样例验证；先确定原插件的类名与编码、异常语义 | 嵌套值、转义、Unicode、空行及坏输入 |
 | `expat.dll` | 提升到下一批：Rust shim 已有 `quick-xml`，可按完整 XML 解析操作接入，无需新增 pkg-config 包 | 元素/属性/文本回调顺序、实体、编码、错误位置及 Storage 输入 |
 | `minizip.dll` | 提升到下一批：shim 已有 `zip`；复用归档依赖，由 C++ 适配 Storage 与 TJS | 写入/枚举/读回、中文路径、重复项及损坏数据 |
@@ -59,7 +58,7 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 
 ## 源码与分支
 
-项目保留运行时依赖的 [`Kirikiroid2/`](../Kirikiroid2/) submodule；[`layerExDraw/`](../layerExDraw/)、[`extrans/`](../extrans/)、[`extNagano/`](../extNagano/) 参考 submodule 暂时保留，直至剩余接口完成并通过验收。已实现的 Raster、Save 也不保留独立参考仓库。本机 `/home/hepta/Workspace/krkrz` 修改版用于核对字体度量与转场语义，字体边界查询也补上与绘制相同的缺字后备字体查找；构建不依赖该绝对路径。Kirikiroid2 的转场采用纹理 provider，不能直接编译使用扫描线的原插件。
+项目保留运行时依赖的 [`Kirikiroid2/`](../Kirikiroid2/) submodule；[`layerExDraw/`](../layerExDraw/) 与 [`extNagano/`](../extNagano/) 作为未完成接口的参考 submodule 暂时保留。已实现的 Raster、Save、extrans 不保留独立参考仓库。本机 `/home/hepta/Workspace/krkrz` 修改版用于核对字体度量与转场语义，字体边界查询也补上与绘制相同的缺字后备字体查找；构建不依赖该绝对路径。Kirikiroid2 的转场采用纹理 provider，不能直接编译使用扫描线的原插件。
 
 Image/Movie/Raster/Save 的运行时适配位于 Kirikiroid2 的 `src/core/environ/bevy/plugins`，Perspective 位于 `src/plugins/layerExPerspective.cpp`，解析扩展位于核心 KAGParser。Save 的像素分析与编辑位于 Rust shim 的 `ffi/image_ops.rs`；PNG/TLG5 编码、压缩和后台任务位于 [`crates/krkr_shim/src/save_image.rs`](../crates/krkr_shim/src/save_image.rs)，PNG 复用 Rust `png` crate；C++ 仅适配 TJS 参数、图层快照、Storage 写入和主线程事件。无需额外检出上游仓库或链接 C 编码库。
 
@@ -89,12 +88,15 @@ FFI 按完整操作传递字节、尺寸、pitch、纹理标识和参数。对�
 ```sh
 cargo test -p krkr_shim --test png --test zlib --test save_image --test image_ops
 cargo test --test extra_plugins
+cargo test --test extrans_geometry
 cargo test --test plugins --test scripts_ext --test kag_parser
 cargo test --test layer_ex_plugins --test layer_ex_image --test render
 cargo test --test restart
 ```
 
 `extra_plugins` 检查文字覆盖率、实色/描边/渐变/裁剪，独立计算 wave/mosaic/blurfade 在 0/25/50/75/100 的逐像素输出，并重复启动引擎检查 provider 清理。另有 type 1 和 exponent 样例；透明源覆盖半透明实色混合；原 DLL 精度仍需扩展验收。
+
+`extrans_geometry` 将 turn、rotatezoom、rotatevanish、rotateswap 的 GPU 输出与上游 C++ 算法生成的参考 RGB 比较，覆盖双向图片、1/25/50/75/95/99 时间点、偏心旋转、加速度、背景和不完整 tile；另验证真实时钟下连续完成两轮。旋转组采用源图覆盖和背景填充，不做额外 crossfade 或越界边缘延伸。参考数据由 `tests/fixtures/generate_extrans_geometry.py` 生成，重新生成时显式提供外部 extrans 源码目录。
 
 Rust shim 测试检查编解码、元数据、压缩级别、像素操作和后台快照；后续三批分别检查注册及 Scripts、GPU 输出、重启生命周期。新增插件测试按能力单独执行，使用上游算法或独立样例验证像素与参数语义，不只检查方法是否存在。改视频时再运行：
 

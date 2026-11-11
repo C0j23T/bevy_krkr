@@ -33,10 +33,12 @@ in [wamsoft/layerExDraw](https://github.com/wamsoft/layerExDraw), commit
 `f665a153fa774e47069f53e303329be15975d1e0`. Its license follows Kirikiri.
 The implementation uses FreeType coverage and Bevy GPU composition rather than GDI+.
 
-Wave and mosaic adapt the algorithms by W.Dee and contributors in
+Wave, mosaic, turn and the rotate transitions adapt the algorithms by W.Dee and contributors in
 [wamsoft/extrans](https://github.com/wamsoft/extrans), commit
 `bd0611eced7e2731a8c8403148e06abea827467e`. Copyright (C) 2000 W.Dee
 <dee@kikyou.info> and contributors; license follows Kirikiri.
+The turn lookup table and fixed-point rotation geometry are retained in
+`ExtransTurnTable.h` and `ExtransGeometry.h`; Bevy GPU commands perform the pixel copies.
 
 Blurfade follows the recovered implementation in
 [wamsoft/extNagano](https://github.com/wamsoft/extNagano), commit
