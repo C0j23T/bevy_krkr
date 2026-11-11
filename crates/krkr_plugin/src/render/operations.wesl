@@ -171,12 +171,23 @@ fn transition_blend(a: vec4<f32>, b: vec4<f32>, ratio: f32, layer: u32) -> vec4<
     if layer==2u { return vec4(mix(a.rgb*a.a,b.rgb*b.a,f)/max(alpha,0.000001),alpha); }
     return mix(a,b,f);
 }
+
+fn blend_channel(a:u32,b:u32,opa:u32,shift:u32)->u32{
+ if shift==24u{return (a+(((b-a)*opa)>>8u))&255u;}
+ let x=a<<shift;let y=b<<shift;return ((x+(((y-x)*opa)>>8u))>>shift)&255u;
+}
+fn nb(a:vec4<f32>,b:vec4<f32>,f:f32)->vec4<f32>{
+ let aa=vec4<u32>(round(a*255.0));let bb=vec4<u32>(round(b*255.0));let opa=u32(max(f,0.0));
+ return vec4<f32>(f32(blend_channel(aa.r,bb.r,opa,16u)),f32(blend_channel(aa.g,bb.g,opa,8u)),f32(blend_channel(aa.b,bb.b,opa,0u)),f32(blend_channel(aa.a,bb.a,opa,24u)))/255.0;
+}
 fn transition_blur(t: texture_2d<f32>, xy: vec2<i32>, radius: vec2<i32>, bilinear: bool) -> vec4<f32> {
     if bilinear {
         let stride=radius*2+1;
         let lo=xy/stride*stride; let hi=min(lo+stride,vec2<i32>(textureDimensions(t))-1);
-        let f=vec2<f32>(xy-lo)/max(vec2<f32>(hi-lo),vec2(1));
-        return mix(mix(fetch(t,lo),fetch(t,vec2(hi.x,lo.y)),f.x),mix(fetch(t,vec2(lo.x,hi.y)),fetch(t,hi),f.x),f.y);
+        let f=vec2<i32>((xy-lo)*255/max(hi-lo,vec2(1)));
+        let top=nb(fetch(t,lo),fetch(t,vec2(hi.x,lo.y)),f32(f.x));
+        let bottom=nb(fetch(t,vec2(lo.x,hi.y)),fetch(t,hi),f32(f.x));
+        return nb(top,bottom,f32(f.y));
     }
     var sum=vec4(0.0);
     let lo=max(xy-radius,vec2(0)); let hi=min(xy+radius,vec2<i32>(textureDimensions(t))-1);
@@ -188,11 +199,131 @@ fn transition_blur(t: texture_2d<f32>, xy: vec2<i32>, radius: vec2<i32>, bilinea
     return floor(sum/f32(hi.y-lo.y+1))/255.0;
 }
 
+
+fn ns(q:vec2<i32>,which:i32)->vec4<f32>{
+ if which==0{return fetch(source,q+vec2<i32>(p[6].xy));}
+ return fetch(destination,q+vec2<i32>(p[7].xy));
+}
+fn dark(c:vec4<f32>,f:i32)->vec4<f32>{let b=round(c*255.0);return vec4(floor(b.rg*f32(256-f)/256.0),b.b-floor(b.b*f32(f)/256.0),b.a)/255.0;}
+fn light(c:vec4<f32>,f:i32)->vec4<f32>{let b=round(c*255.0);return vec4((b.rgb+floor((255.0-b.rgb)*f32(f)/256.0))/255.0,c.a);}
+fn nagano(q:vec2<i32>)->vec4<f32>{
+ let w=i32(p[3].x);let h=i32(p[3].y);let v=p[3].zw;let z=p[4];let tail=p[5].xy;
+ let a=ns(q,0);let b=ns(q,1);let k=i32(p[2].x);
+ if k==0 {
+  let pos=i32(v.x);
+  if (q.y&1)==0 {
+   if q.x<pos{
+    return ns(q+vec2(w-pos,0),1);
+   }
+   return ns(q-vec2(pos,0),0);
+  }
+  if q.x<w-pos{
+   return ns(q+vec2(pos,0),0);
+  }
+  return ns(q-vec2(w-pos,0),1);
+ } // TODO: 同步bug
+ if k==1 {let center=vec2<f32>(f32(w),f32(h))*0.5;let aa=ns(clamp(vec2<i32>(center+(vec2<f32>(q)-center)*v.y),vec2(0),vec2(w-1,h-1)),0);let bb=ns(clamp(vec2<i32>(center+(vec2<f32>(q)-center)*z.x),vec2(0),vec2(w-1,h-1)),1);if bb.a==0.0{return vec4(aa.rgb,floor(round(aa.a*255.0)*(255.0-v.x)/256.0)/255.0);}if aa.a==0.0{return vec4(bb.rgb,floor(round(bb.a*255.0)*v.x/256.0)/255.0);}return nb(aa,bb,v.x);}
+ if k==2 {let f=vec4(v,z.xy);var c=floor(round(a*255.0)+(round(b*255.0)-round(a*255.0))*f/256.0);if a.a==0.0||b.a==0.0 {c=vec4<f32>(vec3<f32>(vec3<i32>(round(a.rgb*255.0)*f.rgb)&vec3(255)),floor(round(b.a*255.0)*f.a/256.0));if b.a==0.0{c.a=round(a.a*255.0)-floor(round(a.a*255.0)*f.a/256.0);}}return c/255.0;}
+ if k==3 {let r=p[26u+u32(q.x)];let sy=((i32(r.w)*(q.y-h/2))>>8)+h/2;if r.x<0.0||sy<0||sy>=h{return vec4(0);}let selected=i32(r.x);if selected==0 {return ns(vec2<i32>(i32(r.y),sy),0);}if selected==1 {return ns(vec2<i32>(i32(r.z),sy),1);}return vec4(0.0);}
+ if k==5 {
+ let phase=i32(v.x);if phase==0{return a;}if phase==w/2{return b;}
+ let mp=min(phase,16);let shade=i32(sqrt(f32(max(0,(((w/2-phase)<<16)/w)/2)))+0.5);let hg=shade/2;let x=q.x;
+ var f=0;var sc=0;var mode=0;
+ if v.y==0.0 {
+  let b1=clamp(w-2*phase-mp,0,w);let b2=clamp(w-2*phase,0,w);let b3=clamp(w-3*phase/2,0,w);let b4=clamp(w-phase,0,w);
+  if x<b1{return a;}if x<b2{return dark(a,((x-b2+mp)*shade/mp)/2);}if x<b3{f=(b3-x)*shade*2/phase;mode=1;}else if x<b4{f=((x-b4)*2+phase)*shade/phase;mode=2;}else{return dark(b,(w-x)*shade/phase);}sc=x+2*phase-w;
+ }else{
+  let b1=clamp(phase,0,w);let b2=clamp(3*phase/2,0,w);let b3=clamp(2*phase,0,w);let b4=clamp(2*phase+mp,0,w);
+  if x<b1{return dark(b,(b1-x)*shade/phase);}if x<b2{f=(b2-x)*shade*2/phase;mode=2;}else if x<b3{f=(phase/2+(x-b3)*2)*shade/phase;mode=1;}else if x<b4{return dark(a,((b4-x)*shade/mp)/2);}else{return a;}sc=x+w-2*phase;
+ }
+ var c=vec4(0.0);if sc>=0&&sc<w{c=ns(vec2(sc,q.y),1);}var top=dark(c,max(0,f));if mode==1{top=light(c,max(0,f));}return vec4(nb(dark(a,hg),top,round(c.a*255.0)).rgb,a.a);
+ }
+ if k==4 {
+ let phase=i32(v.x);let cs=i32(v.y);if phase==0{return a;}if phase==w+h{return b;}
+ let rb=min(w,h-q.y-phase+w);let base=h-phase-cs;let mid=base+8;if q.y<cs&&q.x<max(w-phase+8,0){return b;}var c=b;
+ if q.y<cs{c=b;}else if q.x>=cs&&q.x<rb{c=ns(q-vec2(cs),0);}
+ if q.y>max(base,0)&&q.y<=mid {if q.x>=max(w-phase+12,0)&&q.x<rb{c=nb(c,vec4(0,0,0,1),f32(((q.y-max(base,0))*63/8)&255));}}
+ else if q.y>mid&&q.y<=mid+w {
+  let cb=w-phase+8;let start=max(cb,0);var lc=h-cs-1;if cb<0{lc+=cb;}let end=min(rb,lc+start);
+  if q.x>=start&&q.x<end {let index=clamp(q.y-mid,0,w-1)*h-cb+q.x;let bp=fetch(source,vec2(index/h,h-1-index%h));let back=nb(bp,vec4(z.zw,tail.x,255.0)/255.0,z.y);c=nb(c,back,z.x);}
+  if q.x>=max(start,end-24)&&q.x<end-16{c=nb(c,vec4(1),f32((q.x-(end-16))*127/8+127));}
+  if q.x>=max(start,end-16)&&q.x<end-8{c=nb(c,vec4(1),f32((end-8-q.x)*127/8));}
+  if q.x>=max(start,end-8)&&q.x<end{c=nb(c,vec4(0,0,0,1),f32((q.x-end)*255/8+255));}
+ }return c;
+ }
+ if k==6 {let edge=i32(p[26u+u32(q.y)].x);let threshold=i32(v.x);let left=select(b,a,v.y!=0.0);let right=select(a,b,v.y!=0.0);if q.x<threshold{return left;}if q.x<threshold+edge {let rp=fetch(rule,vec2(q.x-threshold,q.y));return nb(left,rp,round(rp.a*255.0));}return right;}
+ if k==7 {
+  let size=max(v.y,4.0);let s=size;let root3=1.7320508075688772;let halfW=s*root3*0.5;
+  let aq=(root3/3.0*f32(q.x)-f32(q.y)/3.0)/s;let ar=(2.0/3.0*f32(q.y))/s;
+  var rx=floor(aq+0.5);var ry=floor(-aq-ar+0.5);var rz=floor(ar+0.5);
+  let pixel=u32(q.y*w+q.x);let axes=p[26u+pixel/4u];let axis=u32(axes[pixel&3u]);
+  if axis==1u {rx=-ry-rz;} else if axis==2u {ry=-rx-rz;} else {rz=-rx-ry;}
+  let cx=i32(s*root3*(rx+rz*0.5)+0.5);let cy=i32(s*1.5*rz+0.5);
+  let ady=abs(f32(q.y)-s*1.5*rz);var hh=0.0;if ady<=s*0.5 {hh=halfW;}else if ady<=s {hh=halfW*(s-ady)/(s*0.5);}
+  let half=max(i32(hh+0.5),1);let order=i32(z.y);let dir=i32(z.z);
+  var odx=0.0;var ody=1.0;var radial=false;
+  if order==1 {odx=-1.0;}else if order==2 {odx=0.0;}else if order==3 {odx=1.0;}else if order==4 {odx=-1.0;ody=0.0;}else if order==5 {radial=true;}else if order==6 {odx=1.0;ody=0.0;}else if order==7 {odx=-1.0;ody=-1.0;}else if order==8 {odx=0.0;ody=-1.0;}else if order==9 {odx=1.0;ody=-1.0;}
+  let nx=f32(cx)/max(f32(w-1),1.0);let ny=f32(cy)/max(f32(h-1),1.0);let naxis=max(select(0.0,1.0,odx!=0.0)+select(0.0,1.0,ody!=0.0),1.0);
+  var delayf=0.0;if radial {let ex=(nx-0.5)*2.0;let ey=(ny-0.5)*2.0;delayf=min(length(vec2(ex,ey))/1.4142135623730951,1.0);}else{let px=select(select(0.0,nx,odx>0.0),1.0-nx,odx<0.0);let py=select(select(0.0,ny,ody>0.0),1.0-ny,ody<0.0);delayf=(px+py)/naxis;}
+  let delay=clamp(i32(delayf*192.0+0.5),0,192);let lp=i32(v.x)-delay;
+  if lp<=0 {return a;}if lp>=63 {return b;}
+  var src=0;var vis=0.0;if lp<32 {vis=f32(32-lp)/32.0;}else{src=1;vis=f32(lp-31)/32.0;}
+  let visHalf=f32(half)*vis;if visHalf<0.5{return vec4(0.0);}
+  var rel=f32(q.x-cx);if dir==1||dir==4||dir==7 {rel=-rel;}if rel < -visHalf||rel>visHalf{return vec4(0.0);}
+  var srcRel=rel*f32(half)/visHalf+f32(i32(z.x))/max(size,1.0)*f32(q.y-cy)*(1.0-vis);
+  let srcX=cx+i32(srcRel+select(-0.5,0.5,srcRel>=0.0));if srcX<0||srcX>=w{return vec4(0.0);}
+  return ns(vec2(srcX,q.y),src);
+ }
+ if k==8 {
+  let pixels=u32(z.x);let pixel=u32(q.y*w+q.x);let header=p[26u+pixel/2u];let lane=(pixel&1u)*2u;
+  var c=vec4(0.0);if v.y>=0.0 {c=ns(q,i32(v.y));}
+  let offset=u32(header[lane]);let count=u32(header[lane+1u]);let phase=i32(v.x);
+  for(var i=0u;i<count;i++) {let packed=p[26u+(pixels+1u)/2u+(offset+i)/4u];let code=u32(packed[(offset+i)&3u]);let src=i32(code/pixels);let index=i32(code%pixels);let sq=vec2(index%i32(w),index/i32(w));let rp=fetch(rule,sq);let start=i32(round(rp.b*255.0));let localPhase=select(255-phase,phase,src==0);if localPhase<start {c=ns(sq,src);} else {let opa=max((localPhase-start)*255/max(256-start,1),0);c=nb(c,ns(sq,src),f32(opa));}}
+  return c;
+ }
+ if k==9 {
+  let count=i32(v.x);let base=i32(v.y);let roundness=max(z.x,0.000001);let len=i32(z.y);var blend=base;var vd=0;
+  for(var i=0;i<count;i++) {let r=p[26u+u32(i)*2u];if i32(r.w)!=1 {continue;}let dx=abs(q.x-i32(r.x));let dy=abs(q.y-i32(r.y));let distance=min(i32(floor(sqrt(f32(dx*dx)+f32(dy*dy)*roundness*roundness)+0.5)),65535);var wc=i32(r.z)-distance;if wc>=0 {wc=min(wc,len-1);let table=p[26u+u32(count)*2u+u32(wc)];let drift=p[26u+u32(i)*2u+1u].x;blend+=i32(table.y);vd-=(i32(table.x)*i32(drift))>>8;}}
+  let aa=ns(vec2(q.x,clamp(q.y+vd,0,h-1)),0);let bb=ns(vec2(q.x,clamp(q.y+vd,0,h-1)),1);if (blend&256)!=0 {return vec4(nb(bb,aa,f32(blend&255)).rgb,1.0);}return vec4(nb(aa,bb,f32(blend&255)).rgb,1.0);
+ }
+ if k==10 {
+  let triangleCount=i32(p[3].w);var mappedA=q;var mappedB=q;
+  for(var tri=0;tri<triangleCount;tri++) {
+   let j=26u+u32(tri)*6u;let ca=p[j].xy;let cb=p[j+2u].xy;let cc=p[j+4u].xy;
+   let a=vec2<i32>(ca);let b=vec2<i32>(cb);let c=vec2<i32>(cc);
+   let den=(b.y-c.y)*(a.x-c.x)+(c.x-b.x)*(a.y-c.y);if den==0 {continue;}
+   let w0=(b.y-c.y)*(q.x-c.x)+(c.x-b.x)*(q.y-c.y);
+   let w1=(c.y-a.y)*(q.x-c.x)+(a.x-c.x)*(q.y-c.y);let w2=den-w0-w1;
+   if den>0 {if w0<0||w1<0||w2<0 {continue;}} else {if w0>0||w1>0||w2>0 {continue;}}
+   let fw0=f32(w0)/f32(den);let fw1=f32(w1)/f32(den);let fw2=f32(w2)/f32(den);
+   let ba=p[j].zw;let bb=p[j+2u].zw;let bc=p[j+4u].zw;let da=p[j+1u].xy;let db=p[j+3u].xy;let dc=p[j+5u].xy;
+   mappedA=clamp(vec2<i32>(floor(fw0*ba+fw1*bb+fw2*bc+0.5)),vec2(0),vec2(w-1,h-1));mappedB=clamp(vec2<i32>(floor(fw0*da+fw1*db+fw2*dc+0.5)),vec2(0),vec2(w-1,h-1));
+  }
+  return nb(ns(mappedA,0),ns(mappedB,1),f32(v.x));
+ }
+ return a;
+}
+
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let xy = vec2<i32>(invocation.xy)+vec2<i32>(max(p[0].xy,vec2(0)));
     let at = vec2<f32>(xy)+0.5;
     if any(xy>=vec2<i32>(textureDimensions(output))) || any(at>=p[0].zw) || !inside(at) { return; }
+    let operation = u32(p[1].x);
+    if operation==40u || operation==41u {
+        let radius = i32(p[3][select(0u,1u,operation==41u)]);
+        let delta = select(vec2(radius,0),vec2(0,radius),operation==41u);
+        let lo=max(xy-delta,vec2(0));let hi=min(xy+delta,vec2<i32>(textureDimensions(source))-1);
+        var sum=vec4(0.0);
+        if operation==40u {
+            for(var x=lo.x;x<=hi.x;x++){sum+=round(fetch(source,vec2(x,xy.y))*255.0);}
+            textureStore(output,xy,floor(sum/f32(hi.x-lo.x+1))/255.0);
+        } else {
+            for(var y=lo.y;y<=hi.y;y++){sum+=round(fetch(source,vec2(xy.x,y))*255.0);}
+            textureStore(output,xy,floor(sum/f32(hi.y-lo.y+1))/255.0);
+        }
+        return;
+    }
     let s = sample(source,coordinate(0u,at));
     let d = fetch(destination,vec2<i32>(floor(coordinate(1u,at))));
     let old = fetch(previous,xy);
@@ -275,13 +406,16 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
             result=over(old,vec4(ink.rgb,ink.a*coverage),1.0,1u);
         }
         case 32u: {
-            let q=vec2<i32>(floor(coordinate(0u,at)));
-            let shift=i32(p[26u+u32(q.y)].x);
-            let origin=q-vec2(shift,0);
-            result=color;
-            if origin.x>=0 && origin.x<i32(textureDimensions(source).x) {
-                let q2=vec2<i32>(floor(coordinate(1u,at)))-vec2(shift,0);
-                result=transition_blend(fetch(source,origin),fetch(destination,q2),p[2].x,u32(p[2].z));
+            let srcq=vec2<i32>(floor(coordinate(0u,at)));
+            let dstq=vec2<i32>(floor(coordinate(1u,at)));
+            let pos=clamp(i32(p[26u+u32(srcq.y)].x),0,i32(p[3].x));
+            let width=i32(p[3].x);
+            if (srcq.y&1)==0 {
+                if srcq.x<pos { result=fetch(destination,dstq+vec2(width-pos,0)); }
+                else { result=fetch(source,srcq-vec2(pos,0)); }
+            } else {
+                if srcq.x<width-pos { result=fetch(source,srcq+vec2(pos,0)); }
+                else { result=fetch(destination,dstq-vec2(width-pos,0)); }
             }
         }
         case 33u: {
@@ -292,9 +426,15 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
             result=mix(fetch(source,origin),fetch(destination,q2),opacity);
         }
         case 34u: {
-            let a=transition_blur(source,vec2<i32>(floor(coordinate(0u,at))),vec2<i32>(p[3].xy),p[4].x==1.0);
-            let b=transition_blur(destination,vec2<i32>(floor(coordinate(1u,at))),vec2<i32>(p[3].zw),p[4].x==1.0);
-            result=mix(a,b,opacity);
+            var a:vec4<f32>;var b:vec4<f32>;
+            if p[4].y==1.0 {
+                a=fetch(source,vec2<i32>(floor(coordinate(0u,at))));
+                b=fetch(destination,vec2<i32>(floor(coordinate(1u,at))));
+            } else {
+                a=transition_blur(source,vec2<i32>(floor(coordinate(0u,at))),vec2<i32>(p[3].xy),true);
+                b=transition_blur(destination,vec2<i32>(floor(coordinate(1u,at))),vec2<i32>(p[3].zw),true);
+            }
+            result=nb(a,b,p[2].x);
         }
         case 36u: {
             let logical=xy-vec2<i32>(p[0].xy)+vec2<i32>(p[2].zw);
@@ -354,16 +494,7 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
             result=mix(fetch(source,mapped),fetch(destination,mapped),f);
         }
         case 39u: {
-            let f=opacity; let kind=p[3].x;
-            if kind==1.0 {
-                let fold=clamp(f*2.0-at.x/max(p[0].z-p[0].x,1.0),0.0,1.0);
-                let x=select(at.x,2.0*f*(p[0].z-p[0].x)-at.x,at.x>f*(p[0].z-p[0].x));
-                result=mix(fetch(source,vec2<i32>(i32(x),i32(at.y))),fetch(destination,vec2<i32>(at)),fold);
-            } else {
-                let n=fract(sin(dot(floor(at/8.0),vec2(12.9898,78.233)))*43758.5453);
-                let edge=clamp(f*1.15-n*0.3,0.0,1.0);
-                result=mix(fetch(source,vec2<i32>(at)),fetch(destination,vec2<i32>(at)),edge);
-            }
+            result=nagano(xy-vec2<i32>(p[0].xy)+vec2<i32>(p[2].zw));
         }
         case 31u: {
             let shift = i32(p[26u+u32(xy.y)].x);

@@ -121,6 +121,7 @@ struct Gpu {
     encoder: Option<CommandEncoder>,
     pending: usize,
     presentation: Option<GpuImage>,
+    transition_scratch: HashMap<(u32, u32), Vec<Texture>>,
 }
 
 impl Gpu {
@@ -201,6 +202,7 @@ impl Gpu {
             encoder: None,
             pending: 0,
             presentation: None,
+            transition_scratch: HashMap::new(),
         }
     }
     fn texture(&self, id: u64) -> Result<Texture, String> {
@@ -442,6 +444,71 @@ impl Gpu {
     fn draw(&mut self, c: &RenderCommand) -> Result<(), String> {
         self.draw_with_source(c, None)
     }
+    fn dispatch_compute(
+        &mut self,
+        inputs: [Texture; 4],
+        old: Texture,
+        data: &[[f32; 4]],
+        rect: [f32; 4],
+    ) -> Texture {
+        self.dispatch_compute_to(inputs, old, data, rect, None)
+    }
+
+    fn dispatch_compute_to(
+        &mut self,
+        inputs: [Texture; 4],
+        old: Texture,
+        data: &[[f32; 4]],
+        rect: [f32; 4],
+        output: Option<Texture>,
+    ) -> Texture {
+        let output = output.unwrap_or_else(|| self.device.create_texture(&descriptor(old.width(), old.height())));
+        if data[1][0] != 40.0 && data[1][0] != 41.0 {
+            self.encoder().copy_texture_to_texture(old.as_image_copy(), output.as_image_copy(), old.size());
+        }
+        let views: Vec<_> = inputs.iter().chain(std::iter::once(&output))
+            .map(|texture| texture.create_view(&TextureViewDescriptor::default())).collect();
+        let buffer = self.device.create_buffer_with_data(&BufferInitDescriptor {
+            label: None, contents: bytemuck::cast_slice(data), usage: BufferUsages::STORAGE,
+        });
+        let mut entries: Vec<_> = views.iter().enumerate().map(|(binding, view)| BindGroupEntry {
+            binding: binding as u32, resource: BindingResource::TextureView(view),
+        }).collect();
+        entries.push(BindGroupEntry { binding: 5, resource: buffer.as_entire_binding() });
+        let group = self.device.create_bind_group(None, &self.layout, &entries);
+        let pipeline = self.pipeline.clone();
+        {
+            let mut pass = self.encoder().begin_compute_pass(&ComputePassDescriptor::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            let width = rect[2] - rect[0];
+            let height = rect[3] - rect[1];
+            pass.dispatch_workgroups((width as u32).div_ceil(8), (height as u32).div_ceil(8), 1);
+        }
+        self.pending += 1;
+        output
+    }
+
+    fn blur_box_pass(&mut self, input: Texture, radius: f32, horizontal: bool, slot: usize) -> Texture {
+        let mut data = [[0.0; 4]; 26];
+        data[0] = [0.0, 0.0, input.width() as f32, input.height() as f32];
+        data[1][0] = if horizontal { 40.0 } else { 41.0 };
+        data[3][if horizontal { 0 } else { 1 }] = radius;
+        let duplicate = input.clone();
+        let size = (input.width(), input.height());
+        let output = {
+            let textures = self.transition_scratch.entry(size).or_default();
+            while textures.len() <= slot {
+                textures.push(self.device.create_texture(&descriptor(size.0, size.1)));
+            }
+            textures[slot].clone()
+        };
+        self.dispatch_compute_to(
+            [input.clone(), duplicate.clone(), duplicate.clone(), duplicate.clone()],
+            input, &data, data[0], Some(output),
+        )
+    }
+
     fn draw_with_source(
         &mut self,
         c: &RenderCommand,
@@ -521,6 +588,11 @@ impl Gpu {
             extended.extend(shifts.iter().map(|s| [*s, 0.0, 0.0, 0.0]));
             gaussian_data = extended;
             &gaussian_data
+        } else if operation == 39 {
+            if c.pitch < 0 || c.pitch > 100_000_000 || (c.pitch > 0 && c.data.is_null()) { return Err("invalid Nagano geometry".into()); }
+            let mut extended=data.to_vec();
+            if c.pitch>0 { extended.extend_from_slice(unsafe { std::slice::from_raw_parts(c.data.cast::<[f32;4]>(),c.pitch as usize) }); }
+            gaussian_data=extended; &gaussian_data
         } else if operation == 36 || operation == 37 {
             let expected = if operation == 36 { 64 * 64 * 2 } else { c.parameters[6] as i32 * 10 };
             if c.data.is_null() || c.pitch != expected || expected <= 0 {
@@ -542,48 +614,27 @@ impl Gpu {
             &data
         };
         
-        let output = self
-            .device
-            .create_texture(&descriptor(old.width(), old.height()));
-        self.encoder().copy_texture_to_texture(
-            old.as_image_copy(),
-            output.as_image_copy(),
-            old.size(),
-        );
-        let views: Vec<_> = inputs
-            .iter()
-            .chain(std::iter::once(&output))
-            .map(|t| t.create_view(&TextureViewDescriptor::default()))
-            .collect();
-        let buffer = self.device.create_buffer_with_data(&BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(data),
-            usage: BufferUsages::STORAGE,
-        });
-        let mut entries: Vec<_> = views
-            .iter()
-            .enumerate()
-            .map(|(binding, view)| BindGroupEntry {
-                binding: binding as u32,
-                resource: BindingResource::TextureView(view),
-            })
-            .collect();
-        entries.push(BindGroupEntry {
-            binding: 5,
-            resource: buffer.as_entire_binding(),
-        });
-        let group = self.device.create_bind_group(None, &self.layout, &entries);
-        let pipeline = self.pipeline.clone();
-        {
-            let mut pass = self
-                .encoder()
-                .begin_compute_pass(&ComputePassDescriptor::default());
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups((width as u32).div_ceil(8), (height as u32).div_ceil(8), 1);
-        }
+        let output = if operation == 34 && c.parameters[8] == 0.0 {
+            let blur = |gpu: &mut Self, input: Texture, rx: f32, ry: f32, first_slot: usize| {
+                let mut result = input;
+                if rx > 0.0 { result = gpu.blur_box_pass(result, rx, true, first_slot); }
+                if ry > 0.0 { result = gpu.blur_box_pass(result, ry, false, first_slot + 1); }
+                result
+            };
+            let source_blurred = blur(self, inputs[0].clone(), c.parameters[4] as f32, c.parameters[5] as f32, 0);
+            let destination_blurred = blur(self, inputs[1].clone(), c.parameters[6] as f32, c.parameters[7] as f32, 2);
+            let mut final_data = data.to_vec();
+            final_data[3] = [0.0; 4];
+            final_data[4][0] = 1.0;
+            final_data[4][1] = 1.0;
+            self.dispatch_compute(
+                [source_blurred, destination_blurred, inputs[2].clone(), old.clone()],
+                old.clone(), &final_data, c.rect.map(|v| v as f32),
+            )
+        } else {
+            self.dispatch_compute(inputs, old.clone(), data, c.rect.map(|v| v as f32))
+        };
         self.textures.insert(c.target, output);
-        self.pending += 1;
         if self.pending >= 64 {
             self.flush();
         }

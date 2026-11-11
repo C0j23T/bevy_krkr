@@ -5,6 +5,3 @@
 [submodule "layerExDraw"]
 	path = layerExDraw
 	url = https://github.com/wamsoft/layerExDraw.git
-[submodule "extNagano"]
-	path = extNagano
-	url = https://github.com/wamsoft/extNagano.git

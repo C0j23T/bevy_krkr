@@ -40,12 +40,12 @@ Wave, mosaic, turn and the rotate transitions adapt the algorithms by W.Dee and 
 The turn lookup table and fixed-point rotation geometry are retained in
 `ExtransTurnTable.h` and `ExtransGeometry.h`; Bevy GPU commands perform the pixel copies.
 
-Blurfade follows the recovered implementation in
+The extNagano transition implementations follow the recovered sources in
 [wamsoft/extNagano](https://github.com/wamsoft/extNagano), commit
 `4b403e2f684756c490975b9d1697289aa1f34240`. The repository credits
 ヤマモト / Shun / chiyoclone.net / シノハラ (tp_stub: W.Dee), and follows
-Kirikiri's license. The recovered algorithm contains approximations; neither
-it nor this GPU implementation establishes pixel identity with the original DLL.
+Kirikiri's license. The GPU implementations are covered by per-frame pixel
+comparisons with outputs generated from the recovered sources.
 Kirikiri's full notices and redistribution conditions are reproduced below.
 
 ## Kirikiroid2
