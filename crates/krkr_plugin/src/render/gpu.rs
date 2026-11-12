@@ -539,16 +539,14 @@ impl Gpu {
         output
     }
 
-    /// 3duniversal sends every source pixel to the destination it moves to and
-    /// gathers it back. The CPU cannot afford that scatter at 2560x1600 (a 65 MB
-    /// upload per frame), so the rule texture and the motion tables drive a
-    /// compute pass that fills the buckets instead.
+    /// Scatter links preserve every source pixel and sort overlaps into the
+    /// source order used by the original CPU implementation.
     fn nagano3d(&mut self, inputs: [Texture; 4], old: Texture, data: &[[f32; 4]], tables: &[[f32; 4]], rect: [f32; 4]) -> Texture {
-        const SLOTS: u64 = 8;
         let (width, height) = (old.width(), old.height());
         let output = self.device.create_texture(&descriptor(width, height));
         self.encoder().copy_texture_to_texture(old.as_image_copy(), output.as_image_copy(), old.size());
-        let size = width as u64 * height as u64 * SLOTS * 4;
+        let pixels = width as u64 * height as u64;
+        let size = (pixels * 5 + 1) * 4;
         let records = self.records.entry(size).or_insert_with(|| {
             self.device.create_buffer(&BufferDescriptor {
                 label: Some("Kirikiri nagano records"),
@@ -562,7 +560,9 @@ impl Gpu {
         });
         if self.nagano_tables.as_ref().is_none_or(|(cached, _)| cached.as_slice() != tables) {
             let buffer = self.device.create_buffer_with_data(&BufferInitDescriptor {
-                label: None, contents: bytemuck::cast_slice(tables), usage: BufferUsages::STORAGE,
+                label: Some("Kirikiri nagano motion tables"),
+                contents: bytemuck::cast_slice(tables),
+                usage: BufferUsages::STORAGE,
             });
             self.nagano_tables = Some((tables.to_vec(), buffer));
         }

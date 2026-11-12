@@ -7,9 +7,6 @@
 @group(0) @binding(6) var<storage, read_write> records: array<atomic<u32>>;
 @group(0) @binding(7) var<storage, read> nagano_tables: array<vec4<f32>>;
 
-const nagano_slots: u32 = 8u;
-// The tables hold 256 trigonometry rows followed by 256 motion rows, one column
-// per moving source.
 const nagano_motion: u32 = 256u;
 
 fn fetch(t: texture_2d<f32>, at: vec2<i32>) -> vec4<f32> {
@@ -282,16 +279,18 @@ fn nagano(q:vec2<i32>)->vec4<f32>{
   return ns(vec2(srcX,q.y),src);
  }
  if k==8 {
-  let pixels=z.x;let base=u32(q.y*w+q.x)*nagano_slots;
+  let pixels=u32(z.x);let base=u32(q.y*w+q.x);let next_base=pixels;let code_base=pixels*3u;
   var c=vec4(0.0);if v.y>=0.0 {c=ns(q,i32(v.y));}
   let phase=i32(v.x);
-  for(var s=0u;s<nagano_slots;s++) {
-   let packed=atomicLoad(&records[base+s]);if packed==0u {break;}
-   let code=0xffffffffu-packed;
+  var node=atomicLoad(&records[base]);
+  loop {
+   if node==0u {break;}
+   let code=atomicLoad(&records[code_base+node-1u]);
    let c0=code-1u;let src=i32(c0/u32(pixels));let index=i32(c0%u32(pixels));
    let sq=vec2(index%w,index/w);let rp=fetch(rule,sq);let start=i32(round(rp.b*255.0));
    let localPhase=select(255-phase,phase,src==0);let sv=ns(sq,src);
    if localPhase<start {c=sv;} else {c=nb(c,sv,f32(max((localPhase-start)*255/max(256-start,1),0)));}
+   node=atomicLoad(&records[next_base+node-1u]);
   }
   return c;
  }
@@ -318,17 +317,27 @@ fn nagano(q:vec2<i32>)->vec4<f32>{
  return a;
 }
 
-// 3duniversal sends every source pixel to the destination it moves to and then
-// gathers it back, so the scatter is stored as a fixed set of slots per
-// destination. Slots hold the complement of the record code: an empty slot
-// (0) sorts above every code, so atomicMax evicts it first and the slots stay
-// ordered by source, which is the order the CPU scatter blended in.
-fn nagano_record(destination:u32,code:u32) {
- let first=destination*nagano_slots;var value=0xffffffffu-code;
- for(var s=0u;s<nagano_slots;s++) {
-  let previous=atomicMax(&records[first+s],value);
-  if previous==0u {return;}
-  value=min(previous,value);
+fn nagano_record(destination:u32,code:u32,pixels:u32) {
+ let next_base=pixels;let code_base=pixels*3u;let counter=pixels*5u;
+ let node=atomicAdd(&records[counter],1u)+1u;
+ atomicStore(&records[code_base+node-1u],code);
+ loop {
+  let first=atomicLoad(&records[destination]);
+  if first==0u||atomicLoad(&records[code_base+first-1u])>code {
+   atomicStore(&records[next_base+node-1u],first);
+   let inserted=atomicCompareExchangeWeak(&records[destination],first,node);
+   if inserted.exchanged {return;}
+   continue;
+  }
+  var previous=first;
+  var following=atomicLoad(&records[next_base+previous-1u]);
+  while following!=0u&&atomicLoad(&records[code_base+following-1u])<code {
+   previous=following;
+   following=atomicLoad(&records[next_base+previous-1u]);
+  }
+  atomicStore(&records[next_base+node-1u],following);
+  let inserted=atomicCompareExchangeWeak(&records[next_base+previous-1u],following,node);
+  if inserted.exchanged {return;}
  }
 }
 
@@ -350,7 +359,7 @@ fn nagano_scatter(@builtin(global_invocation_id) invocation: vec3<u32>) {
    nx+=(i32(trig.x)*spd*amount)>>19;ny+=(i32(trig.y)*spd*amount)>>19;
   }
   if nx<0||nx>=w||ny<0||ny>=h {continue;}
-  nagano_record(u32(ny*w+nx),step*pixels+index+1u);
+  nagano_record(u32(ny*w+nx),step*pixels+index+1u,pixels);
  }
 }
 
