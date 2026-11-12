@@ -116,8 +116,13 @@ struct Gpu {
     queue: RenderQueue,
     textures: HashMap<u64, Texture>,
     pipeline: ComputePipeline,
+    scatter: ComputePipeline,
     layout: BindGroupLayout,
     empty: Texture,
+    dummy: Buffer,
+    blank: Buffer,
+    records: HashMap<u64, Buffer>,
+    nagano_tables: Option<(Vec<[f32; 4]>, Buffer)>,
     encoder: Option<CommandEncoder>,
     pending: usize,
     presentation: Option<GpuImage>,
@@ -177,6 +182,26 @@ impl Gpu {
             },
             count: None,
         });
+        entries.push(BindGroupLayoutEntry {
+            binding: 6,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+        entries.push(BindGroupLayoutEntry {
+            binding: 7,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
         let layout = device.create_bind_group_layout("Kirikiri operations", &entries);
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
@@ -191,14 +216,37 @@ impl Gpu {
             compilation_options: Default::default(),
             cache: None,
         });
+        let scatter = device.create_compute_pipeline(&RawComputePipelineDescriptor {
+            label: Some("Kirikiri nagano scatter"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("nagano_scatter"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         let empty = device.create_texture(&descriptor(1, 1));
+        let placeholder = |label| {
+            device.create_buffer(&BufferDescriptor {
+                label,
+                size: 16,
+                usage: BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            })
+        };
+        let dummy = placeholder(Some("Kirikiri placeholder records"));
+        let blank = placeholder(Some("Kirikiri placeholder tables"));
         Self {
             device,
             queue,
             textures: HashMap::new(),
             pipeline,
+            scatter,
             layout,
             empty,
+            dummy,
+            blank,
+            records: HashMap::new(),
+            nagano_tables: None,
             encoder: None,
             pending: 0,
             presentation: None,
@@ -475,6 +523,8 @@ impl Gpu {
             binding: binding as u32, resource: BindingResource::TextureView(view),
         }).collect();
         entries.push(BindGroupEntry { binding: 5, resource: buffer.as_entire_binding() });
+        entries.push(BindGroupEntry { binding: 6, resource: self.dummy.as_entire_binding() });
+        entries.push(BindGroupEntry { binding: 7, resource: self.blank.as_entire_binding() });
         let group = self.device.create_bind_group(None, &self.layout, &entries);
         let pipeline = self.pipeline.clone();
         {
@@ -484,6 +534,58 @@ impl Gpu {
             let width = rect[2] - rect[0];
             let height = rect[3] - rect[1];
             pass.dispatch_workgroups((width as u32).div_ceil(8), (height as u32).div_ceil(8), 1);
+        }
+        self.pending += 1;
+        output
+    }
+
+    /// 3duniversal sends every source pixel to the destination it moves to and
+    /// gathers it back. The CPU cannot afford that scatter at 2560x1600 (a 65 MB
+    /// upload per frame), so the rule texture and the motion tables drive a
+    /// compute pass that fills the buckets instead.
+    fn nagano3d(&mut self, inputs: [Texture; 4], old: Texture, data: &[[f32; 4]], tables: &[[f32; 4]], rect: [f32; 4]) -> Texture {
+        const SLOTS: u64 = 8;
+        let (width, height) = (old.width(), old.height());
+        let output = self.device.create_texture(&descriptor(width, height));
+        self.encoder().copy_texture_to_texture(old.as_image_copy(), output.as_image_copy(), old.size());
+        let size = width as u64 * height as u64 * SLOTS * 4;
+        let records = self.records.entry(size).or_insert_with(|| {
+            self.device.create_buffer(&BufferDescriptor {
+                label: Some("Kirikiri nagano records"),
+                size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        }).clone();
+        let params = self.device.create_buffer_with_data(&BufferInitDescriptor {
+            label: None, contents: bytemuck::cast_slice(data), usage: BufferUsages::STORAGE,
+        });
+        if self.nagano_tables.as_ref().is_none_or(|(cached, _)| cached.as_slice() != tables) {
+            let buffer = self.device.create_buffer_with_data(&BufferInitDescriptor {
+                label: None, contents: bytemuck::cast_slice(tables), usage: BufferUsages::STORAGE,
+            });
+            self.nagano_tables = Some((tables.to_vec(), buffer));
+        }
+        let table_buffer = self.nagano_tables.as_ref().map(|(_, buffer)| buffer.clone()).unwrap();
+        let mut views: Vec<_> = inputs.iter().map(|texture| texture.create_view(&TextureViewDescriptor::default())).collect();
+        views.push(output.create_view(&TextureViewDescriptor::default()));
+        let mut entries: Vec<_> = views.iter().enumerate().map(|(binding, view)| BindGroupEntry {
+            binding: binding as u32, resource: BindingResource::TextureView(view),
+        }).collect();
+        entries.push(BindGroupEntry { binding: 5, resource: params.as_entire_binding() });
+        entries.push(BindGroupEntry { binding: 6, resource: records.as_entire_binding() });
+        entries.push(BindGroupEntry { binding: 7, resource: table_buffer.as_entire_binding() });
+        let group = self.device.create_bind_group(None, &self.layout, &entries);
+        self.encoder().clear_buffer(&records, 0, None);
+        let (scatter, pipeline) = (self.scatter.clone(), self.pipeline.clone());
+        for (pipeline, groups) in [
+            (scatter, (width.div_ceil(8), height.div_ceil(8))),
+            (pipeline, (((rect[2] - rect[0]) as u32).div_ceil(8), ((rect[3] - rect[1]) as u32).div_ceil(8))),
+        ] {
+            let mut pass = self.encoder().begin_compute_pass(&ComputePassDescriptor::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(groups.0, groups.1, 1);
         }
         self.pending += 1;
         output
@@ -581,6 +683,7 @@ impl Gpu {
             }
         }
         let gaussian_data;
+        let tables_only = operation == 39 && data[2][0] == 8.0;
         let data: &[[f32; 4]] = if operation == 31 || operation == 32 {
             if c.data.is_null() || c.pitch != old.height() as i32 { return Err("invalid raster shifts".into()); }
             let shifts = unsafe { std::slice::from_raw_parts(c.data.cast::<f32>(), c.pitch as usize) };
@@ -588,11 +691,15 @@ impl Gpu {
             extended.extend(shifts.iter().map(|s| [*s, 0.0, 0.0, 0.0]));
             gaussian_data = extended;
             &gaussian_data
+        } else if tables_only {
+            if c.pitch != 512 || c.data.is_null() { return Err("invalid Nagano tables".into()); }
+            &data
         } else if operation == 39 {
-            if c.pitch < 0 || c.pitch > 100_000_000 || (c.pitch > 0 && c.data.is_null()) { return Err("invalid Nagano geometry".into()); }
-            let mut extended=data.to_vec();
-            if c.pitch>0 { extended.extend_from_slice(unsafe { std::slice::from_raw_parts(c.data.cast::<[f32;4]>(),c.pitch as usize) }); }
-            gaussian_data=extended; &gaussian_data
+            if c.pitch < 0 || c.pitch > 100_000_000 || (c.pitch > 0 && c.data.is_null()) { return Err("invalid Nagano records".into()); }
+            let mut extended = data.to_vec();
+            if c.pitch > 0 { extended.extend_from_slice(unsafe { std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), c.pitch as usize) }); }
+            gaussian_data = extended;
+            &gaussian_data
         } else if operation == 36 || operation == 37 {
             let expected = if operation == 36 { 64 * 64 * 2 } else { c.parameters[6] as i32 * 10 };
             if c.data.is_null() || c.pitch != expected || expected <= 0 {
@@ -614,7 +721,10 @@ impl Gpu {
             &data
         };
         
-        let output = if operation == 34 && c.parameters[8] == 0.0 {
+        let output = if tables_only {
+            let tables = unsafe { std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), c.pitch as usize) };
+            self.nagano3d(inputs, old.clone(), data, tables, c.rect.map(|v| v as f32))
+        } else if operation == 34 && c.parameters[8] == 0.0 {
             let blur = |gpu: &mut Self, input: Texture, rx: f32, ry: f32, first_slot: usize| {
                 let mut result = input;
                 if rx > 0.0 { result = gpu.blur_box_pass(result, rx, true, first_slot); }

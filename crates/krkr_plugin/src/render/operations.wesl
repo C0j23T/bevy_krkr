@@ -4,6 +4,13 @@
 @group(0) @binding(3) var previous: texture_2d<f32>;
 @group(0) @binding(4) var output: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(5) var<storage, read> p: array<vec4<f32>>;
+@group(0) @binding(6) var<storage, read_write> records: array<atomic<u32>>;
+@group(0) @binding(7) var<storage, read> nagano_tables: array<vec4<f32>>;
+
+const nagano_slots: u32 = 8u;
+// The tables hold 256 trigonometry rows followed by 256 motion rows, one column
+// per moving source.
+const nagano_motion: u32 = 256u;
 
 fn fetch(t: texture_2d<f32>, at: vec2<i32>) -> vec4<f32> {
     return textureLoad(t, clamp(at, vec2(0), vec2<i32>(textureDimensions(t))-1), 0);
@@ -275,10 +282,17 @@ fn nagano(q:vec2<i32>)->vec4<f32>{
   return ns(vec2(srcX,q.y),src);
  }
  if k==8 {
-  let pixels=u32(z.x);let pixel=u32(q.y*w+q.x);let header=p[26u+pixel/2u];let lane=(pixel&1u)*2u;
+  let pixels=z.x;let base=u32(q.y*w+q.x)*nagano_slots;
   var c=vec4(0.0);if v.y>=0.0 {c=ns(q,i32(v.y));}
-  let offset=u32(header[lane]);let count=u32(header[lane+1u]);let phase=i32(v.x);
-  for(var i=0u;i<count;i++) {let packed=p[26u+(pixels+1u)/2u+(offset+i)/4u];let code=u32(packed[(offset+i)&3u]);let src=i32(code/pixels);let index=i32(code%pixels);let sq=vec2(index%i32(w),index/i32(w));let rp=fetch(rule,sq);let start=i32(round(rp.b*255.0));let localPhase=select(255-phase,phase,src==0);if localPhase<start {c=ns(sq,src);} else {let opa=max((localPhase-start)*255/max(256-start,1),0);c=nb(c,ns(sq,src),f32(opa));}}
+  let phase=i32(v.x);
+  for(var s=0u;s<nagano_slots;s++) {
+   let packed=atomicLoad(&records[base+s]);if packed==0u {break;}
+   let code=0xffffffffu-packed;
+   let c0=code-1u;let src=i32(c0/u32(pixels));let index=i32(c0%u32(pixels));
+   let sq=vec2(index%w,index/w);let rp=fetch(rule,sq);let start=i32(round(rp.b*255.0));
+   let localPhase=select(255-phase,phase,src==0);let sv=ns(sq,src);
+   if localPhase<start {c=sv;} else {c=nb(c,sv,f32(max((localPhase-start)*255/max(256-start,1),0)));}
+  }
   return c;
  }
  if k==9 {
@@ -302,6 +316,42 @@ fn nagano(q:vec2<i32>)->vec4<f32>{
   return nb(ns(mappedA,0),ns(mappedB,1),f32(v.x));
  }
  return a;
+}
+
+// 3duniversal sends every source pixel to the destination it moves to and then
+// gathers it back, so the scatter is stored as a fixed set of slots per
+// destination. Slots hold the complement of the record code: an empty slot
+// (0) sorts above every code, so atomicMax evicts it first and the slots stay
+// ordered by source, which is the order the CPU scatter blended in.
+fn nagano_record(destination:u32,code:u32) {
+ let first=destination*nagano_slots;var value=0xffffffffu-code;
+ for(var s=0u;s<nagano_slots;s++) {
+  let previous=atomicMax(&records[first+s],value);
+  if previous==0u {return;}
+  value=min(previous,value);
+ }
+}
+
+@compute @workgroup_size(8,8)
+fn nagano_scatter(@builtin(global_invocation_id) invocation: vec3<u32>) {
+ let q=vec2<i32>(invocation.xy);
+ let w=i32(p[3].x);let h=i32(p[3].y);let phase=i32(p[3].z);let mask=u32(p[4].y);
+ if any(q>=vec2(w,h)) {return;}
+ let rp=fetch(rule,q);
+ let start=i32(round(rp.b*255.0));
+ let dir=i32(round(rp.r*255.0));let spd=i32(round(rp.g*255.0));
+ let trig=nagano_tables[u32(dir)].xy;let pixels=u32(p[4].x);let index=u32(q.y*w+q.x);
+ for(var step=0u;step<2u;step++) {
+  if (mask&(1u<<step))==0u {continue;}
+  let ph=select(255-phase,phase,step==0u);
+  var nx=q.x;var ny=q.y;
+  if ph>=start {
+   let amount=i32(nagano_tables[nagano_motion+u32(ph-start)][step]);
+   nx+=(i32(trig.x)*spd*amount)>>19;ny+=(i32(trig.y)*spd*amount)>>19;
+  }
+  if nx<0||nx>=w||ny<0||ny>=h {continue;}
+  nagano_record(u32(ny*w+nx),step*pixels+index+1u);
+ }
 }
 
 @compute @workgroup_size(8,8)
