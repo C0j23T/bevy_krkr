@@ -13,6 +13,7 @@ use bevy::{
         texture::GpuImage,
     },
     sprite::{Anchor, SpriteAlphaMode},
+    window::PrimaryWindow,
 };
 use krkr_sys as sys;
 
@@ -132,6 +133,7 @@ fn import_texture(
 fn show_scene(
     mut commands: Commands,
     screen: Option<NonSend<KrkrScreen>>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut scene: ResMut<KirikiriScene>,
     mut texture: ResMut<SceneTexture>,
     mut images: ResMut<Assets<Image>>,
@@ -152,6 +154,13 @@ fn show_scene(
     let size = UVec2::new(width as u32, height as u32);
     let resized = scene.image.is_none() || scene.size != size;
     if resized {
+        // The frame is drawn at the engine's own resolution; keeping the window
+        // at that size in physical pixels is what makes the presentation 1:1.
+        // Any other ratio resamples the sprite, which turns one-pixel effects
+        // such as scanline rows into lines of uneven thickness.
+        if let Ok(mut window) = windows.single_mut() {
+            window.resolution.set_physical_resolution(size.x, size.y);
+        }
         scene.image = Some(images.add(Image::new_uninit(
             Extent3d {
                 width: size.x,

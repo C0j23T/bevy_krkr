@@ -226,7 +226,16 @@ fn nagano(q:vec2<i32>)->vec4<f32>{
   }
   return ns(q-vec2(w-pos,0),1);
  } // TODO: 同步bug
- if k==1 {let center=vec2<f32>(f32(w),f32(h))*0.5;let aa=ns(clamp(vec2<i32>(center+(vec2<f32>(q)-center)*v.y),vec2(0),vec2(w-1,h-1)),0);let bb=ns(clamp(vec2<i32>(center+(vec2<f32>(q)-center)*z.x),vec2(0),vec2(w-1,h-1)),1);if bb.a==0.0{return vec4(aa.rgb,floor(round(aa.a*255.0)*(255.0-v.x)/256.0)/255.0);}if aa.a==0.0{return vec4(bb.rgb,floor(round(bb.a*255.0)*v.x/256.0)/255.0);}return nb(aa,bb,v.x);}
+ if k==1 {
+  let center=vec2<f32>(f32(w),f32(h))*0.5;let last=vec2<i32>(w,h);
+  let qa=vec2<i32>(center+(vec2<f32>(q)-center)*v.y);let qb=vec2<i32>(center+(vec2<f32>(q)-center)*z.x);
+  var aa=vec4(0.0);var bb=vec4(0.0);
+  if all(qa>=vec2<i32>(0))&&all(qa<last) {aa=ns(qa,0);}
+  if all(qb>=vec2<i32>(0))&&all(qb<last) {bb=ns(qb,1);}
+  if bb.a==0.0{return vec4(aa.rgb,floor(round(aa.a*255.0)*(255.0-v.x)/256.0)/255.0);}
+  if aa.a==0.0{return vec4(bb.rgb,floor(round(bb.a*255.0)*v.x/256.0)/255.0);}
+  return nb(aa,bb,v.x);
+ }
  if k==2 {let f=vec4(v,z.xy);var c=floor(round(a*255.0)+(round(b*255.0)-round(a*255.0))*f/256.0);if a.a==0.0||b.a==0.0 {c=vec4<f32>(vec3<f32>(vec3<i32>(round(a.rgb*255.0)*f.rgb)&vec3(255)),floor(round(b.a*255.0)*f.a/256.0));if b.a==0.0{c.a=round(a.a*255.0)-floor(round(a.a*255.0)*f.a/256.0);}}return c/255.0;}
  if k==3 {let r=p[26u+u32(q.x)];let sy=((i32(r.w)*(q.y-h/2))>>8)+h/2;if r.x<0.0||sy<0||sy>=h{return vec4(0);}let selected=i32(r.x);if selected==0 {return ns(vec2<i32>(i32(r.y),sy),0);}if selected==1 {return ns(vec2<i32>(i32(r.z),sy),1);}return vec4(0.0);}
  if k==5 {
@@ -465,16 +474,15 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
             result=over(old,vec4(ink.rgb,ink.a*coverage),1.0,1u);
         }
         case 32u: {
-            let srcq=vec2<i32>(floor(coordinate(0u,at)));
-            let dstq=vec2<i32>(floor(coordinate(1u,at)));
-            let pos=clamp(i32(p[26u+u32(srcq.y)].x),0,i32(p[3].x));
-            let width=i32(p[3].x);
-            if (srcq.y&1)==0 {
-                if srcq.x<pos { result=fetch(destination,dstq+vec2(width-pos,0)); }
-                else { result=fetch(source,srcq-vec2(pos,0)); }
+            // extrans wave: shear each row by its own sine offset, blending the
+            // two source images by the transition ratio; the gap keeps the
+            // interpolated background colour.
+            let local=vec2<i32>(floor(coordinate(0u,at)))-vec2<i32>(p[6].xy);
+            let x=local.x-i32(p[26u+u32(local.y)].x);
+            if x<0 || x>=i32(p[6].z-p[6].x) {
+                result=p[5];
             } else {
-                if srcq.x<width-pos { result=fetch(source,srcq+vec2(pos,0)); }
-                else { result=fetch(destination,dstq-vec2(width-pos,0)); }
+                result=nb(ns(vec2(x,local.y),0),ns(vec2(x,local.y),1),p[2].x);
             }
         }
         case 33u: {

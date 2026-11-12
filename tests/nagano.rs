@@ -59,6 +59,11 @@ fn all_nagano_transitions_match_reference() {
             }
         }
         run(&format!("global.tick=0;d.beginTransition('{method}',false,s,%[time:100,selfupdate:true,callback:function(){{return tick;}},{opts}]);"));
+        if opts.contains("rule:\"") {
+            // Rule images decode on the engine's worker thread; wait for the
+            // pixels so the transition clock starts at tick 0.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
         frame();
         for t in [1, 25, 50, 75, 99] {
             run(&format!("tick={t};"));

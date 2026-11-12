@@ -35,8 +35,7 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 | 插件 | 评估与实现范围 | 验收 |
 | --- | --- | --- |
 | Text/Draw 后续接口 | 补充矩形/路径、渐变 rect/angle/wrapMode、完整字体度量、变换和私有字体 API；根据实际脚本补齐旧版文字参数 | 与所选原 DLL 对照菜单、对话、历史字体布局及路径像素；当前独立样例不能替代 GDI+ 一致性验收 |
-| `json.dll` / `lineParser.dll` | 提升到下一批：解析操作不依赖图形后端，易用独立样例验证；先确定原插件的类名与编码、异常语义 | 嵌套值、转义、Unicode、空行及坏输入 |
-| `expat.dll` | 提升到下一批：Rust shim 已有 `quick-xml`，可按完整 XML 解析操作接入，无需新增 pkg-config 包 | 元素/属性/文本回调顺序、实体、编码、错误位置及 Storage 输入 |
+| `lineParser.dll` | 提升到下一批：解析操作不依赖图形后端，易用独立样例验证；先确定原插件的类名与编码、异常语义 | 嵌套值、转义、Unicode、空行及坏输入 |
 | `minizip.dll` | 提升到下一批：shim 已有 `zip`；复用归档依赖，由 C++ 适配 Storage 与 TJS | 写入/枚举/读回、中文路径、重复项及损坏数据 |
 
 `nvl/macro.ks:13–14` 会加载 extrans/extNagano，但默认演出主要使用 crossfade/universal。模块加载语句本身不证明效果已执行；应扫描实际 `trans method` 和动态参数。`saveStruct` 的核心存档也不依赖 LayerExSave，不能把两者合并判断。
@@ -49,10 +48,6 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 | --- | --- | --- |
 | `agg.dll` | 矢量绘制扩展 | 确认脚本 API 后接现有 Bevy 图形路径，避免每帧 CPU 图像回传 |
 | `clipboardEx.dll` | 剪贴板扩展 | 由宿主实现文本和必要的数据格式 |
-| `wump3.dll`、`wumsadp.dll` | MP3、MS ADPCM 音频 | 在 WaveSoundBuffer 解码路径补齐并验证 seek/loop；仅启用视频 FFmpeg 不代表音频解码已接入 |
-| `krflash.dll` | Flash 内容与交互 | 单独评估内容转换或播放器；普通 MP4 播放不等价 |
-| `win32ole.dll`、`wsh.dll`、`messenger.dll` | Windows 自动化、系统脚本及进程消息 | 按实际用途提供宿主能力或游戏内替代；不以空实现宣称兼容 |
-| `tools/msgreceiver.dll` | 编辑器消息与调试联动 | 普通导出工程不依赖；需要联调时适配宿主消息队列 |
 | `menu.dll` 的原生 UI、系统输入框/文件选择/外链 | 平台交互 | 基础流程使用游戏自己的按钮和对话框；需系统功能时通过宿主实现，保留脚本对象状态 |
 
 ## 源码与分支

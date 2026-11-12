@@ -127,6 +127,81 @@ fn builtin_funcs() -> Vec<Function> {
             "}.to_string(),
         },
         Function {
+            name: s("sinc"),
+            params: vec![(s("x"), s("f32"))],
+            ret: s("f32"),
+            body: indoc! {"
+                if (abs(x) < 0.000001) {
+                    return 1.0;
+                }
+                return sin(3.14159265359 * x) / (3.14159265359 * x);
+            "}.to_string(),
+        }
+        Function {
+            name: s("weight"),
+            params: vec![
+                (s("distance"), s("f32")),
+                (s("mode"), s("u32")),
+            ],
+            ret: s("f32"),
+            body: indoc! {"
+                let x = abs(distance);
+                switch mode {
+                    case 3u, 5u: {
+                        if (x <= 1.0) {
+                            return 1.0 - 2.0 * x * x + x * x * x;
+                        }
+                        if (x < 2.0) {
+                            return 4.0 - 8.0 * x + 5.0 * x * x - x * x * x;
+                        }
+                    }
+                    case 6u,7u: {
+                        if (x<2.0) {
+                            return sinc(x) * sinc(x / 2.0);
+                        }
+                    }
+                    case 8u,9u: {
+                        if (x < 3.0) {
+                            return sinc(x) * sinc(x / 3.0);
+                        }
+                    }
+                    case 10u,11u: {
+                        if (x <= 1.0) {
+                            return x * x * x - 1.8 * x * x - 0.2 * x + 1.0;
+                        }
+                        if (x < 2.0) {
+                            return -x * x * x / 3.0 + 1.8 * x * x - 46.0 * x / 15.0 + 1.6;
+                        }
+                    }
+                    case 12u,13u: {
+                        if (x <= 1.0) {
+                            return 13.0 * x * x * x / 11.0 - 453.0 * x * x / 209.0 - 3.0 * x / 209.0 + 1.0;
+                        }
+                        if (x <= 2.0) {
+                            return -6.0 * x * x * x / 11.0 + 612.0 * x * x / 209.0 - 1038.0 * x / 209.0 + 540.0 / 209.0;
+                        }
+                        if (x < 3.0) {
+                            return x * x * x / 11.0 - 159.0 * x * x / 209.0 + 434.0 * x / 209.0 - 384.0 / 209.0;
+                        }
+                    }
+                    case 16u,17u: {
+                        if (x < 2.0) {
+                            return exp(-2.0 * x * x);
+                        }
+                    }
+                    case 18u,19u: {
+                        if (x < 4.0) {
+                            return sinc(x) * (0.42 + 0.5 * cos(3.14159265359 * x / 4.0) + 0.08 * cos(3.14159265359 * x / 2.0));
+                        }
+                    }
+                    default: {
+                        return max(1.0 - x, 0.0);
+                    }
+                }
+                return 0.0;
+            "}.to_string(),
+        },
+        Function {
             name: s("sample"),
             params: vec![
                 (s("t"), s("texture_2d<f32>")),
@@ -153,7 +228,7 @@ fn builtin_funcs() -> Vec<Function> {
 
                 var scale = vec2(1.0);
                 if (p[1].w == 0.0) {
-                    scale = max(abs((p[6].zw - p[6].xy) / (p[0].zw - p[0].xy)),vec2(1));
+                    scale = max(abs((p[6].zw - p[6].xy) / (p[0].zw - p[0].xy)), vec2(1));
                 }
 
                 var radius = 2.0;
@@ -184,7 +259,7 @@ fn builtin_funcs() -> Vec<Function> {
                             );
                             contribution = overlap.x * overlap.y;
                         }
-                        sum += source_fetch(t, vec2(x, y))*contribution;
+                        sum += source_fetch(t, vec2(x, y)) * contribution;
                         total += contribution;
                     }
                 }
@@ -254,7 +329,6 @@ impl ShaderComposer {
             }
 
             let operation = u32(p[1].x);
-
         "});
 
         output.push('}');
