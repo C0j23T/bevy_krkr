@@ -2,7 +2,7 @@ pub(crate) mod gpu;
 
 use bevy::{
     asset::RenderAssetUsages,
-    camera::visibility::RenderLayers,
+    camera::{ScalingMode, Viewport, visibility::RenderLayers},
     prelude::*,
     render::{
         Render, RenderApp, RenderSystems,
@@ -133,7 +133,8 @@ fn import_texture(
 fn show_scene(
     mut commands: Commands,
     screen: Option<NonSend<KrkrScreen>>,
-    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut cameras: Query<(&mut Camera, &mut Projection), With<KirikiriCamera>>,
     mut scene: ResMut<KirikiriScene>,
     mut texture: ResMut<SceneTexture>,
     mut images: ResMut<Assets<Image>>,
@@ -154,13 +155,6 @@ fn show_scene(
     let size = UVec2::new(width as u32, height as u32);
     let resized = scene.image.is_none() || scene.size != size;
     if resized {
-        // The frame is drawn at the engine's own resolution; keeping the window
-        // at that size in physical pixels is what makes the presentation 1:1.
-        // Any other ratio resamples the sprite, which turns one-pixel effects
-        // such as scanline rows into lines of uneven thickness.
-        if let Ok(mut window) = windows.single_mut() {
-            window.resolution.set_physical_resolution(size.x, size.y);
-        }
         scene.image = Some(images.add(Image::new_uninit(
             Extent3d {
                 width: size.x,
@@ -173,6 +167,40 @@ fn show_scene(
         )));
     }
     scene.size = size;
+    // The frame is presented one texel per screen pixel: the camera renders into
+    // a viewport of exactly the frame size and its projection covers exactly that
+    // viewport, so neither the window size nor the scale factor (HiDPI) scales the
+    // sprite. Anything else resamples it, and a pattern of one-pixel rows comes out
+    // as rows of alternating thickness.
+    let viewport_size = windows.single().map_or(size, |window| {
+        size.min(window.resolution.physical_size())
+    });
+    let offset = windows.single().map_or(UVec2::ZERO, |window| {
+        (window.resolution.physical_size().saturating_sub(viewport_size)) / 2
+    });
+    for (mut camera, mut projection) in &mut cameras {
+        let viewport = Viewport {
+            physical_position: offset,
+            physical_size: viewport_size,
+            ..default()
+        };
+        let matches_viewport = camera.viewport.as_ref().is_some_and(|current| {
+            current.physical_position == viewport.physical_position
+                && current.physical_size == viewport.physical_size
+        });
+        if !matches_viewport {
+            camera.viewport = Some(viewport);
+        }
+        if let Projection::Orthographic(orthographic) = &mut *projection
+            && !matches!(orthographic.scaling_mode, ScalingMode::Fixed { width, height }
+                if width == viewport_size.x as f32 && height == viewport_size.y as f32)
+        {
+            orthographic.scaling_mode = ScalingMode::Fixed {
+                width: viewport_size.x as f32,
+                height: viewport_size.y as f32,
+            };
+        }
+    }
     let handle = scene.image.as_ref().unwrap().clone();
     texture.0 = Some((handle.clone(), image));
     let mut sprite = Sprite::from_image(handle);
