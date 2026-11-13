@@ -153,8 +153,10 @@ fn every_plugin_attaches_on_link() {
         .expect("Plugins.link(xp3filter.dll)");
 
     // KAGParserEx semantics are built into the single core KAGParser class.
-    engine
-        .exec_script(r#"Plugins.link("KAGParserEx.dll");"#, "link")
-        .expect("Plugins.link(KAGParserEx.dll)");
+    for name in ["KAGParserEx.dll", "kagparserex.dll", "plugin/KAGPARSEREX.DLL"] {
+        engine
+            .exec_script(&format!("Plugins.link({name:?});"), "link")
+            .expect("link built-in KAGParserEx");
+    }
     assert_eq!(engine.eval("typeof (new KAGParser()).paramMacros").unwrap(), "Object");
 }

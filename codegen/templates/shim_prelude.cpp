@@ -23,13 +23,21 @@
 #include <csetjmp>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
+#include "krkr_storage.h"
 #include <initializer_list>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 #include <xxhash.h>
+
+static std::string krkr_host_path(const char *path) {
+    char *resolved = krkr_fs_resolve(path, 0);
+    if (!resolved) throw std::runtime_error(krkr_fs_last_error());
+    std::string result(resolved);
+    krkr_fs_string_free(resolved);
+    return result;
+}
 
 extern ttstr TVPNativeProjectDir;     // base/win32/SysInitImpl.cpp
 extern void TVPInitFontNames();       // visual/FontImpl.cpp

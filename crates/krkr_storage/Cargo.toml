@@ -1,0 +1,9 @@
+[package]
+name = "krkr_storage"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-or-later"
+publish = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

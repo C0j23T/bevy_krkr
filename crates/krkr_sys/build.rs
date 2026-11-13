@@ -101,6 +101,9 @@ mod real {
         // directives yet: they must come after the static libraries).
         let mut includes = port::include_dirs(src);
         includes.push(out_dir.to_owned());
+        let storage_include = Path::new(env!("CARGO_MANIFEST_DIR")).join("../krkr_storage/include");
+        println!("cargo:rerun-if-changed={}", storage_include.join("krkr_storage.h").display());
+        includes.push(storage_include);
         includes.push(src.join("src/plugins/ncbind"));
         for (pkg, feature) in port::PKG_CONFIG {
             if port::enabled(*feature, feature_on) {

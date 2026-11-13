@@ -36,6 +36,7 @@ fn near(actual: [u8; 4], expected: [u8; 4]) {
 
 #[test]
 fn gpu_layer_operations() {
+    sys::font::set_fallback_font(bevy::text::DEFAULT_FONT_DATA);
     common::initialize_renderer();
     let path = CString::new(format!("{}/assets/game", env!("CARGO_MANIFEST_DIR"))).unwrap();
     assert_eq!(

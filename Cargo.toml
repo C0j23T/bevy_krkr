@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/krkr_storage",
     "crates/krkr_sys",
     "crates/krkr_shim",
     "crates/krkr_script",
@@ -10,7 +11,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-bevy = { version = "0.20", default-features = false, features = ["2d", "jpeg"] }
+bevy = { version = "0.20", default-features = false, features = ["2d", "jpeg", "default_font"] }
 thiserror = "2"
 
 # ──────────────────────────────────────────────────────────────────────────────

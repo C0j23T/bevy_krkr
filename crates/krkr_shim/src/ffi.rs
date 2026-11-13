@@ -14,6 +14,8 @@
 
 mod archives;
 mod config;
+mod memory;
+mod font;
 mod jpeg;
 mod lz4;
 mod png;
@@ -25,6 +27,8 @@ mod zlib;
 
 pub use archives::*;
 pub use config::*;
+pub use memory::*;
+pub use font::*;
 pub use jpeg::*;
 pub use lz4::*;
 pub use png::*;

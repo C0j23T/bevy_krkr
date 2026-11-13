@@ -18,15 +18,15 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 
 - `layerExImage.dll`
 - `layerExMovie.dll`
-- `KAGParserEx.dll`
+- `KAGParserEx.dll`：扩展功能内置于核心 KAGParser
 - `perspective.dll`
 - `layerExRaster.dll`
 - `layerExSave.dll`
 - `fstat.dll`
 - `extrans.dll`
 - `extNagano.dll`
-- `AlphaMovie.dll` (通过外部插件，软件渲染)
-- `psd.dll` (通过外部插件)
+- `AlphaMovie.dll`: 通过外部插件，软件渲染
+- `psd.dll`: 通过外部插件
 
 本批已接入以下插件的明确子集，尚未实现的接口仍列在后续范围，不能据此宣称整个原 DLL 已兼容：
 

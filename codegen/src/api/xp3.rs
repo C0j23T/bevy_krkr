@@ -17,8 +17,7 @@ pub const FUNCTIONS: &[FnDecl] = &[
         cpp_body: r#"
     krkr_require_running();
     krkr_require(path);
-    std::error_code ec;
-    std::string native = std::filesystem::absolute(path, ec).string();
+    std::string native = krkr_host_path(path);
     tTVPArchive *arc = TVPOpenArchive(TVPNormalizeStorageName(krkr_ttstr(native.c_str())), true);
     if (!arc) throw std::runtime_error(std::string("not a supported archive: ") + path);
     return new XP3ArchiveOpaque{arc};"#,

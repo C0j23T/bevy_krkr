@@ -3838,14 +3838,23 @@ version = "0.1.0"
 dependencies = [
  "image-webp",
  "jpeg-encoder",
+ "krkr_storage",
  "lz4_flex",
  "miniz_oxide 0.8.9",
  "png",
  "quick-xml",
  "sevenz-rust2",
+ "sysinfo",
  "xxhash-rust",
  "zip",
  "zune-jpeg",
+]
+
+[[package]]
+name = "krkr_storage"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

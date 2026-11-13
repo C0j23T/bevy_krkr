@@ -88,7 +88,7 @@ pub unsafe extern "C" fn krkr_preference_read(
         let (Some(path), Some(visitor)) = (path(path_ptr), visitor.as_ref()) else {
             return -1;
         };
-        let Ok(xml) = std::fs::read(path) else {
+        let Ok(xml) = krkr_storage::filesystem().read(&path) else {
             return -1;
         };
         let Some(preference) = xml::Preference::parse(&xml) else {
@@ -155,7 +155,7 @@ pub unsafe extern "C" fn krkr_preference_write(
                 _ => {}
             }
         }
-        match std::fs::write(path, preference.to_xml()) {
+        match krkr_storage::filesystem().write(&path, preference.to_xml().as_bytes()) {
             Ok(()) => 0,
             Err(_) => -1,
         }

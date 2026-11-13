@@ -28,6 +28,7 @@ pub use krkr_plugin as plugin;
 pub use krkr_plugin::video;
 pub use krkr_script as script;
 pub use krkr_sys as sys;
+pub use krkr_sys::storage;
 
 pub use krkr_plugin::BevyKrkrPlugin;
 

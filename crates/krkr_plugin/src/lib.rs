@@ -142,6 +142,7 @@ impl Default for BevyKrkrPlugin {
 
 impl Plugin for BevyKrkrPlugin {
     fn build(&self, app: &mut App) {
+        krkr_shim::font::set_fallback_font(bevy::text::DEFAULT_FONT_DATA);
         app.add_message::<KirikiriEnterEvent>()
             .add_message::<KirikiriExitEvent>()
             .init_resource::<KirikiriState>()

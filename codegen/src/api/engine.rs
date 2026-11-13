@@ -21,11 +21,11 @@ pub const FUNCTIONS: &[FnDecl] = &[
     if (krkr_engine_state == KrkrEngineState::Running) throw std::logic_error("the engine is already running");
     if (krkr_engine_state == KrkrEngineState::Failed)
         throw std::logic_error("a previous krkr_engine_init failed; the engine cannot be initialised again in this process");
-    std::error_code ec;
-    std::filesystem::path path = std::filesystem::weakly_canonical(std::filesystem::absolute(data_path, ec), ec);
-    if (ec || !std::filesystem::exists(path)) throw std::runtime_error(std::string("data path not found: ") + data_path);
-    std::string native = path.string();
-    if (std::filesystem::is_directory(path) && native.back() != '/') native += '/';
+    std::string native = krkr_host_path(data_path);
+    KrkrFsMetadata meta;
+    if (krkr_fs_metadata(native.c_str(), &meta) != 0)
+        throw std::runtime_error(std::string("data path not found: ") + data_path);
+    if (meta.kind == 2 && native.back() != '/') native += '/';
     // Failing half-way leaves the engine unusable; never retry.
     krkr_engine_state = KrkrEngineState::Failed;
     // The exit request of a previous session does not carry over into this one.
