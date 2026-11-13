@@ -1,2 +1,0 @@
-mod renderer;
-mod shader;

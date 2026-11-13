@@ -23,7 +23,7 @@ pub mod audio;
 pub mod host;
 pub mod input;
 pub mod render;
-mod render_rework_no_ai;
+mod render_rework;
 #[cfg(feature = "video-ffmpeg")]
 pub mod video;
 
