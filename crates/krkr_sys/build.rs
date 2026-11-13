@@ -141,6 +141,9 @@ mod real {
         let mut cpp = cc::Build::new();
         configure(&mut cpp);
         let plugins = write_plugins(src, out_dir);
+        for header in ["ExternalPlugins.h", "ExternalTransitions.h"] {
+            println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy").join(header).display());
+        }
         println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/ExtraTrans.h").display());
         for header in ["ExtransGeometry.h", "ExtransTurnTable.h"] {
             println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins").join(header).display());

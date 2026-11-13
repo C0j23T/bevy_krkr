@@ -15,6 +15,8 @@ bytemuck = { version = "1", features = ["derive"] }
 ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-scaling", "software-resampling"], optional = true }
 
 ffmpeg-sys-next = { version = "9", default-features = false, optional = true }
+indoc = "2.0.8"
+itertools = "0.15.0"
 
 [features]
 video-ffmpeg = ["dep:ffmpeg-next"]

@@ -4,25 +4,21 @@ use bevy::platform::collections::HashMap;
 use indoc::indoc;
 use itertools::Itertools;
 
-fn s(s: &str) -> String {
-    String::from(s)
+struct Function<'a> {
+    name: &'a str,
+    params: Vec<(&'a str, &'a str)>,
+    ret: &'a str,
+    body: &'a str,
 }
 
-struct Function {
-    name: String,
-    params: Vec<(String, String)>,
-    ret: String,
-    body: String,
-}
-
-impl Function {
+impl<'a> Function<'a> {
     fn compose(&self) -> String {
         format!(
             "fn {}({})->{}{{{}}}",
             self.name,
             self.params
                 .iter()
-                .map(|(name, ty)| format!("name: ty"))
+                .map(|(name, ty)| format!("{name}: {ty}"))
                 .join(","),
             self.ret,
             self.body,
@@ -30,29 +26,29 @@ impl Function {
     }
 }
 
-struct ShaderComposer {
-    bindings: HashMap<u32, (String, Option<String>, String)>,
-    consts: Vec<(String, String, String)>,
-    funcs: Vec<Function>,
-    operations: HashMap<u32, String>,
+struct ShaderComposer<'a> {
+    bindings: HashMap<u32, (&'a str, Option<&'a str>, &'a str)>,
+    consts: Vec<(&'a str, &'a str, &'a str)>,
+    funcs: Vec<Function<'a>>,
+    operations: HashMap<u32, &'a str>,
 }
 
-fn builtin_funcs() -> Vec<Function> {
+fn builtin_funcs() -> Vec<Function<'static>> {
     vec![
         Function {
-            name: s("edge"),
+            name: "edge",
             params: vec![
-                (s("a"), s("vec2<f32>")),
-                (s("b"), s("vec2<f32>")),
-                (s("v"), s("vec2<f32>")),
+                ("a", "vec2<f32>"),
+                ("b", "vec2<f32>"),
+                ("v", "vec2<f32>"),
             ],
-            ret: s("f32"),
-            body: s("return (b.x - a.x) * (v.y - a.y) - (b.y - a.y) * (v.x - a.x);")
+            ret: "f32",
+            body: "return (b.x - a.x) * (v.y - a.y) - (b.y - a.y) * (v.x - a.x);"
         },
         Function {
-        name: s("inside"),
-        params: vec![(s("at"), s("vec2<f32>"))],
-        ret: s("bool"),
+        name: "inside",
+        params: vec![("at", "vec2<f32>")],
+        ret: "bool",
         body: indoc! {"
                 if (p[1].w == 0.0) {
                     return true;
@@ -83,15 +79,15 @@ fn builtin_funcs() -> Vec<Function> {
                 let d = p[10].zw;
                 let e = vec4(edge(a, b, at), edge(b, d, at), edge(d, c, at), edge(c, a, at));
                 return all(e >= vec4(0)) || all(e <= vec4(0));
-            "}.to_string(),
+            "},
         },
         Function {
-            name: s("coordinate"),
+            name: "coordinate",
             params: vec![
-                (s("i"), s("u32")),
-                (s("at"), s("vec2<f32>")),
+                ("i", "u32"),
+                ("at", "vec2<f32>"),
             ],
-            ret: s("vec2<f32>"),
+            ret: "vec2<f32>",
             body: indoc! {"
                 if (p[1].w == 0.0) {
                     return mix(p[6 + i].xy p[6 + i].zw, (at - p[0].xy) / (p[0].zw - p[0].xy));
@@ -99,24 +95,24 @@ fn builtin_funcs() -> Vec<Function> {
                 let j = 17 + i * 3;
                 let q = vec3(dot(p[j].xyz, vec3(at, 1)), dot(p[j + 1].xyz, vec3(at, 1)), dot(p[j + 2].xyz, vec3(at, 1)));
                 return q.xy / q.z;
-            "}.to_string()
+            "}
         },
         Function {
-            name: s("fetch"),
+            name: "fetch",
             params: vec![
-                (s("t"), s("texture_2d<f32>")),
-                (s("at"), s("vec2<i32>"))
+                ("t", "texture_2d<f32>"),
+                ("at", "vec2<i32>")
             ],
-            ret: s("vec4<f32>"),
-            body: s("return textureLoad(t, clamp(at, vec2(0), vec2<i32>(textureDimensions(t)) - 1), 0);"),
+            ret: "vec4<f32>",
+            body: "return textureLoad(t, clamp(at, vec2(0), vec2<i32>(textureDimensions(t)) - 1), 0);",
         },
         Function {
-            name: s("source_fetch"),
+            name: "source_fetch",
             params: vec![
-                (s("t"), s("texture_2d<f32>")),
-                (s("at"), s("vec2<i32>"))
+                ("t", "texture_2d<f32>"),
+                ("at", "vec2<i32>")
             ],
-            ret: s("vec4<f32>"),
+            ret: "vec4<f32>",
             body: indoc! {"
                 if (p[1].w != 0.0) {
                     return fetch(t,at);
@@ -124,26 +120,26 @@ fn builtin_funcs() -> Vec<Function> {
                 let low = vec2<i32>(floor(min(p[6].xy, p[6].zw)));
                 let high = vec2<i32>(ceil(max(p[6].xy, p[6].zw))) - 1;
                 return fetch(t, clamp(at, low, high));
-            "}.to_string(),
+            "},
         },
         Function {
-            name: s("sinc"),
-            params: vec![(s("x"), s("f32"))],
-            ret: s("f32"),
+            name: "sinc",
+            params: vec![("x", "f32")],
+            ret: "f32",
             body: indoc! {"
                 if (abs(x) < 0.000001) {
                     return 1.0;
                 }
                 return sin(3.14159265359 * x) / (3.14159265359 * x);
-            "}.to_string(),
-        }
+            "},
+        },
         Function {
-            name: s("weight"),
+            name: "weight",
             params: vec![
-                (s("distance"), s("f32")),
-                (s("mode"), s("u32")),
+                ("distance", "f32"),
+                ("mode", "u32"),
             ],
-            ret: s("f32"),
+            ret: "f32",
             body: indoc! {"
                 let x = abs(distance);
                 switch mode {
@@ -199,15 +195,15 @@ fn builtin_funcs() -> Vec<Function> {
                     }
                 }
                 return 0.0;
-            "}.to_string(),
+            "},
         },
         Function {
-            name: s("sample"),
+            name: "sample",
             params: vec![
-                (s("t"), s("texture_2d<f32>")),
-                (s("at"), s("vec2<f32>"))
+                ("t", "texture_2d<f32>"),
+                ("at", "vec2<f32>")
             ],
-            ret: s("vec4<f32>"),
+            ret: "vec4<f32>",
             body: indoc! {"
                 let mode = u32(p[1].z);
 
@@ -264,12 +260,12 @@ fn builtin_funcs() -> Vec<Function> {
                     }
                 }
                 return sum / max(total, 0.000001);
-            "}.to_string(),
+            "},
         }
     ]
 }
 
-impl ShaderComposer {
+impl<'a> ShaderComposer<'a> {
     pub fn new() -> Self {
         let mut output = Self {
             bindings: HashMap::new(),
@@ -279,17 +275,17 @@ impl ShaderComposer {
         };
 
         // @group(0) @binding(0) var source: texture_2d<f32>;
-        output.bindings.insert(0, (s("source"), None, s("texture_2d<f32>")));
+        output.bindings.insert(0, ("source", None, "texture_2d<f32>"));
         // @group(0) @binding(1) var destination: texture_2d<f32>;
-        output.bindings.insert(1, (s("destination"), None, s("texture_2d<f32>")));
+        output.bindings.insert(1, ("destination", None, "texture_2d<f32>"));
         // @group(0) @binding(2) var rule: texture_2d<f32>;
-        output.bindings.insert(2, (s("rule"), None, s("texture_2d<f32>")));
+        output.bindings.insert(2, ("rule", None, "texture_2d<f32>"));
         // @group(0) @binding(3) var previous: texture_2d<f32>;
-        output.bindings.insert(3, (s("previous"), None, s("texture_2d<f32>")));
+        output.bindings.insert(3, ("previous", None, "texture_2d<f32>"));
         // @group(0) @binding(4) var output: texture_storage_2d<rgba8unorm, write>;
-        output.bindings.insert(4, (s("output"), None, s("texture_storage_2d<rgba8unorm, write>")));
+        output.bindings.insert(4, ("output", None, "texture_storage_2d<rgba8unorm, write>"));
         // @group(0) @binding(5) var<storage, read> p: array<vec4<f32>>;
-        output.bindings.insert(5, (s("s"), Some(s("storage, read")), s("array<vec4<f32>>")));
+        output.bindings.insert(5, ("s", Some("storage, read"), "array<vec4<f32>>"));
 
         output.funcs.extend(builtin_funcs());
 
@@ -307,7 +303,7 @@ impl ShaderComposer {
                 "@group(0) @binding({binding}) var{} {}:{};\n",
                 param.0,
                 if let Some(ref ty) = param.1 {
-                    format!("<ty>")
+                    format!("<{ty}>")
                 } else {
                     String::new()
                 },

@@ -482,7 +482,10 @@ fn main(@builtin(global_invocation_id) invocation: vec3<u32>) {
             if x<0 || x>=i32(p[6].z-p[6].x) {
                 result=p[5];
             } else {
-                result=nb(ns(vec2(x,local.y),0),ns(vec2(x,local.y),1),p[2].x);
+                let a=ns(vec2(x,local.y),0);
+                let b=ns(vec2(x,local.y),1);
+                if u32(p[1].z)==2u { result=transition_blend(a,b,p[2].x,2u); }
+                else { result=nb(a,b,p[2].x); }
             }
         }
         case 33u: {

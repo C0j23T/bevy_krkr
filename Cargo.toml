@@ -50,3 +50,14 @@ video-bundled = ["video-ffmpeg", "krkr_plugin/video-bundled"]
 [[example]]
 name = "snbk"
 path = "examples/snbk.rs"
+
+[[example]]
+name = "extrans_showcase"
+path = "examples/extrans_showcase.rs"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = "z"

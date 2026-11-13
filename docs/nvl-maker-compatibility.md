@@ -25,6 +25,8 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 - `fstat.dll`
 - `extrans.dll`
 - `extNagano.dll`
+- `AlphaMovie.dll` (通过外部插件，软件渲染)
+- `psd.dll` (通过外部插件)
 
 本批已接入以下插件的明确子集，尚未实现的接口仍列在后续范围，不能据此宣称整个原 DLL 已兼容：
 
@@ -52,8 +54,6 @@ TJS2、KAGParser、Storage、Window/Layer、字体和音频由 Kirikiroid2 核�
 
 ## 源码与分支
 
-项目保留运行时依赖的 [`Kirikiroid2/`](../Kirikiroid2/) submodule；[`layerExDraw/`](../layerExDraw/) 作为未完成接口的参考 submodule 暂时保留。extNagano 已完成适配，参考 submodule 已移除。已实现的 Raster、Save、extrans 不保留独立参考仓库。本机 `/home/hepta/Workspace/krkrz` 修改版用于核对字体度量与转场语义，字体边界查询也补上与绘制相同的缺字后备字体查找；构建不依赖该绝对路径。Kirikiroid2 的转场采用纹理 provider，不能直接编译使用扫描线的原插件。
-
 Image/Movie/Raster/Save 的运行时适配位于 Kirikiroid2 的 `src/core/environ/bevy/plugins`，Perspective 位于 `src/plugins/layerExPerspective.cpp`，解析扩展位于核心 KAGParser。Save 的像素分析与编辑位于 Rust shim 的 `ffi/image_ops.rs`；PNG/TLG5 编码、压缩和后台任务位于 [`crates/krkr_shim/src/save_image.rs`](../crates/krkr_shim/src/save_image.rs)，PNG 复用 Rust `png` crate；C++ 仅适配 TJS 参数、图层快照、Storage 写入和主线程事件。无需额外检出上游仓库或链接 C 编码库。
 
 版权、来源和版本记录见 [`LICENSE-THIRD-PARTY.md`](../LICENSE-THIRD-PARTY.md)。像素测试使用已生成的参考数据，重新生成时显式提供外部上游源码目录。后续适配仅引入实际需要的源码并保留许可证，以 NVL 模板和所选 DLL 版本确定接口范围。
@@ -70,6 +70,8 @@ git submodule update --init --recursive
 4. 按脚本需要加载接口。只有必须早于游戏初始化存在的能力才自动注册；支持重复 link，退出时在 TJS 对象仍有效期间清理回调、类和任务。
 5. C++ 保留 Layer/TJS 语义，Bevy 统一拥有纹理和 GPU 运算。优先扩展现有渲染命令及 WESL 内核，不为每个插件建立一套 FFI 或纹理管理器。
 6. 普通图形效果不逐帧回读。保存、导出和显式像素访问允许必要快照；GPU 同图读写使用快照或独立输出，保证顺序与裁剪。
+
+`Kirikiroid2/src/core/environ/bevy/compat/tp_stub.h` 是 Bevy 宿主内编译插件的源码兼容入口，转发 TJS、Storage、连续事件和转场声明。独立共享库使用外部 krkrz 的 `tp_stub.cpp` 和 `V2Link/V2Unlink`，由宿主的外部加载器及 ABI 适配层接入；当前真实验收范围为 Linux `extrans.so`。依赖 Bevy 纹理、视频或 Rust FFI 的插件仍属于宿主适配器。
 
 FFI 按完整操作传递字节、尺寸、pitch、纹理标识和参数。对于图片解码，C++ 从 `tTJSBinaryStream` 读成连续字节，提交 Rust 的解码操作，Rust 返回像素数据与尺寸；不把底层解码库的 create/read/get/free 等 API 逐项暴露给 C++。明确缓冲所有权、生命周期、长度与错误回传，复用已有释放接口，不让 C++ 异常跨 ABI。
 

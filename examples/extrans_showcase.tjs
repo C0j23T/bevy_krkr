@@ -1,0 +1,65 @@
+global.showcaseWindow = new Window();
+showcaseWindow.setInnerSize(1920, 1080);
+showcaseWindow.caption = "external extrans.so showcase";
+showcaseWindow.visible = true;
+
+global.showcaseBack = new Layer(showcaseWindow, null);
+showcaseBack.setImageSize(1920, 1080);
+showcaseBack.setSizeToImageSize();
+showcaseBack.fillRect(0, 0, 1920, 1080, 0xff111827);
+
+global.showcaseFrom = new Layer(showcaseWindow, showcaseBack);
+showcaseFrom.loadImages("a1080.png");
+showcaseFrom.setSizeToImageSize();
+showcaseFrom.type = ltOpaque;
+showcaseFrom.visible = true;
+
+global.showcaseTo = new Layer(showcaseWindow, showcaseBack);
+showcaseTo.loadImages("b1080.png");
+showcaseTo.setSizeToImageSize();
+showcaseTo.type = ltOpaque;
+showcaseTo.visible = false;
+
+global.showcaseEffects = ["wave", "mosaic", "turn", "rotatezoom", "rotatevanish", "rotateswap", "ripple"];
+global.showcaseOptions = %[
+    "wave"=>%[maxh:18,maxomega:0.2,wavetype:0],
+    "mosaic"=>%[maxsize:22],
+    "turn"=>%[bgcolor:0xff111827],
+    "rotatezoom"=>%[factor:0.35,twist:1],
+    "rotatevanish"=>%[],
+    "rotateswap"=>%[bgcolor:0xff111827,twist:1.3],
+    "ripple"=>%[rwidth:64,roundness:1,speed:6,maxdrift:21]
+];
+
+global.showcaseIndex = 0;
+global.showcaseStarted = 0;
+function playShowcaseTransition() {
+    var effect = showcaseEffects[showcaseIndex];
+    showcaseFrom.visible = false;
+    showcaseTo.visible = true;
+    var options = showcaseOptions[effect];
+    options.time = 5000;
+    options.selfupdate = false;
+    options.callback = function () { return System.getTickCount() - showcaseStarted; };
+    showcaseStarted = System.getTickCount();
+    showcaseTo.beginTransition(effect, false, showcaseFrom, options);
+    showcaseIndex = (showcaseIndex + 1) % showcaseEffects.length;
+}
+
+global.showcaseCompleted = 0;
+global.showcasePending = true;
+showcaseTo.onTransitionCompleted = function (dest, src) {
+    showcaseCompleted++;
+    showcaseTo.visible = false;
+    showcaseFrom.visible = true;
+    showcasePending = true;
+};
+global.showcaseTimerOwner = %[];
+global.showcaseTimer = new Timer(showcaseTimerOwner);
+showcaseTimer.onTimer = function () {
+    if (!showcasePending) return;
+    showcasePending = false;
+    playShowcaseTransition();
+};
+showcaseTimer.interval = 400;
+showcaseTimer.enabled = true;
