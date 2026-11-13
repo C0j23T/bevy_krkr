@@ -1,4 +1,4 @@
-import krkr::operations::{destination, nagano_tables, p, records, rule, source};
+import package::krkr::operations::{destination, nagano_tables, p, records, rule, source};
 
 const nagano_motion: u32 = 256u;
 

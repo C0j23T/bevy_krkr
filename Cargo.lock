@@ -3821,6 +3821,7 @@ dependencies = [
  "krkr_script",
  "krkr_shim",
  "krkr_sys",
+ "wesl",
 ]
 
 [[package]]

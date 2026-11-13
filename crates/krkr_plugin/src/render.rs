@@ -1,4 +1,5 @@
 pub(crate) mod gpu;
+mod shader;
 
 use bevy::{
     asset::RenderAssetUsages,

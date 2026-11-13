@@ -1,12 +1,10 @@
-//! assemble operation shader
-
 use std::sync::LazyLock;
 
 use bevy::platform::collections::HashMap;
 use indoc::indoc;
 use itertools::Itertools;
 
-const IMPORT: &str = "import krkr::nagano::nagano;";
+const IMPORT: &str = "import package::krkr::extNagano::nagano;";
 
 static COMPOSER: LazyLock<ShaderComposer> = LazyLock::new(|| {
     let mut composer = ShaderComposer::new();
@@ -101,7 +99,7 @@ fn builtin_funcs() -> Vec<Function<'static>> {
             ret: "vec2<f32>",
             body: indoc! {"
                 if (p[1].w == 0.0) {
-                    return mix(p[6 + i].xy p[6 + i].zw, (at - p[0].xy) / (p[0].zw - p[0].xy));
+                    return mix(p[6 + i].xy, p[6 + i].zw, (at - p[0].xy) / (p[0].zw - p[0].xy));
                 }
                 let j = 17 + i * 3;
                 let q = vec3(dot(p[j].xyz, vec3(at, 1)), dot(p[j + 1].xyz, vec3(at, 1)), dot(p[j + 2].xyz, vec3(at, 1)));
@@ -763,14 +761,14 @@ fn krkr_operations(composer: &mut ShaderComposer) {
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let premultiplied = u32(p[1].y) == 2u;
-            let target = p[5].xyz;
-            let base = p[3].xyz;
+            let target_color = p[5].xyz;
+            let base_color = p[3].xyz;
             let exponent = max(p[4].xyz, vec3(0.000001));
             var rgb = d.rgb;
             if (premultiplied) {
                 rgb /= max(d.a, 0.000001);
             }
-            rgb = base + pow(clamp(rgb, vec3(0), vec3(1)), 1.0 / exponent) * (target - base);
+            rgb = base_color + pow(clamp(rgb, vec3(0), vec3(1)), 1.0 / exponent) * (target_color - base_color);
             if (premultiplied) {
                 rgb *= d.a;
             }
@@ -1157,7 +1155,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
         "},
     });
 
-    // ExtraWave
+    // ExtransWave
     composer.add_operation(
         32,
         indoc! {"
@@ -1177,7 +1175,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
         "},
     );
 
-    // ExtraMosaic
+    // ExtransMosaic
     composer.add_operation(
         33,
         indoc! {"
@@ -1192,7 +1190,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
         "},
     );
 
-    // ExtraBlurFade
+    // ExtransBlurFade
     composer.add_operation(
         34,
         indoc! {"
@@ -1212,7 +1210,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
         "},
     );
 
-    // ExtraTurn
+    // ExtransTurn
     composer.add_operation(
         36,
         indoc! {"
@@ -1248,7 +1246,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
         "},
     );
 
-    // ExtraRotate
+    // ExtransRotate
     composer.add_operation(
         37,
         indoc! {"
@@ -1279,7 +1277,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
         "},
     );
 
-    // ExtraRipple
+    // ExtransRipple
     composer.add_operation(
         38,
         indoc! {"
@@ -1299,7 +1297,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
 }
 
 fn nagano_operations(composer: &mut ShaderComposer) {
-    // ExtraNagano
+    // ExtNagano
     composer.add_operation(
         39,
         indoc! {"
@@ -1308,4 +1306,25 @@ fn nagano_operations(composer: &mut ShaderComposer) {
             textureStore(output, xy, clamp(result, vec4(0), vec4(1)));
         "},
     );
+}
+
+#[cfg(test)]
+mod verify {
+    use super::*;
+
+    #[test]
+    fn compose_compiles() {
+        let mut resolver = wesl::resolver::VirtualResolver::new();
+        resolver.add_module("package::krkr::operations".parse().unwrap(), compose().into());
+        resolver.add_module(
+            "package::krkr::extNagano".parse().unwrap(),
+            include_str!("nagano.wesl").into(),
+        );
+        let mut compiler = wesl::Compiler::default().with_resolver(resolver);
+        compiler.options.keep_main = true;
+        let main: wesl::syntax::ModulePath = "package::krkr::operations".parse().unwrap();
+        if let Err(error) = compiler.compile_module(&main) {
+            panic!("\n{error}");
+        }
+    }
 }
