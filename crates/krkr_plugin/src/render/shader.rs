@@ -4,6 +4,8 @@ use bevy::platform::collections::HashMap;
 use indoc::indoc;
 use itertools::Itertools;
 
+use crate::render::operations::Operation;
+
 const IMPORT: &str = "import package::krkr::extNagano::nagano;";
 
 static COMPOSER: LazyLock<ShaderComposer> = LazyLock::new(|| {
@@ -46,7 +48,9 @@ struct ShaderComposer<'a> {
 
 fn indent(body: &str, spaces: usize) -> String {
     let prefix = " ".repeat(spaces);
-    body.lines().map(|line| format!("{prefix}{line}\n")).collect()
+    body.lines()
+        .map(|line| format!("{prefix}{line}\n"))
+        .collect()
 }
 
 fn builtin_funcs() -> Vec<Function<'static>> {
@@ -272,12 +276,7 @@ fn builtin_funcs() -> Vec<Function<'static>> {
         },
         Function {
             name: "blend_channel",
-            params: vec![
-                ("a", "u32"),
-                ("b", "u32"),
-                ("opa", "u32"),
-                ("shift", "u32"),
-            ],
+            params: vec![("a", "u32"), ("b", "u32"), ("opa", "u32"), ("shift", "u32")],
             ret: "u32",
             body: indoc! {"
                 if (shift == 24u) {
@@ -415,7 +414,8 @@ impl<'a> ShaderComposer<'a> {
         output
     }
 
-    fn add_operation(&mut self, opcode: u32, body: impl AsRef<str>) {
+    fn add_operation(&mut self, opcode: Operation, body: impl AsRef<str>) {
+        let opcode = u32::from(opcode);
         assert!(
             self.operations
                 .insert(opcode, body.as_ref().to_string())
@@ -516,11 +516,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
     });
     composer.funcs.push(Function {
         name: "kirikiri_dodge",
-        params: vec![
-            ("d", "vec3<f32>"),
-            ("s", "vec3<f32>"),
-            ("opacity", "u32"),
-        ],
+        params: vec![("d", "vec3<f32>"), ("s", "vec3<f32>"), ("opacity", "u32")],
         ret: "vec3<f32>",
         body: indoc! {"
             if (opacity == 0u) {
@@ -538,7 +534,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // Copy
     composer.add_operation(
-        0,
+        Operation::COPY,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             textureStore(output, xy, clamp(s, vec4(0), vec4(1)));
@@ -547,7 +543,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // FillARGB
     composer.add_operation(
-        1,
+        Operation::FILL_ARGB,
         indoc! {"
             textureStore(output, xy, clamp(p[5], vec4(0), vec4(1)));
         "},
@@ -555,7 +551,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // FillColor
     composer.add_operation(
-        2,
+        Operation::FILL_COLOR,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             textureStore(output, xy, clamp(vec4(p[5].rgb, d.a), vec4(0), vec4(1)));
@@ -564,7 +560,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // FillMask
     composer.add_operation(
-        3,
+        Operation::FILL_MASK,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let result = vec4(d.rgb, clamp(p[2].x / 255.0, 0.0, 1.0));
@@ -574,7 +570,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // CopyColor
     composer.add_operation(
-        4,
+        Operation::COPY_COLOR,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
@@ -585,7 +581,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // CopyMask
     composer.add_operation(
-        5,
+        Operation::COPY_MASK,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
@@ -596,7 +592,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // CopyOpaqueImage
     composer.add_operation(
-        6,
+        Operation::COPY_OPAQUE_IMAGE,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let result = vec4(s.rgb, 1.0);
@@ -606,7 +602,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // AlphaBlend
     composer.add_operation(
-        7,
+        Operation::ALPHA_BLEND,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
@@ -618,7 +614,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // ConstAlphaBlend
     composer.add_operation(
-        8,
+        Operation::CONST_ALPHA_BLEND,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
@@ -630,7 +626,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // ConstColorAlphaBlend
     composer.add_operation(
-        9,
+        Operation::CONST_COLOR_ALPHA_BLEND,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let opacity = clamp(p[2].x / 255.0, 0.0, 1.0);
@@ -641,7 +637,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // ApplyColorMap
     composer.add_operation(
-        10,
+        Operation::APPLY_COLOR_MAP,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
@@ -653,7 +649,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // RemoveConstOpacity
     composer.add_operation(
-        11,
+        Operation::REMOVE_CONST_OPACITY,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let opacity = clamp(p[2].x / 255.0, 0.0, 1.0);
@@ -664,7 +660,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // RemoveOpacity
     composer.add_operation(
-        12,
+        Operation::REMOVE_OPACITY,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
@@ -675,7 +671,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // ConstAlphaBlend_SD
     composer.add_operation(
-        13,
+        Operation::CONST_ALPHA_BLEND_SD,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
@@ -687,7 +683,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // UnivTransBlend
     composer.add_operation(
-        14,
+        Operation::UNIV_TRANS_BLEND,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
@@ -702,7 +698,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // AlphaToAdditiveAlpha
     composer.add_operation(
-        15,
+        Operation::ALPHA_TO_ADDITIVE_ALPHA,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let result = vec4(d.rgb * d.a, d.a);
@@ -712,7 +708,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // AdditiveAlphaToAlpha
     composer.add_operation(
-        16,
+        Operation::ADDITIVE_ALPHA_TO_ALPHA,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let result = vec4(d.rgb / max(d.a, 0.000001), d.a);
@@ -722,7 +718,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // DoGrayScale
     composer.add_operation(
-        17,
+        Operation::DO_GRAY_SCALE,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let result = vec4(vec3(dot(d.rgb, vec3(0.299, 0.587, 0.114))), d.a);
@@ -732,7 +728,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // BoxBlur
     composer.add_operation(
-        18,
+        Operation::BOX_BLUR,
         indoc! {"
             let kind = u32(p[1].y);
             var sum = vec4(0.0);
@@ -757,7 +753,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // AdjustGamma
     composer.add_operation(
-        19,
+        Operation::ADJUST_GAMMA,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let premultiplied = u32(p[1].y) == 2u;
@@ -779,7 +775,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // Ps blends
     composer.add_operation(
-        20,
+        Operation::PS_BLEND,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
@@ -791,7 +787,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // non-photoshop blend
     composer.add_operation(
-        21,
+        Operation::NON_PS_BLEND,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
@@ -810,7 +806,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
     {
         // VideoColor
         composer.add_operation(
-            22,
+            Operation::VIDEO_COLOR,
             indoc! {"
                 let s = sample(source, coordinate(0u, at));
                 if (all(p[3] == vec4(0.0, 1.0, 0.0, 1.0))) {
@@ -831,7 +827,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // LayerMovieAlpha
     composer.add_operation(
-        30,
+        Operation::LAYER_MOVIE_ALPHA,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let mask = fetch(source, vec2<i32>(floor(coordinate(0u, at))) + vec2<i32>(i32(p[3].x), 0));
@@ -842,7 +838,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // horizontal blur
     composer.add_operation(
-        40,
+        Operation::BOX_BLUR_H,
         indoc! {"
             let radius = i32(p[3].x);
             let lo = max(xy - vec2(radius, 0), vec2(0));
@@ -858,7 +854,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
 
     // vertical blur
     composer.add_operation(
-        41,
+        Operation::BOX_BLUR_V,
         indoc! {"
             let radius = i32(p[3].y);
             let lo = max(xy - vec2(0, radius), vec2(0));
@@ -927,7 +923,7 @@ fn layerex_operations(composer: &mut ShaderComposer) {
 
     // LayerExLight
     composer.add_operation(
-        23,
+        Operation::LAYER_EX_LIGHT,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let rgb = floor(d.rgb * 255.0 + 0.5);
@@ -939,7 +935,7 @@ fn layerex_operations(composer: &mut ShaderComposer) {
 
     // LayerExColorize
     composer.add_operation(
-        24,
+        Operation::LAYER_EX_COLORIZE,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let rgb = vec3<i32>(floor(d.rgb * 255.0 + 0.5));
@@ -961,7 +957,7 @@ fn layerex_operations(composer: &mut ShaderComposer) {
 
     // LayerExModulate
     composer.add_operation(
-        25,
+        Operation::LAYER_EX_MODULATE,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let hi = max(max(d.r, d.g), d.b);
@@ -997,21 +993,26 @@ fn layerex_operations(composer: &mut ShaderComposer) {
         let seed = u32(xy.x) + u32(xy.y) * textureDimensions(output).x + u32(p[3].w) * 747796405u;
         let n = vec3<f32>(hash_noise(seed), hash_noise(seed + 0x1234567u), hash_noise(seed + 0x7654321u));
         var result = vec4(vec3(floor(n.x * 255.0) / 255.0), d.a);
-        if (operation == 26u) {
+        if (operation == NOISE_OPCODEu) {
             let amount = trunc((n - 0.5) * trunc(p[3].x));
             result = vec4(clamp(floor(d.rgb * 255.0 + 0.5) + amount, vec3(0), vec3(255)) / 255.0, d.a);
         }
         textureStore(output, xy, clamp(result, vec4(0), vec4(1)));
     "};
 
+    let noise = noise.replace(
+        "NOISE_OPCODE",
+        &u32::from(Operation::LAYER_EX_NOISE).to_string(),
+    );
+
     // LayerExNoise
-    composer.add_operation(26, noise);
+    composer.add_operation(Operation::LAYER_EX_NOISE, &noise);
 
     // LayerExWhiteNoise
-    composer.add_operation(27, noise);
+    composer.add_operation(Operation::LAYER_EX_WHITE_NOISE, noise);
 
     let gaussian = indoc! {"
-        let axis = select(0, 1, operation == 29u);
+        let axis = select(0, 1, operation == GAUSSIAN_V_OPCODEu);
         let length = i32(p[3].y);
         let mid = length / 2;
         let low = i32(p[0][axis]);
@@ -1038,15 +1039,20 @@ fn layerex_operations(composer: &mut ShaderComposer) {
         textureStore(output, xy, clamp(result, vec4(0), vec4(1)));
     "};
 
+    let gaussian = gaussian.replace(
+        "GAUSSIAN_V_OPCODE",
+        &u32::from(Operation::LAYER_EX_GAUSSIAN_V).to_string(),
+    );
+
     // LayerExGaussianH
-    composer.add_operation(28, gaussian);
+    composer.add_operation(Operation::LAYER_EX_GAUSSIAN_H, &gaussian);
 
     // LayerExGaussianV
-    composer.add_operation(29, gaussian);
+    composer.add_operation(Operation::LAYER_EX_GAUSSIAN_V, gaussian);
 
     // LayerExRaster
     composer.add_operation(
-        31,
+        Operation::LAYER_EX_RASTER,
         indoc! {"
             let shift = i32(p[26u + u32(xy.y)].x);
             let origin = xy - vec2(shift, 0);
@@ -1060,7 +1066,7 @@ fn layerex_operations(composer: &mut ShaderComposer) {
 
     // LayerExTextPaint
     composer.add_operation(
-        35,
+        Operation::LAYER_EX_TEXT_PAINT,
         indoc! {"
             let old = fetch(previous, xy);
             let origin = xy - vec2<i32>(p[3].yz);
@@ -1157,7 +1163,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
 
     // ExtransWave
     composer.add_operation(
-        32,
+        Operation::EXTRANS_WAVE,
         indoc! {"
             let local = vec2<i32>(floor(coordinate(0u, at))) - vec2<i32>(p[6].xy);
             let x = local.x - i32(p[26u + u32(local.y)].x);
@@ -1177,7 +1183,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
 
     // ExtransMosaic
     composer.add_operation(
-        33,
+        Operation::EXTRANS_MOSAIC,
         indoc! {"
             let size = max(p[3].x, 2.0);
             let offset = p[3].yz;
@@ -1192,7 +1198,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
 
     // ExtransBlurFade
     composer.add_operation(
-        34,
+        Operation::EXTRANS_BLUR_FADE,
         indoc! {"
             let source_at = vec2<i32>(floor(coordinate(0u, at)));
             let destination_at = vec2<i32>(floor(coordinate(1u, at)));
@@ -1212,7 +1218,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
 
     // ExtransTurn
     composer.add_operation(
-        36,
+        Operation::EXTRANS_TURN,
         indoc! {"
             let logical = xy - vec2<i32>(p[0].xy) + vec2<i32>(p[2].zw);
             let tile = logical / 64;
@@ -1248,7 +1254,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
 
     // ExtransRotate
     composer.add_operation(
-        37,
+        Operation::EXTRANS_ROTATE,
         indoc! {"
             let logical = xy - vec2<i32>(p[0].xy) + vec2<i32>(p[2].zw);
             var result = p[5];
@@ -1279,7 +1285,7 @@ fn extrans_operations(composer: &mut ShaderComposer) {
 
     // ExtransRipple
     composer.add_operation(
-        38,
+        Operation::EXTRANS_RIPPLE,
         indoc! {"
             let opacity = clamp(p[2].x / 255.0, 0.0, 1.0);
             let center = p[3].yz;
@@ -1299,32 +1305,11 @@ fn extrans_operations(composer: &mut ShaderComposer) {
 fn nagano_operations(composer: &mut ShaderComposer) {
     // ExtNagano
     composer.add_operation(
-        39,
+        Operation::EXT_NAGANO,
         indoc! {"
             let q = xy - vec2<i32>(p[0].xy) + vec2<i32>(p[2].zw);
             let result = nagano(q);
             textureStore(output, xy, clamp(result, vec4(0), vec4(1)));
         "},
     );
-}
-
-#[cfg(test)]
-mod verify {
-    use super::*;
-
-    #[test]
-    fn compose_compiles() {
-        let mut resolver = wesl::resolver::VirtualResolver::new();
-        resolver.add_module("package::krkr::operations".parse().unwrap(), compose().into());
-        resolver.add_module(
-            "package::krkr::extNagano".parse().unwrap(),
-            include_str!("nagano.wesl").into(),
-        );
-        let mut compiler = wesl::Compiler::default().with_resolver(resolver);
-        compiler.options.keep_main = true;
-        let main: wesl::syntax::ModulePath = "package::krkr::operations".parse().unwrap();
-        if let Err(error) = compiler.compile_module(&main) {
-            panic!("\n{error}");
-        }
-    }
 }
