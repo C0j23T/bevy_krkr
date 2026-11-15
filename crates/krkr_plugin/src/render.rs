@@ -3,6 +3,7 @@ mod operations;
 mod renderer;
 mod shader;
 mod surface_sync;
+#[cfg(feature = "video-ffmpeg")]
 pub(crate) mod video;
 
 use bevy::{

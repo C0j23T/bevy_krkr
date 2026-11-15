@@ -53,6 +53,11 @@ name = "snbk"
 path = "examples/snbk.rs"
 
 [[example]]
+name = "snbk_android"
+path = "examples/snbk_android.rs"
+crate-type = ["cdylib"]
+
+[[example]]
 name = "extrans_showcase"
 path = "examples/extrans_showcase.rs"
 

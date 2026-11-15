@@ -51,6 +51,7 @@ use bevy_krkr::script::Tjs2Engine;
 
 const DEFAULT_DATA: &str = "test_games/snbk/data.xp3";
 
+#[bevy_main]
 fn main() {
     let mut data = None;
     let mut dump_log: Option<String> = None;

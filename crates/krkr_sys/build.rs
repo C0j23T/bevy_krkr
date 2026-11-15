@@ -65,6 +65,35 @@ fn write_stubs(out_dir: &Path) {
         .expect("write stub bindings");
 }
 
+/// `--target` cargo-ndk passes to the NDK compiler. NDK r30 rejects the
+/// unversioned Rust triple, and bindgen only adds that one on its own.
+#[cfg(feature = "real_ffi")]
+fn android_clang_target() -> Option<String> {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("android") {
+        return None;
+    }
+    let target = env::var("TARGET").ok()?;
+    env::var(format!("CFLAGS_{target}"))
+        .ok()?
+        .split_whitespace()
+        .find_map(|flag| flag.strip_prefix("--target=").map(str::to_owned))
+}
+
+/// `environ/DetectCPU.cpp` includes `cpu-features.h` on Android; the NDK ships
+/// it as source under `sources/android/cpufeatures`. cargo-ndk exposes the
+/// sysroot instead of the NDK root.
+#[cfg(feature = "real_ffi")]
+fn android_cpufeatures() -> Option<(PathBuf, PathBuf)> {
+    let sysroot = PathBuf::from(env::var_os("CARGO_NDK_SYSROOT_PATH")?);
+    let toolchains = sysroot
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "toolchains"))?;
+    let ndk = toolchains.parent()?;
+    let dir = ndk.join("sources/android/cpufeatures");
+    let source = dir.join("cpu-features.c");
+    source.is_file().then(|| (dir, source))
+}
+
 #[cfg(feature = "real_ffi")]
 mod real {
     use krkr_codegen::port;
@@ -86,12 +115,16 @@ mod real {
         .expect("krkr_codegen failed");
 
         // 2. bindgen
-        bindgen::Builder::default()
+        let mut bindings = bindgen::Builder::default()
             .header(header.to_string_lossy())
             .allowlist_function("krkr_.*")
             .allowlist_type("krkr_.*|.*Opaque")
             .allowlist_var("KRKR_.*")
-            .default_macro_constant_type(bindgen::MacroTypeVariation::Signed)
+            .default_macro_constant_type(bindgen::MacroTypeVariation::Signed);
+        if let Some(target) = super::android_clang_target() {
+            bindings = bindings.clang_arg(format!("--target={target}"));
+        }
+        bindings
             .generate()
             .expect("bindgen failed")
             .write_to_file(out_dir.join("bindings.rs"))
@@ -111,7 +144,12 @@ mod real {
             }
         }
 
-        let sources = port::collect_sources(src).expect("list Kirikiroid2 sources");
+        let mut sources = port::collect_sources(src).expect("list Kirikiroid2 sources");
+        if let Some((dir, cpu_features)) = super::android_cpufeatures() {
+            println!("cargo:rerun-if-changed={}", cpu_features.display());
+            includes.push(dir);
+            sources.c.push(cpu_features);
+        }
         // The directory-level `rerun-if-changed` in `main` only sees entries
         // being added or removed, not a file being edited, so every source and
         // header has to be listed or an edit to the engine silently reuses the
@@ -245,6 +283,7 @@ mod real {
 
     fn probe(pkg: &str, link: bool) -> pkg_config::Library {
         pkg_config::Config::new()
+            .statik(env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android"))
             .cargo_metadata(link)
             .probe(pkg)
             .unwrap_or_else(|e| panic!("krkr_sys: system library `{pkg}` not found via pkg-config: {e}"))
