@@ -1,8 +1,9 @@
 // krkr renderer
 
 use std::{
+    collections::VecDeque,
     ffi::CStr,
-    sync::{LazyLock, OnceLock},
+    sync::{Arc, LazyLock, Mutex, OnceLock},
 };
 
 use bevy::{
@@ -35,6 +36,35 @@ static SIMD_LEVEL: LazyLock<SimdLevel> = LazyLock::new(|| SimdLevel::new());
 static EMPTY_TEXTURE: OnceLock<CachedTexture> = OnceLock::new();
 static NAGANO_RECORDS_DUMMY: OnceLock<Buffer> = OnceLock::new();
 static NAGANO_TABLES_DUMMY: OnceLock<Buffer> = OnceLock::new();
+const GAUSSIAN_WEIGHT_CACHE_CAPACITY: usize = 64;
+
+static GAUSSIAN_WEIGHTS: LazyLock<Mutex<GaussianWeightCache>> =
+    LazyLock::new(|| Mutex::new(GaussianWeightCache::default()));
+
+#[derive(Default)]
+struct GaussianWeightCache {
+    entries: HashMap<u32, Arc<[f32]>>,
+    insertion_order: VecDeque<u32>,
+}
+
+impl GaussianWeightCache {
+    fn get(&self, key: u32) -> Option<Arc<[f32]>> {
+        self.entries.get(&key).cloned()
+    }
+
+    fn insert(&mut self, key: u32, weights: Arc<[f32]>) {
+        if self.entries.contains_key(&key) {
+            return;
+        }
+        if self.entries.len() == GAUSSIAN_WEIGHT_CACHE_CAPACITY {
+            if let Some(oldest) = self.insertion_order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+        self.insertion_order.push_back(key);
+        self.entries.insert(key, weights);
+    }
+}
 
 struct KrkrRenderer {
     device: RenderDevice,
@@ -44,6 +74,8 @@ struct KrkrRenderer {
 
     textures: HashMap<u64, CachedTexture>,
     texture_cache: TextureCache,
+    upload_buffer: Vec<u8>,
+    parameter_scratch: Vec<[f32; 4]>,
 
     pipeline: ComputePipeline,
     layout: BindGroupLayout,
@@ -206,6 +238,8 @@ impl KrkrRenderer {
             pending: 0,
             textures: HashMap::new(),
             texture_cache: TextureCache::default(),
+            upload_buffer: Vec::new(),
+            parameter_scratch: Vec::new(),
             pipeline,
             layout,
             ext_nagano,
@@ -291,7 +325,10 @@ impl KrkrRenderer {
             return Ok(());
         }
 
-        let mut bytes = Vec::with_capacity(w as usize * h as usize * 4);
+        let size = w as usize * h as usize * 4;
+        self.upload_buffer.resize(size, 0);
+        let bytes = &mut self.upload_buffer;
+        bytes.fill(0);
         match c.format {
             4 => {
                 for row in 0..h as usize {
@@ -427,9 +464,7 @@ impl KrkrRenderer {
                     simd_dispatch!(*SIMD_LEVEL, simd => gray_to_rgba(simd, src, dst));
                 }
             }
-            _ => {
-                bytes.fill(0);
-            }
+            _ => (),
         }
 
         self.queue.write_texture(
@@ -443,7 +478,7 @@ impl KrkrRenderer {
                 },
                 aspect: TextureAspect::All,
             },
-            &bytes,
+            bytes,
             TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(w as u32 * 4),
@@ -757,7 +792,7 @@ impl KrkrRenderer {
         inputs: [CachedTexture; 4],
         old: CachedTexture,
         data: &[[f32; 4]],
-        rect: [f32; 4],
+        dispatch_size: [u32; 2],
         output: Option<CachedTexture>,
     ) -> CachedTexture {
         let output = output.unwrap_or_else(|| {
@@ -776,36 +811,52 @@ impl KrkrRenderer {
             );
         }
 
-        let views: Vec<_> = inputs
-            .iter()
-            .chain(std::iter::once(&output))
-            .map(|texture| texture.default_view.clone())
-            .collect();
+        let views = [
+            inputs[0].default_view.clone(),
+            inputs[1].default_view.clone(),
+            inputs[2].default_view.clone(),
+            inputs[3].default_view.clone(),
+            output.default_view.clone(),
+        ];
         let params = self.device.create_buffer_with_data(&BufferInitDescriptor {
             label: None,
             contents: bytemuck::cast_slice(data),
             usage: BufferUsages::STORAGE,
         });
-        let mut entries: Vec<_> = views
-            .iter()
-            .enumerate()
-            .map(|(binding, view)| BindGroupEntry {
-                binding: binding as u32,
-                resource: BindingResource::TextureView(view),
-            })
-            .collect();
-        entries.push(BindGroupEntry {
-            binding: 5,
-            resource: params.as_entire_binding(),
-        });
-        entries.push(BindGroupEntry {
-            binding: 6,
-            resource: NAGANO_RECORDS_DUMMY.get().unwrap().as_entire_binding(),
-        });
-        entries.push(BindGroupEntry {
-            binding: 7,
-            resource: NAGANO_TABLES_DUMMY.get().unwrap().as_entire_binding(),
-        });
+        let entries = [
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&views[0]),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::TextureView(&views[1]),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: BindingResource::TextureView(&views[2]),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: BindingResource::TextureView(&views[3]),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: BindingResource::TextureView(&views[4]),
+            },
+            BindGroupEntry {
+                binding: 5,
+                resource: params.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 6,
+                resource: NAGANO_RECORDS_DUMMY.get().unwrap().as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 7,
+                resource: NAGANO_TABLES_DUMMY.get().unwrap().as_entire_binding(),
+            },
+        ];
         let group = self.device.create_bind_group(None, &self.layout, &entries);
 
         let pipeline = self.pipeline.clone();
@@ -815,9 +866,11 @@ impl KrkrRenderer {
                 .begin_compute_pass(&ComputePassDescriptor::default());
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &group, &[]);
-            let width = rect[2] - rect[0];
-            let height = rect[3] - rect[1];
-            pass.dispatch_workgroups((width as u32).div_ceil(8), (height as u32).div_ceil(8), 1);
+            pass.dispatch_workgroups(
+                dispatch_size[0].div_ceil(8),
+                dispatch_size[1].div_ceil(8),
+                1,
+            );
         }
 
         self.pending += 1;
@@ -898,7 +951,8 @@ impl KrkrRenderer {
             }
         }
 
-        let gaussian_data;
+        let mut gaussian_data = std::mem::take(&mut self.parameter_scratch);
+        gaussian_data.clear();
         let nagano_tables_only = operation == Operation::EXT_NAGANO && data[2][0] == 8.0;
         let data: &[[f32; 4]] = if matches!(
             operation,
@@ -909,9 +963,8 @@ impl KrkrRenderer {
             }
             let shifts =
                 unsafe { std::slice::from_raw_parts(c.data.cast::<f32>(), c.pitch as usize) };
-            let mut extended = data.to_vec();
-            extended.extend(shifts.iter().map(|s| [*s, 0.0, 0.0, 0.0]));
-            gaussian_data = extended;
+            gaussian_data.extend_from_slice(&data);
+            gaussian_data.extend(shifts.iter().map(|s| [*s, 0.0, 0.0, 0.0]));
             &gaussian_data
         } else if nagano_tables_only {
             if c.pitch != 512 || c.data.is_null() {
@@ -922,13 +975,12 @@ impl KrkrRenderer {
             if c.pitch < 0 || c.pitch > 100_000_000 || (c.pitch > 0 && c.data.is_null()) {
                 return Err("invalid Nagano records".into());
             }
-            let mut extended = data.to_vec();
+            gaussian_data.extend_from_slice(&data);
             if c.pitch > 0 {
-                extended.extend_from_slice(unsafe {
+                gaussian_data.extend_from_slice(unsafe {
                     std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), c.pitch as usize)
                 });
             }
-            gaussian_data = extended;
             &gaussian_data
         } else if matches![
             operation,
@@ -944,9 +996,8 @@ impl KrkrRenderer {
             }
             let records =
                 unsafe { std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), expected as usize) };
-            let mut extended = data.to_vec();
-            extended.extend_from_slice(records);
-            gaussian_data = extended;
+            gaussian_data.extend_from_slice(&data);
+            gaussian_data.extend_from_slice(records);
             &gaussian_data
         } else if matches![
             operation,
@@ -954,26 +1005,20 @@ impl KrkrRenderer {
         ] {
             let weights = gaussian_weights(c.parameters[4])?;
             data[3][1] = weights.len() as f32;
-            let mut extended = data.to_vec();
-            extended.extend(weights.into_iter().map(|w| [w, 0.0, 0.0, 0.0]));
-            gaussian_data = extended;
+            gaussian_data.extend_from_slice(&data);
+            gaussian_data.extend(weights.iter().map(|w| [*w, 0.0, 0.0, 0.0]));
             &gaussian_data
         } else {
             &data
         };
 
+        let dispatch_size = [width as u32, height as u32];
         let output = if nagano_tables_only {
             let mut ext_nagano = self.ext_nagano.take().unwrap();
             let tables =
                 unsafe { std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), c.pitch as usize) };
-            let output = ext_nagano.universal_3d(
-                self,
-                inputs,
-                old.clone(),
-                data,
-                tables,
-                c.rect.map(|v| v as f32),
-            );
+            let output =
+                ext_nagano.universal_3d(self, inputs, old.clone(), data, tables, dispatch_size);
             self.ext_nagano = Some(ext_nagano);
             output
         } else if operation == Operation::EXT_NAGANO_BLUR_FADE && c.parameters[8] == 0.0 {
@@ -1002,10 +1047,9 @@ impl KrkrRenderer {
             );
             self.ext_nagano = Some(ext_nagano);
 
-            let mut final_data = data.to_vec();
-            final_data[3] = [0.0; 4];
-            final_data[4][0] = 1.0;
-            final_data[4][1] = 1.0;
+            gaussian_data[3] = [0.0; 4];
+            gaussian_data[4][0] = 1.0;
+            gaussian_data[4][1] = 1.0;
             self.dispatch_compute(
                 [
                     source_blurred,
@@ -1014,13 +1058,15 @@ impl KrkrRenderer {
                     old.clone(),
                 ],
                 old.clone(),
-                &final_data,
-                c.rect.map(|v| v as f32),
+                &gaussian_data,
+                dispatch_size,
                 None,
             )
         } else {
-            self.dispatch_compute(inputs, old.clone(), data, c.rect.map(|v| v as f32), None)
+            self.dispatch_compute(inputs, old.clone(), data, dispatch_size, None)
         };
+
+        self.parameter_scratch = gaussian_data;
 
         self.textures.insert(c.target, output);
         if self.pending >= 64 {
@@ -1054,11 +1100,12 @@ impl ExtNaganoExtension {
             &renderer.device,
             descriptor(input.texture.width(), input.texture.height()),
         );
+        let dispatch_size = [input.texture.width(), input.texture.height()];
         renderer.dispatch_compute(
             [input.clone(), input.clone(), input.clone(), input.clone()],
             input,
             &data,
-            data[0],
+            dispatch_size,
             Some(output.clone()),
         )
     }
@@ -1070,7 +1117,7 @@ impl ExtNaganoExtension {
         old: CachedTexture,
         data: &[[f32; 4]],
         tables: &[[f32; 4]],
-        rect: [f32; 4],
+        dispatch_size: [u32; 2],
     ) -> CachedTexture {
         let (width, height) = (old.texture.width(), old.texture.height());
         let output = renderer
@@ -1118,11 +1165,13 @@ impl ExtNaganoExtension {
             .map(|(_, buffer)| buffer.clone())
             .unwrap();
 
-        let views: Vec<_> = inputs
-            .iter()
-            .chain(std::iter::once(&output))
-            .map(|texture| texture.default_view.clone())
-            .collect();
+        let views = [
+            inputs[0].default_view.clone(),
+            inputs[1].default_view.clone(),
+            inputs[2].default_view.clone(),
+            inputs[3].default_view.clone(),
+            output.default_view.clone(),
+        ];
         let params = renderer
             .device
             .create_buffer_with_data(&BufferInitDescriptor {
@@ -1130,26 +1179,40 @@ impl ExtNaganoExtension {
                 contents: bytemuck::cast_slice(data),
                 usage: BufferUsages::STORAGE,
             });
-        let mut entries: Vec<_> = views
-            .iter()
-            .enumerate()
-            .map(|(binding, view)| BindGroupEntry {
-                binding: binding as u32,
-                resource: BindingResource::TextureView(view),
-            })
-            .collect();
-        entries.push(BindGroupEntry {
-            binding: 5,
-            resource: params.as_entire_binding(),
-        });
-        entries.push(BindGroupEntry {
-            binding: 6,
-            resource: records.as_entire_binding(),
-        });
-        entries.push(BindGroupEntry {
-            binding: 7,
-            resource: table_buffer.as_entire_binding(),
-        });
+        let entries = [
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&views[0]),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::TextureView(&views[1]),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: BindingResource::TextureView(&views[2]),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: BindingResource::TextureView(&views[3]),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: BindingResource::TextureView(&views[4]),
+            },
+            BindGroupEntry {
+                binding: 5,
+                resource: params.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 6,
+                resource: records.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 7,
+                resource: table_buffer.as_entire_binding(),
+            },
+        ];
         let group = renderer
             .device
             .create_bind_group(None, &renderer.layout, &entries);
@@ -1160,10 +1223,7 @@ impl ExtNaganoExtension {
             (scatter, (width.div_ceil(8), height.div_ceil(8))),
             (
                 pipeline,
-                (
-                    ((rect[2] - rect[0]) as u32).div_ceil(8),
-                    ((rect[3] - rect[1]) as u32).div_ceil(8),
-                ),
+                (dispatch_size[0].div_ceil(8), dispatch_size[1].div_ceil(8)),
             ),
         ] {
             let mut pass = renderer
@@ -1234,9 +1294,13 @@ fn mapping(destination: &[f32; 8], source: &[f32; 8], vertices: u32) -> Result<M
     Ok(b * a.inverse())
 }
 
-fn gaussian_weights(radius: f32) -> Result<Vec<f32>, String> {
+fn gaussian_weights(radius: f32) -> Result<Arc<[f32]>, String> {
     if !radius.is_finite() || radius.abs() > 16384.0 {
         return Err("invalid gaussianBlur radius".into());
+    }
+    let key = radius.to_bits();
+    if let Some(weights) = GAUSSIAN_WEIGHTS.lock().map_err(|e| e.to_string())?.get(key) {
+        return Ok(weights);
     }
     let sigma = (0.5 * radius).abs() + 0.25;
     let extent = sigma * 2.0;
@@ -1269,5 +1333,10 @@ fn gaussian_weights(radius: f32) -> Result<Vec<f32>, String> {
     for w in &mut weights {
         *w /= sum;
     }
+    let weights: Arc<[f32]> = weights.into();
+    GAUSSIAN_WEIGHTS
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(key, weights.clone());
     Ok(weights)
 }
