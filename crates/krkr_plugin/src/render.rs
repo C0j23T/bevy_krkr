@@ -1,6 +1,6 @@
 pub(crate) mod gpu;
 mod shader;
-mod renderer;
+pub mod renderer;
 mod operations;
 
 use bevy::{

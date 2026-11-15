@@ -825,9 +825,9 @@ fn krkr_operations(composer: &mut ShaderComposer) {
         );
     }
 
-    // LayerMovieAlpha
+    // LayerExMovieAlpha
     composer.add_operation(
-        Operation::LAYER_MOVIE_ALPHA,
+        Operation::LAYER_EX_MOVIE_ALPHA,
         indoc! {"
             let s = sample(source, coordinate(0u, at));
             let mask = fetch(source, vec2<i32>(floor(coordinate(0u, at))) + vec2<i32>(i32(p[3].x), 0));
@@ -921,9 +921,9 @@ fn layerex_operations(composer: &mut ShaderComposer) {
         "},
     });
 
-    // LayerExLight
+    // LayerExImageLight
     composer.add_operation(
-        Operation::LAYER_EX_LIGHT,
+        Operation::LAYER_EX_IMAGE_LIGHT,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let rgb = floor(d.rgb * 255.0 + 0.5);
@@ -933,9 +933,9 @@ fn layerex_operations(composer: &mut ShaderComposer) {
         "},
     );
 
-    // LayerExColorize
+    // LayerExImageColorize
     composer.add_operation(
-        Operation::LAYER_EX_COLORIZE,
+        Operation::LAYER_EX_IMAGE_COLORIZE,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let rgb = vec3<i32>(floor(d.rgb * 255.0 + 0.5));
@@ -955,9 +955,9 @@ fn layerex_operations(composer: &mut ShaderComposer) {
         "},
     );
 
-    // LayerExModulate
+    // LayerExImageModulate
     composer.add_operation(
-        Operation::LAYER_EX_MODULATE,
+        Operation::LAYER_EX_IMAGE_MODULATE,
         indoc! {"
             let d = fetch(destination, vec2<i32>(floor(coordinate(1u, at))));
             let hi = max(max(d.r, d.g), d.b);
@@ -1002,14 +1002,14 @@ fn layerex_operations(composer: &mut ShaderComposer) {
 
     let noise = noise.replace(
         "NOISE_OPCODE",
-        &u32::from(Operation::LAYER_EX_NOISE).to_string(),
+        &u32::from(Operation::LAYER_EX_IMAGE_NOISE).to_string(),
     );
 
-    // LayerExNoise
-    composer.add_operation(Operation::LAYER_EX_NOISE, &noise);
+    // LayerExImageNoise
+    composer.add_operation(Operation::LAYER_EX_IMAGE_NOISE, &noise);
 
-    // LayerExWhiteNoise
-    composer.add_operation(Operation::LAYER_EX_WHITE_NOISE, noise);
+    // LayerExImageWhiteNoise
+    composer.add_operation(Operation::LAYER_EX_IMAGE_WHITE_NOISE, noise);
 
     let gaussian = indoc! {"
         let axis = select(0, 1, operation == GAUSSIAN_V_OPCODEu);
@@ -1041,14 +1041,14 @@ fn layerex_operations(composer: &mut ShaderComposer) {
 
     let gaussian = gaussian.replace(
         "GAUSSIAN_V_OPCODE",
-        &u32::from(Operation::LAYER_EX_GAUSSIAN_V).to_string(),
+        &u32::from(Operation::LAYER_EX_IMAGE_GAUSSIAN_V).to_string(),
     );
 
-    // LayerExGaussianH
-    composer.add_operation(Operation::LAYER_EX_GAUSSIAN_H, &gaussian);
+    // LayerExImageGaussianH
+    composer.add_operation(Operation::LAYER_EX_IMAGE_GAUSSIAN_H, &gaussian);
 
-    // LayerExGaussianV
-    composer.add_operation(Operation::LAYER_EX_GAUSSIAN_V, gaussian);
+    // LayerExImageGaussianV
+    composer.add_operation(Operation::LAYER_EX_IMAGE_GAUSSIAN_V, gaussian);
 
     // LayerExRaster
     composer.add_operation(
@@ -1196,9 +1196,9 @@ fn extrans_operations(composer: &mut ShaderComposer) {
         "},
     );
 
-    // ExtransBlurFade
+    // ExtNaganoBlurFade
     composer.add_operation(
-        Operation::EXTRANS_BLUR_FADE,
+        Operation::EXT_NAGANO_BLUR_FADE,
         indoc! {"
             let source_at = vec2<i32>(floor(coordinate(0u, at)));
             let destination_at = vec2<i32>(floor(coordinate(1u, at)));

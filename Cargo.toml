@@ -11,7 +11,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-bevy = { version = "0.20", default-features = false, features = ["2d", "jpeg", "default_font"] }
+bevy = { version = "0.20", default-features = false, features = ["2d", "jpeg", "default_font", "android-game-activity"] }
 thiserror = "2"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -60,5 +60,5 @@ path = "examples/extrans_showcase.rs"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
-strip = true
+# strip = true
 opt-level = "z"

@@ -1,5 +1,5 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Operation(u32);
+pub(crate) struct Operation(pub u32);
 
 impl Operation {
     // Kirikiri
@@ -25,12 +25,12 @@ impl Operation {
     pub const ADJUST_GAMMA: Self = Self(19);
     pub const PS_BLEND: Self = Self(20);
     pub const NON_PS_BLEND: Self = Self(21);
-    pub const BOX_BLUR_H: Self = Self(40);
-    pub const BOX_BLUR_V: Self = Self(41);
 
     // Video
     pub const VIDEO_COLOR: Self = Self(22);
-    pub const LAYER_MOVIE_ALPHA: Self = Self(30);
+
+    // LayerExMovie
+    pub const LAYER_EX_MOVIE_ALPHA: Self = Self(30);
 
     // LayerExText
     pub const LAYER_EX_TEXT_PAINT: Self = Self(35);
@@ -39,28 +39,28 @@ impl Operation {
     pub const LAYER_EX_RASTER: Self = Self(31);
 
     // LayerExImage
-    pub const LAYER_EX_LIGHT: Self = Self(23);
-    pub const LAYER_EX_COLORIZE: Self = Self(24);
-    pub const LAYER_EX_MODULATE: Self = Self(25);
-    pub const LAYER_EX_NOISE: Self = Self(26);
-    pub const LAYER_EX_WHITE_NOISE: Self = Self(27);
-    pub const LAYER_EX_GAUSSIAN_H: Self = Self(28);
-    pub const LAYER_EX_GAUSSIAN_V: Self = Self(29);
+    pub const LAYER_EX_IMAGE_LIGHT: Self = Self(23);
+    pub const LAYER_EX_IMAGE_COLORIZE: Self = Self(24);
+    pub const LAYER_EX_IMAGE_MODULATE: Self = Self(25);
+    pub const LAYER_EX_IMAGE_NOISE: Self = Self(26);
+    pub const LAYER_EX_IMAGE_WHITE_NOISE: Self = Self(27);
+    pub const LAYER_EX_IMAGE_GAUSSIAN_H: Self = Self(28);
+    pub const LAYER_EX_IMAGE_GAUSSIAN_V: Self = Self(29);
 
     // extrans
     pub const EXTRANS_WAVE: Self = Self(32);
     pub const EXTRANS_MOSAIC: Self = Self(33);
-    pub const EXTRANS_BLUR_FADE: Self = Self(34);
     pub const EXTRANS_TURN: Self = Self(36);
     pub const EXTRANS_ROTATE: Self = Self(37);
     pub const EXTRANS_RIPPLE: Self = Self(38);
 
     // extNagano
+    pub const EXT_NAGANO_BLUR_FADE: Self = Self(34);
     pub const EXT_NAGANO: Self = Self(39);
+    pub const BOX_BLUR_H: Self = Self(40);
+    pub const BOX_BLUR_V: Self = Self(41);
 
-    /// Returns the opcode; unknown methods fall back to `COPY`.
-    /// Alpha variants and blend modes use separate shader parameters.
-    pub const fn to_op(method: &str) -> Self {
+    pub const fn to_opcode(method: &str) -> Self {
         let method = match method.as_bytes() {
             [base @ .., b'_', b'H', b'D', b'A'] => base,
             base => base,
@@ -91,19 +91,19 @@ impl Operation {
             b"BoxBlur" | b"BoxBlurAlpha" => Self::BOX_BLUR,
             b"AdjustGamma" => Self::ADJUST_GAMMA,
             b"VideoColor" => Self::VIDEO_COLOR,
-            b"LayerMovieAlpha" => Self::LAYER_MOVIE_ALPHA,
+            b"LayerExMovieAlpha" => Self::LAYER_EX_MOVIE_ALPHA,
             b"LayerExTextPaint" => Self::LAYER_EX_TEXT_PAINT,
             b"LayerExRaster" => Self::LAYER_EX_RASTER,
-            b"LayerExLight" => Self::LAYER_EX_LIGHT,
-            b"LayerExColorize" => Self::LAYER_EX_COLORIZE,
-            b"LayerExModulate" => Self::LAYER_EX_MODULATE,
-            b"LayerExNoise" => Self::LAYER_EX_NOISE,
-            b"LayerExWhiteNoise" => Self::LAYER_EX_WHITE_NOISE,
-            b"LayerExGaussianH" => Self::LAYER_EX_GAUSSIAN_H,
-            b"LayerExGaussianV" => Self::LAYER_EX_GAUSSIAN_V,
+            b"LayerExImageLight" => Self::LAYER_EX_IMAGE_LIGHT,
+            b"LayerExImageColorize" => Self::LAYER_EX_IMAGE_COLORIZE,
+            b"LayerExImageModulate" => Self::LAYER_EX_IMAGE_MODULATE,
+            b"LayerExImageNoise" => Self::LAYER_EX_IMAGE_NOISE,
+            b"LayerExImageWhiteNoise" => Self::LAYER_EX_IMAGE_WHITE_NOISE,
+            b"LayerExImageGaussianH" => Self::LAYER_EX_IMAGE_GAUSSIAN_H,
+            b"LayerExImageGaussianV" => Self::LAYER_EX_IMAGE_GAUSSIAN_V,
             b"ExtransWave" => Self::EXTRANS_WAVE,
             b"ExtransMosaic" => Self::EXTRANS_MOSAIC,
-            b"ExtransBlurFade" => Self::EXTRANS_BLUR_FADE,
+            b"ExtNaganoBlurFade" => Self::EXT_NAGANO_BLUR_FADE,
             b"ExtransTurn" => Self::EXTRANS_TURN,
             b"ExtransRotate" => Self::EXTRANS_ROTATE,
             b"ExtransRipple" => Self::EXTRANS_RIPPLE,
@@ -129,6 +129,49 @@ impl Operation {
                 }
             }
         }
+    }
+
+    pub const fn to_operation(method: &str) -> Result<(Operation, u32, u32), &str> {
+        let mut kind = match method.as_bytes() {
+            [_base @ .., b'_', b'd'] => 1,
+            [_base @ .., b'_', b'a'] => 2,
+            _ => 0,
+        };
+        let mut blend = 0;
+        let opcode = Self::to_opcode(method);
+
+        if matches!(opcode, Operation::ALPHA_BLEND) {
+            kind = match kind {
+                0 => 3,
+                1 => 5,
+                _ => 4,
+            };
+        }
+        if matches!(opcode, Operation::PS_BLEND | Operation::NON_PS_BLEND) {
+            let base = match method.as_bytes() {
+                [b'P', b's', base @ ..] => base,
+                base => base,
+            };
+            blend = match base {
+                b"AlphaBlend" => 0,
+                b"AddBlend" => 1,
+                b"SubBlend" => 2,
+                b"MulBlend" => 3,
+                b"ScreenBlend" => 4,
+                b"OverlayBlend" => 5,
+                b"HardLightBlend" => 6,
+                b"SoftLightBlend" => 7,
+                b"ColorDodgeBlend" | b"ColorDodge5Blend" => 8,
+                b"ColorBurnBlend" => 9,
+                b"LightenBlend" => 10,
+                b"DarkenBlend" => 11,
+                b"DiffBlend" | b"Diff5Blend" => 12,
+                b"ExclusionBlend" => 13,
+                _ => return Err("unsupported Bevy texture operation"),
+            };
+        }
+
+        Ok((opcode, kind, blend))
     }
 }
 

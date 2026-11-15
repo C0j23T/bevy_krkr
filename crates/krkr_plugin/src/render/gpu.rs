@@ -1,3 +1,4 @@
+use std::sync::LazyLock;
 use std::{collections::HashMap, ffi::CStr, sync::Mutex};
 
 use bevy::asset::uuid::uuid;
@@ -11,7 +12,10 @@ use bevy::{
     asset::AssetId,
     shader::{Shader, ShaderCache, ShaderCacheSource},
 };
+use fearless_simd::Level as SimdLevel;
 use krkr_shim::render::RenderCommand;
+
+static SIMD_LEVEL: LazyLock<SimdLevel> = LazyLock::new(|| SimdLevel::new());
 
 static GPU: Mutex<Option<Gpu>> = Mutex::new(None);
 
@@ -149,10 +153,7 @@ impl Gpu {
         };
         shaders.set_shader(
             operations_id,
-            Shader::from_wesl(
-                super::shader::compose(),
-                "krkr/operations.wesl",
-            ),
+            Shader::from_wesl(super::shader::compose(), "krkr/operations.wesl"),
         );
 
         let nagano_id = AssetId::<Shader>::Uuid {
@@ -160,10 +161,7 @@ impl Gpu {
         };
         shaders.set_shader(
             nagano_id,
-            Shader::from_wesl(
-                include_str!("nagano.wesl"),
-                "krkr/extNagano.wesl",
-            ),
+            Shader::from_wesl(include_str!("nagano.wesl"), "krkr/extNagano.wesl"),
         );
 
         let operations_shader = shaders
@@ -376,21 +374,167 @@ impl Gpu {
         {
             return Err("invalid texture upload".into());
         }
+        if c.format == 4 && c.pitch as usize == w as usize * 4 {
+            self.flush();
+            self.queue.write_texture(
+                TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: Origin3d {
+                        x: x as u32,
+                        y: y as u32,
+                        z: 0,
+                    },
+                    aspect: TextureAspect::All,
+                },
+                unsafe {
+                    std::slice::from_raw_parts(c.data.cast::<u8>(), w as usize * h as usize * 4)
+                },
+                TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w as u32 * 4),
+                    rows_per_image: Some(h as u32),
+                },
+                Extent3d {
+                    width: w as u32,
+                    height: h as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+            return Ok(());
+        }
         let mut bytes = vec![0; w as usize * h as usize * 4];
-        for row in 0..h as usize {
-            let source = unsafe {
-                std::slice::from_raw_parts(
-                    c.data.cast::<u8>().offset(row as isize * c.pitch as isize),
-                    w as usize * c.format as usize,
-                )
-            };
-            for (col, input) in source.chunks_exact(c.format as usize).enumerate() {
-                let out = &mut bytes[(row * w as usize + col) * 4..][..4];
-                match input.len() {
-                    1 => out.copy_from_slice(&[input[0], input[0], input[0], 255]),
-                    3 => out.copy_from_slice(&[input[0], input[1], input[2], 255]),
-                    _ => out.copy_from_slice(input),
+        if c.format == 4 {
+            for row in 0..h as usize {
+                let src = unsafe {
+                    std::slice::from_raw_parts(
+                        c.data.cast::<u8>().offset(row as isize * c.pitch as isize),
+                        w as usize * 4,
+                    )
+                };
+                let dst = &mut bytes[row * w as usize * 4..(row + 1) * w as usize * 4];
+                dst.copy_from_slice(src);
+            }
+        } else if c.format == 3 {
+            use fearless_simd::{dispatch, prelude::*, u8x16};
+
+            #[inline(always)]
+            fn rgb_to_rgba<S: Simd>(simd: S, src: &[u8], dst: &mut [u8]) {
+                let mut src_chunks = src.chunks_exact(48);
+                let mut dst_chunks = dst.chunks_exact_mut(64);
+
+                for (s, d) in src_chunks.by_ref().zip(dst_chunks.by_ref()) {
+                    let a = u8x16::from_slice(simd, &s[0..16]);
+                    let b = u8x16::from_slice(simd, &s[16..32]);
+                    let c = u8x16::from_slice(simd, &s[32..48]);
+
+                    let m0 = u8x16::from_slice(
+                        simd,
+                        &[0, 1, 2, 0, 3, 4, 5, 0, 6, 7, 8, 0, 9, 10, 11, 0],
+                    );
+                    let o0 = a.swizzle_dyn(m0); // 只传入 indices
+
+                    let m1 = u8x16::from_slice(
+                        simd,
+                        &[12, 13, 14, 0, 15, 16, 17, 0, 18, 19, 20, 0, 21, 22, 23, 0],
+                    );
+                    let o1 = a.concat_swizzle_dyn(b, m1);
+
+                    let m2 = u8x16::from_slice(
+                        simd,
+                        &[8, 9, 10, 0, 11, 12, 13, 0, 14, 15, 16, 0, 17, 18, 19, 0],
+                    );
+                    let o2 = b.concat_swizzle_dyn(c, m2);
+
+                    let m3 = u8x16::from_slice(
+                        simd,
+                        &[4, 5, 6, 0, 7, 8, 9, 0, 10, 11, 12, 0, 13, 14, 15, 0],
+                    );
+                    let o3 = c.swizzle_dyn(m3);
+
+                    let alpha = u8x16::from_slice(
+                        simd,
+                        &[0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255],
+                    );
+                    let o0 = o0 | alpha;
+                    let o1 = o1 | alpha;
+                    let o2 = o2 | alpha;
+                    let o3 = o3 | alpha;
+
+                    o0.store_slice(&mut d[0..16]);
+                    o1.store_slice(&mut d[16..32]);
+                    o2.store_slice(&mut d[32..48]);
+                    o3.store_slice(&mut d[48..64]);
                 }
+
+                for (s, d) in src_chunks
+                    .remainder()
+                    .chunks_exact(3)
+                    .zip(dst_chunks.into_remainder().chunks_exact_mut(4))
+                {
+                    d[0] = s[0];
+                    d[1] = s[1];
+                    d[2] = s[2];
+                    d[3] = 255;
+                }
+            }
+
+            for row in 0..h as usize {
+                let src = unsafe {
+                    std::slice::from_raw_parts(
+                        c.data.cast::<u8>().offset(row as isize * c.pitch as isize),
+                        w as usize * 3,
+                    )
+                };
+                let dst = &mut bytes[row * w as usize * 4..(row + 1) * w as usize * 4];
+                dispatch!(*SIMD_LEVEL, simd => rgb_to_rgba(simd, src, dst));
+            }
+        } else if c.format == 1 {
+            use fearless_simd::{dispatch, prelude::*, u8x16};
+
+            #[inline(always)]
+            fn gray_to_rgba<S: Simd>(simd: S, src: &[u8], dst: &mut [u8]) {
+                let alpha = u8x16::from_slice(
+                    simd,
+                    &[0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255],
+                );
+                let mut src_chunks = src.chunks_exact(16);
+                let mut dst_chunks = dst.chunks_exact_mut(64);
+                for (source, target) in src_chunks.by_ref().zip(dst_chunks.by_ref()) {
+                    let gray = u8x16::from_slice(simd, source);
+                    for (offset, mask) in [
+                        [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
+                        [4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7],
+                        [8, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 10, 11, 11, 11, 11],
+                        [12, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 14, 15, 15, 15, 15],
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        let indices = u8x16::from_slice(simd, &mask);
+                        let rgba = gray.swizzle_dyn(indices) | alpha;
+                        rgba.store_slice(&mut target[offset * 16..(offset + 1) * 16]);
+                    }
+                }
+
+                for (gray, rgba) in src_chunks
+                    .remainder()
+                    .iter()
+                    .zip(dst_chunks.into_remainder().chunks_exact_mut(4))
+                {
+                    rgba.copy_from_slice(&[*gray, *gray, *gray, 255]);
+                }
+            }
+
+            for row in 0..h as usize {
+                let src = unsafe {
+                    std::slice::from_raw_parts(
+                        c.data.cast::<u8>().offset(row as isize * c.pitch as isize),
+                        w as usize,
+                    )
+                };
+                let dst = &mut bytes[row * w as usize * 4..(row + 1) * w as usize * 4];
+                dispatch!(*SIMD_LEVEL, simd => gray_to_rgba(simd, src, dst));
             }
         }
         self.flush();
@@ -737,11 +881,11 @@ impl Gpu {
         let method = unsafe { CStr::from_ptr(c.method) }
             .to_str()
             .map_err(|e| e.to_string())?;
-        if method == "LayerExGaussian" {
+        if method == "LayerExImageGaussian" {
             let mut pass = *c;
-            pass.method = c"LayerExGaussianH".as_ptr();
+            pass.method = c"LayerExImageGaussianH".as_ptr();
             self.draw(&pass)?;
-            pass.method = c"LayerExGaussianV".as_ptr();
+            pass.method = c"LayerExImageGaussianV".as_ptr();
             return self.draw(&pass);
         }
         let (operation, kind, blend) = operation(method)?;
@@ -954,23 +1098,23 @@ fn operation(name: &str) -> Result<(u32, u32, u32), String> {
     let op = match base {
         "Copy" => 0,
         "VideoColor" => 22,
-        "LayerMovieAlpha" => 30,
+        "LayerExMovieAlpha" => 30,
         "LayerExRaster" => 31,
         "LayerExTextPaint" => 35,
         "ExtransWave" => 32,
         "ExtransMosaic" => 33,
-        "ExtransBlurFade" => 34,
+        "ExtNaganoBlurFade" => 34,
         "ExtransTurn" => 36,
         "ExtransRotate" => 37,
         "ExtransRipple" => 38,
         "ExtNagano" => 39,
-        "LayerExLight" => 23,
-        "LayerExColorize" => 24,
-        "LayerExModulate" => 25,
-        "LayerExNoise" => 26,
-        "LayerExWhiteNoise" => 27,
-        "LayerExGaussianH" => 28,
-        "LayerExGaussianV" => 29,
+        "LayerExImageLight" => 23,
+        "LayerExImageColorize" => 24,
+        "LayerExImageModulate" => 25,
+        "LayerExImageNoise" => 26,
+        "LayerExImageWhiteNoise" => 27,
+        "LayerExImageGaussianH" => 28,
+        "LayerExImageGaussianV" => 29,
         "FillARGB" => 1,
         "FillColor" => 2,
         "FillMask" => 3,
@@ -1084,7 +1228,7 @@ pub(crate) fn color_video(
     if texture.size() != image.0.size() {
         return Err("video texture dimensions do not match".into());
     }
-    let mut command: RenderCommand = unsafe { std::mem::zeroed() };
+    let mut command: RenderCommand = unsafe { std::mem::zeroed() }; // onp还有这种初始化的
     command.method = c"VideoColor".as_ptr();
     command.target = target;
     command.rect = [0, 0, texture.width() as i32, texture.height() as i32];
