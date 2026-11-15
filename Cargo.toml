@@ -11,7 +11,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-bevy = { version = "0.20", default-features = false, features = ["2d", "jpeg", "default_font", "android-game-activity"] }
+bevy = { version = "0.20", default-features = false, features = ["2d", "jpeg", "default_font"] }
 thiserror = "2"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -21,7 +21,7 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-2.0-or-later"
 description = "Bevy integration layer for Kirikiri2 / KAG3 (via Kirikiroid2 FFI)"
-repository  = "https://github.com/your-org/bevy_krkr"
+repository  = "https://github.com/C0j23T/bevy_krkr"
 keywords    = ["bevy", "visual-novel", "kirikiri", "kag"]
 categories  = ["game-engines"]
 
@@ -60,5 +60,5 @@ path = "examples/extrans_showcase.rs"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
-# strip = true
+strip = true
 opt-level = "z"

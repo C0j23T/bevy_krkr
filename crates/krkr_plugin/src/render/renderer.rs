@@ -352,6 +352,7 @@ impl KrkrRenderer {
 
     fn flush(&mut self) {
         if let Some(encoder) = self.encoder.take() {
+            let _submission = super::surface_sync::lock();
             self.queue.submit([encoder.finish()]);
         }
         self.pending = 0;

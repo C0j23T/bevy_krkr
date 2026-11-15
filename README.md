@@ -64,7 +64,7 @@ System requirements (found through pkg-config): a C++17 compiler, libclang
 ## Rendering
 
 Bevy owns all GPU textures. Kirikiroid2 sends decoded pixels, glyph masks and
-texture commands through `BevyRender.cpp`; `render/gpu.rs` executes them using
+texture commands through `BevyRender.cpp`; `render/renderer.rs` executes them using
 Bevy's `RenderDevice` and `RenderQueue`. The WESL kernels handle fills, copies,
 blend modes, transforms, blur, gamma and transition masks. Layer groups are
 composited before applying their opacity. The final GPU texture is registered
@@ -74,6 +74,13 @@ as a Bevy `GpuImage` and displayed by `KirikiriCamera`.
 for explicit script pixel access or `render::read_pixels`, used by GPU tests.
 Raw FFI hosts must initialize the renderer with `render::initialize` before
 creating layers. `BevyKrkrPlugin` does this automatically.
+
+`KrkrRenderPlugin` synchronizes Kirikiri queue submissions with Bevy's surface
+creation and acquisition systems, including resize and outdated-surface recovery.
+Pipelined rendering remains enabled; surface configuration holds the same lock
+as Kirikiri's `Queue::submit`, preventing submissions during wgpu's GPU-idle wait.
+Raw FFI hosts that only call `render::initialize` must coordinate their own
+surface configuration with submissions, or install `KrkrRenderPlugin`.
 
 ## Building
 
@@ -191,7 +198,8 @@ use bevy::prelude::*;
 use bevy_krkr::prelude::*;
 
 App::new()
-    .add_plugins((DefaultPlugins, BevyKrkrPlugin::default()))
+    .add_plugins(DefaultPlugins)
+    .add_plugins(BevyKrkrPlugin::default())
     .add_systems(Startup, |mut commands: Commands, mut enter: MessageWriter<KirikiriEnterEvent>| {
         commands.spawn((Camera2d, KirikiriCamera)); // you own the camera
         enter.write(KirikiriEnterEvent { data_xp3_path: "data.xp3".into() });

@@ -2,6 +2,7 @@
 mod operations;
 mod renderer;
 mod shader;
+mod surface_sync;
 pub(crate) mod video;
 
 use bevy::{
@@ -77,6 +78,9 @@ impl Plugin for KrkrRenderPlugin {
             app.world().resource::<RenderDevice>().clone(),
             app.world().resource::<RenderQueue>().clone(),
         );
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            surface_sync::install(render_app);
+        }
     }
 }
 
