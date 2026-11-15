@@ -10,6 +10,10 @@ krkr_sys    = { path = "../krkr_sys" }
 krkr_script = { path = "../krkr_script" }
 cpal        = "0.18"
 bevy        = { workspace = true }
+wgpu = { version = "30", default-features = false }
+wgpu-hal = { version = "30", default-features = false, features = ["vulkan", "metal"] }
+wgpu-types = "30"
+libc = "0.2"
 krkr_shim = { path = "../krkr_shim" }
 bytemuck = { version = "1", features = ["derive"] }
 ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-scaling", "software-resampling"], optional = true }

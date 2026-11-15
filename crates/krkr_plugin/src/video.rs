@@ -111,7 +111,7 @@ impl Player {
         if self.target != 0
             && let Some(image) = &self.image
         {
-            // crate::render::gpu::color_video(self.target, image, self.color)?;
+            crate::render::video::color_video(self.target, image, self.color)?;
             self.state.events |= UPDATED;
         }
         Ok(())
@@ -159,13 +159,14 @@ impl Player {
             audio::update(self.id, self.anchor, false, self.rate, false);
         }
         if let Some(frame) = present {
-            /* crate::render::gpu::upload_video(
+            crate::render::video::upload_video(
                 &mut self.image,
                 frame.width,
                 frame.height,
                 frame.pitch,
+                frame.native.as_ref(),
                 frame.pixels.data(0),
-            )?; */
+            )?;
             self.render()?;
             self.state.position = frame.time;
             self.state.frame = (frame.time * self.state.fps).round().max(0.0) as u64;

@@ -22,7 +22,7 @@ use bevy::{
             TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor,
             TextureViewDimension,
         },
-        renderer::{RenderDevice, RenderQueue},
+        renderer::{RenderAdapter, RenderDevice, RenderQueue},
         texture::GpuImage,
     },
     shader::{Shader, ShaderCache, ShaderCacheSource},
@@ -46,7 +46,16 @@ const TEXTURE_POOL_MAX_PER_SIZE: usize = 2;
 static GAUSSIAN_WEIGHTS: LazyLock<Mutex<GaussianWeightCache>> =
     LazyLock::new(|| Mutex::new(GaussianWeightCache::default()));
 
-pub fn initialize(device: RenderDevice, queue: RenderQueue) {
+pub fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Option<RenderAdapter>) {
+    #[cfg(feature = "video-ffmpeg")]
+    if let Some(adapter) = &adapter {
+        bevy::log::info!(
+            "video GPU import: {}",
+            super::video::probe(&device, adapter)
+        );
+    }
+    #[cfg(feature = "video-ffmpeg")]
+    super::video::initialize(device.clone(), queue.clone());
     let mut renderer = RENDERER_INSTANCE.lock().unwrap();
     assert!(
         renderer.as_ref().is_none_or(|g| g.textures.is_empty()),
@@ -68,6 +77,33 @@ pub fn flush() {
     if let Some(renderer) = RENDERER_INSTANCE.lock().unwrap().as_mut() {
         renderer.flush();
     }
+}
+
+#[cfg(feature = "video-ffmpeg")]
+pub(crate) fn color_video(target: u64, texture: &Texture, color: [f64; 4]) -> Result<(), String> {
+    let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
+    let renderer = guard.as_mut().ok_or("Bevy renderer is not initialized")?;
+    let destination = renderer.texture(target)?;
+    if destination.texture.size() != texture.size() {
+        return Err("video texture dimensions do not match".into());
+    }
+    let image = PooledTexture {
+        texture: texture.clone(),
+        default_view: texture.create_view(&TextureViewDescriptor::default()),
+        srgb_view: Arc::new(OnceLock::new()),
+    };
+    let mut command: RenderCommand = unsafe { std::mem::zeroed() };
+    command.method = c"VideoColor".as_ptr();
+    command.target = target;
+    command.rect = [
+        0,
+        0,
+        destination.texture.width() as i32,
+        destination.texture.height() as i32,
+    ];
+    command.source_rects[0] = command.rect.map(|value| value as f32);
+    command.parameters[4..8].copy_from_slice(&color.map(|value| value as f32));
+    renderer.draw(&command, Some(image))
 }
 
 pub fn image(id: u64) -> Option<GpuImage> {

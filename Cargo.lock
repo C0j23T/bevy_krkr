@@ -3827,7 +3827,11 @@ dependencies = [
  "krkr_script",
  "krkr_shim",
  "krkr_sys",
+ "libc",
  "wesl",
+ "wgpu",
+ "wgpu-hal",
+ "wgpu-types",
 ]
 
 [[package]]

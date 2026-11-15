@@ -16,7 +16,7 @@ use bevy::{
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::{RenderAssets, prepare_assets},
         render_resource::{Extent3d, TextureDimension, TextureFormat},
-        renderer::{RenderDevice, RenderQueue},
+        renderer::{RenderAdapter, RenderDevice, RenderQueue},
         texture::GpuImage,
     },
     sprite::{Anchor, SpriteAlphaMode},
@@ -75,9 +75,10 @@ impl Plugin for KrkrRenderPlugin {
         }
     }
     fn finish(&self, app: &mut App) {
-        initialize(
+        initialize_with_adapter(
             app.world().resource::<RenderDevice>().clone(),
             app.world().resource::<RenderQueue>().clone(),
+            app.world().resource::<RenderAdapter>().clone(),
         );
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             surface_sync::install(render_app);
@@ -100,7 +101,11 @@ pub(crate) fn reset(world: &mut World) {
 }
 
 pub fn initialize(device: RenderDevice, queue: RenderQueue) {
-    renderer::initialize(device, queue);
+    renderer::initialize(device, queue, None);
+}
+
+fn initialize_with_adapter(device: RenderDevice, queue: RenderQueue, adapter: RenderAdapter) {
+    renderer::initialize(device, queue, Some(adapter));
 }
 
 /* pub fn texture_usage() -> (usize, u64) {

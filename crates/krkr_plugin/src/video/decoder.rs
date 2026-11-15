@@ -38,6 +38,7 @@ struct AudioDecoder {
 
 pub struct Frame {
     pub pixels: frame::Video,
+    pub native: Option<frame::Video>,
     pub width: u32,
     pub height: u32,
     pub pitch: u32,
@@ -285,6 +286,7 @@ impl Decoder {
                 pts as f64 * self.time_base - self.start
             });
         self.next_time = time + 1.0 / self.fps;
+        let native = native_video_frame(&decoded);
         let mut transferred = frame::Video::empty();
         if self.hardware
             && !cfg!(target_os = "android")
@@ -353,10 +355,42 @@ impl Decoder {
         Ok(Some(Frame {
             pitch: rgba.stride(0) as u32,
             pixels: rgba,
+            native,
             width: self.width,
             height: self.height,
             time,
         }))
+    }
+}
+
+fn native_video_frame(decoded: &frame::Video) -> Option<frame::Video> {
+    if unsafe { (*decoded.as_ptr()).hw_frames_ctx.is_null() } {
+        return None;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut drm = frame::Video::empty();
+        let result = unsafe {
+            ffi::av_hwframe_map(
+                drm.as_mut_ptr(),
+                decoded.as_ptr(),
+                ffi::AV_HWFRAME_MAP_READ as i32,
+            )
+        };
+        if result >= 0 && drm.format() == format::Pixel::DRM_PRIME {
+            return Some(drm);
+        }
+        return None;
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let mut retained = frame::Video::empty();
+        let result = unsafe { ffi::av_frame_ref(retained.as_mut_ptr(), decoded.as_ptr()) };
+        (result >= 0).then_some(retained)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "ios")))]
+    {
+        None
     }
 }
 
