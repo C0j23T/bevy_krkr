@@ -22,7 +22,7 @@ use bevy::{
             TextureUsages, TextureViewDescriptor, TextureViewDimension,
         },
         renderer::{RenderDevice, RenderQueue},
-        texture::{CachedTexture, TextureCache},
+        texture::{CachedTexture, GpuImage, TextureCache},
     },
     shader::{Shader, ShaderCache, ShaderCacheSource},
 };
@@ -36,34 +36,63 @@ static SIMD_LEVEL: LazyLock<SimdLevel> = LazyLock::new(|| SimdLevel::new());
 static EMPTY_TEXTURE: OnceLock<CachedTexture> = OnceLock::new();
 static NAGANO_RECORDS_DUMMY: OnceLock<Buffer> = OnceLock::new();
 static NAGANO_TABLES_DUMMY: OnceLock<Buffer> = OnceLock::new();
+static RENDERER_INSTANCE: Mutex<Option<KrkrRenderer>> = Mutex::new(None);
+
 const GAUSSIAN_WEIGHT_CACHE_CAPACITY: usize = 64;
 
 static GAUSSIAN_WEIGHTS: LazyLock<Mutex<GaussianWeightCache>> =
     LazyLock::new(|| Mutex::new(GaussianWeightCache::default()));
 
-#[derive(Default)]
-struct GaussianWeightCache {
-    entries: HashMap<u32, Arc<[f32]>>,
-    insertion_order: VecDeque<u32>,
+pub fn initialize(device: RenderDevice, queue: RenderQueue) {
+    let mut renderer = RENDERER_INSTANCE.lock().unwrap();
+    assert!(
+        renderer.as_ref().is_none_or(|g| g.textures.is_empty()),
+        "a Kirikiri renderer is already active"
+    );
+    *renderer = Some(KrkrRenderer::new(device, queue));
+
+    unsafe fn dispatch(command: &mut RenderCommand) -> Result<(), String> {
+        let mut renderer = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
+        let renderer = renderer
+            .as_mut()
+            .ok_or("Bevy renderer is not initialized")?;
+        unsafe { renderer.execute(command) }
+    }
+    krkr_shim::render::set_render_sink(dispatch);
 }
 
-impl GaussianWeightCache {
-    fn get(&self, key: u32) -> Option<Arc<[f32]>> {
-        self.entries.get(&key).cloned()
+pub fn flush() {
+    if let Some(renderer) = RENDERER_INSTANCE.lock().unwrap().as_mut() {
+        renderer.flush();
     }
+}
 
-    fn insert(&mut self, key: u32, weights: Arc<[f32]>) {
-        if self.entries.contains_key(&key) {
-            return;
-        }
-        if self.entries.len() == GAUSSIAN_WEIGHT_CACHE_CAPACITY {
-            if let Some(oldest) = self.insertion_order.pop_front() {
-                self.entries.remove(&oldest);
-            }
-        }
-        self.insertion_order.push_back(key);
-        self.entries.insert(key, weights);
-    }
+pub fn image(id: u64) -> Option<GpuImage> {
+    let mut renderer = RENDERER_INSTANCE.lock().unwrap();
+    let renderer = renderer.as_mut()?;
+    
+    let texture = renderer.textures.get(&id)?.clone();
+    let mut texture_descriptor = descriptor(texture.texture.width(), texture.texture.height());
+    texture_descriptor.usage = TextureUsages::COPY_SRC
+        | TextureUsages::COPY_DST
+        | TextureUsages::TEXTURE_BINDING
+        | TextureUsages::STORAGE_BINDING;
+    let image = GpuImage {
+        texture_view: texture.texture.create_view(&TextureViewDescriptor {
+            format: Some(TextureFormat::Rgba8UnormSrgb),
+            ..Default::default()
+        }),
+        texture: texture.texture,
+        sampler: renderer.device.create_sampler(&Default::default()),
+        texture_descriptor,
+        texture_view_descriptor: None,
+        had_data: false,
+    };
+
+    renderer.flush();
+    renderer.update();
+
+    Some(image)
 }
 
 struct KrkrRenderer {
@@ -1292,6 +1321,31 @@ fn mapping(destination: &[f32; 8], source: &[f32; 8], vertices: u32) -> Result<M
         return Err("degenerate texture transform".into());
     }
     Ok(b * a.inverse())
+}
+
+#[derive(Default)]
+struct GaussianWeightCache {
+    entries: HashMap<u32, Arc<[f32]>>,
+    insertion_order: VecDeque<u32>,
+}
+
+impl GaussianWeightCache {
+    fn get(&self, key: u32) -> Option<Arc<[f32]>> {
+        self.entries.get(&key).cloned()
+    }
+
+    fn insert(&mut self, key: u32, weights: Arc<[f32]>) {
+        if self.entries.contains_key(&key) {
+            return;
+        }
+        if self.entries.len() == GAUSSIAN_WEIGHT_CACHE_CAPACITY {
+            if let Some(oldest) = self.insertion_order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+        self.insertion_order.push_back(key);
+        self.entries.insert(key, weights);
+    }
 }
 
 fn gaussian_weights(radius: f32) -> Result<Arc<[f32]>, String> {
