@@ -1,7 +1,8 @@
-pub(crate) mod gpu;
-mod shader;
-pub mod renderer;
+// pub(crate) mod gpu;
 mod operations;
+mod renderer;
+mod shader;
+pub(crate) mod video;
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -9,13 +10,15 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderSystems,
+        erased_render_asset::prepare_erased_assets,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
-        render_asset::RenderAssets,
+        render_asset::{RenderAssets, prepare_assets},
         render_resource::{Extent3d, TextureDimension, TextureFormat},
         renderer::{RenderDevice, RenderQueue},
         texture::GpuImage,
     },
     sprite::{Anchor, SpriteAlphaMode},
+    sprite_render::{MeshMaterial2d, SpriteMeshMaterial},
     window::PrimaryWindow,
 };
 use krkr_sys as sys;
@@ -60,7 +63,13 @@ impl Plugin for KrkrRenderPlugin {
                     .before(bevy::asset::AssetEventSystems),
             );
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.add_systems(Render, import_texture.in_set(RenderSystems::PrepareAssets));
+            render_app.add_systems(
+                Render,
+                import_texture
+                    .in_set(RenderSystems::PrepareAssets)
+                    .after(prepare_assets::<GpuImage>)
+                    .before(prepare_erased_assets::<MeshMaterial2d<SpriteMeshMaterial>>),
+            );
         }
     }
     fn finish(&self, app: &mut App) {
@@ -86,20 +95,20 @@ pub(crate) fn reset(world: &mut World) {
 }
 
 pub fn initialize(device: RenderDevice, queue: RenderQueue) {
-    gpu::initialize(device, queue);
+    renderer::initialize(device, queue);
 }
 
-pub fn texture_usage() -> (usize, u64) {
+/* pub fn texture_usage() -> (usize, u64) {
     gpu::texture_usage()
-}
+} */
 
 pub fn flush() {
-    gpu::flush();
+    renderer::flush();
 }
 
-pub fn read_pixels(texture: u64) -> Result<Vec<u8>, String> {
+/* pub fn read_pixels(texture: u64) -> Result<Vec<u8>, String> {
     gpu::read_pixels(texture)
-}
+} */
 
 fn setup_camera(
     mut commands: Commands,
@@ -120,17 +129,19 @@ fn import_texture(
     mut images: ResMut<RenderAssets<GpuImage>>,
     mut previous: Local<Option<AssetId<Image>>>,
 ) {
-    let current = scene.0.as_ref().map(|(handle, _)| handle.id());
-    if *previous != current
-        && let Some(id) = previous.take()
-    {
-        images.remove(id);
+    if !scene.is_changed() {
+        return;
     }
-
+    let current = scene.0.as_ref().map(|(handle, _)| handle.id());
+    if *previous != current {
+        if let Some(id) = previous.take() {
+            images.remove(id);
+        }
+        *previous = current;
+    }
     if let Some((handle, image)) = &scene.0 {
         images.insert(handle.id(), image.clone());
     }
-    *previous = current;
 }
 
 fn show_scene(
@@ -141,18 +152,21 @@ fn show_scene(
     mut scene: ResMut<KirikiriScene>,
     mut texture: ResMut<SceneTexture>,
     mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<SpriteMeshMaterial>>,
+    screen_materials: Query<&MeshMaterial2d<SpriteMeshMaterial>, With<KirikiriScreen>>,
 ) {
     let (mut width, mut height) = (0, 0);
     let id = screen.as_ref().map_or(0, |screen| unsafe {
         sys::krkr_scene_build(screen.as_ptr(), &mut width, &mut height)
     });
     if id == 0 || width <= 0 || height <= 0 {
-        gpu::flush();
+        flush();
         scene.clear(&mut commands);
         texture.0 = None;
         return;
     }
-    let Some(image) = gpu::image(id) else {
+
+    let Some(image) = renderer::image(id) else {
         return;
     };
     let size = UVec2::new(width as u32, height as u32);
@@ -170,16 +184,21 @@ fn show_scene(
         )));
     }
     scene.size = size;
+
     // The frame is presented one texel per screen pixel: the camera renders into
     // a viewport of exactly the frame size and its projection covers exactly that
     // viewport, so neither the window size nor the scale factor (HiDPI) scales the
     // sprite. Anything else resamples it, and a pattern of one-pixel rows comes out
     // as rows of alternating thickness.
-    let viewport_size = windows.single().map_or(size, |window| {
-        size.min(window.resolution.physical_size())
-    });
+    let viewport_size = windows
+        .single()
+        .map_or(size, |window| size.min(window.resolution.physical_size()));
     let offset = windows.single().map_or(UVec2::ZERO, |window| {
-        (window.resolution.physical_size().saturating_sub(viewport_size)) / 2
+        (window
+            .resolution
+            .physical_size()
+            .saturating_sub(viewport_size))
+            / 2
     });
     for (mut camera, mut projection) in &mut cameras {
         let viewport = Viewport {
@@ -204,17 +223,41 @@ fn show_scene(
             };
         }
     }
+
     let handle = scene.image.as_ref().unwrap().clone();
-    texture.0 = Some((handle.clone(), image));
-    let mut sprite = Sprite::from_image(handle);
-    sprite.custom_size = Some(size.as_vec2());
-    sprite.alpha_mode = SpriteAlphaMode::Opaque;
-    let transform = Transform::from_xyz(-(width as f32) / 2.0, height as f32 / 2.0, 0.0);
+    let binding_changed = texture
+        .0
+        .as_ref()
+        .is_none_or(|(previous_handle, previous)| {
+            previous_handle.id() != handle.id()
+                || previous.texture_view.id() != image.texture_view.id()
+                || previous.sampler.id() != image.sampler.id()
+        });
+    if binding_changed {
+        for material in &screen_materials {
+            if let Some(material) = materials.get_mut(&material.0) {
+                // Replacing a GpuImage does not rebuild an existing material binding.
+                material.into_inner();
+            }
+        }
+        texture.0 = Some((handle, image));
+    }
+
     if let Some(entity) = scene.entity {
         if resized {
+            let handle = scene.image.as_ref().unwrap().clone();
+            let mut sprite = Sprite::from_image(handle);
+            sprite.custom_size = Some(size.as_vec2());
+            sprite.alpha_mode = SpriteAlphaMode::Opaque;
+            let transform = Transform::from_xyz(-(width as f32) / 2.0, height as f32 / 2.0, 0.0);
             commands.entity(entity).insert((sprite, transform));
         }
     } else {
+        let handle = scene.image.as_ref().unwrap().clone();
+        let mut sprite = Sprite::from_image(handle);
+        sprite.custom_size = Some(size.as_vec2());
+        sprite.alpha_mode = SpriteAlphaMode::Opaque;
+        let transform = Transform::from_xyz(-(width as f32) / 2.0, height as f32 / 2.0, 0.0);
         scene.entity = Some(
             commands
                 .spawn((

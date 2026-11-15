@@ -63,7 +63,7 @@ struct Player {
     eof: bool,
     preview: bool,
     target: u64,
-    image: Option<crate::render::gpu::VideoTexture>,
+    image: Option<crate::render::video::VideoTexture>,
     color: [f64; 4],
     state: VideoState,
     clock: Instant,

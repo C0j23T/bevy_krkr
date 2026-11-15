@@ -132,15 +132,19 @@ impl Operation {
     }
 
     pub const fn to_operation(method: &str) -> Result<(Operation, u32, u32), &str> {
-        let mut kind = match method.as_bytes() {
-            [_base @ .., b'_', b'd'] => 1,
-            [_base @ .., b'_', b'a'] => 2,
-            _ => 0,
+        let opcode = Self::to_opcode(method);
+        let method = match method.as_bytes() {
+            [base @ .., b'_', b'H', b'D', b'A'] => base,
+            base => base,
+        };
+        let (method, mut kind) = match method {
+            [base @ .., b'_', b'd'] => (base, 1),
+            [base @ .., b'_', b'a'] => (base, 2),
+            base => (base, 0),
         };
         let mut blend = 0;
-        let opcode = Self::to_opcode(method);
 
-        if matches!(opcode, Operation::ALPHA_BLEND) {
+        if matches!(method, b"AdditiveAlphaBlend") {
             kind = match kind {
                 0 => 3,
                 1 => 5,
@@ -148,7 +152,7 @@ impl Operation {
             };
         }
         if matches!(opcode, Operation::PS_BLEND | Operation::NON_PS_BLEND) {
-            let base = match method.as_bytes() {
+            let base = match method {
                 [b'P', b's', base @ ..] => base,
                 base => base,
             };

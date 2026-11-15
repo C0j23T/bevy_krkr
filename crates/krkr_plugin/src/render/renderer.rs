@@ -1,7 +1,7 @@
 // krkr renderer
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap as StdHashMap, VecDeque},
     ffi::CStr,
     sync::{Arc, LazyLock, Mutex, OnceLock},
 };
@@ -16,13 +16,14 @@ use bevy::{
             Buffer, BufferBindingType, BufferDescriptor, BufferInitDescriptor, BufferUsages,
             CommandEncoder, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline,
             Extent3d, MapMode, Origin3d, PipelineLayoutDescriptor, PollType,
-            RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
-            StorageTextureAccess, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo,
-            TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
-            TextureUsages, TextureViewDescriptor, TextureViewDimension,
+            RawComputePipelineDescriptor, Sampler, ShaderModuleDescriptor, ShaderSource,
+            ShaderStages, StorageTextureAccess, TexelCopyBufferInfo, TexelCopyBufferLayout,
+            TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor, TextureDimension,
+            TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor,
+            TextureViewDimension,
         },
         renderer::{RenderDevice, RenderQueue},
-        texture::{CachedTexture, GpuImage, TextureCache},
+        texture::GpuImage,
     },
     shader::{Shader, ShaderCache, ShaderCacheSource},
 };
@@ -33,12 +34,14 @@ use crate::render::operations::Operation;
 
 static SIMD_LEVEL: LazyLock<SimdLevel> = LazyLock::new(|| SimdLevel::new());
 
-static EMPTY_TEXTURE: OnceLock<CachedTexture> = OnceLock::new();
+static EMPTY_TEXTURE: OnceLock<PooledTexture> = OnceLock::new();
 static NAGANO_RECORDS_DUMMY: OnceLock<Buffer> = OnceLock::new();
 static NAGANO_TABLES_DUMMY: OnceLock<Buffer> = OnceLock::new();
 static RENDERER_INSTANCE: Mutex<Option<KrkrRenderer>> = Mutex::new(None);
 
 const GAUSSIAN_WEIGHT_CACHE_CAPACITY: usize = 64;
+const TEXTURE_POOL_RETIRE_FRAMES: usize = 3;
+const TEXTURE_POOL_MAX_PER_SIZE: usize = 2;
 
 static GAUSSIAN_WEIGHTS: LazyLock<Mutex<GaussianWeightCache>> =
     LazyLock::new(|| Mutex::new(GaussianWeightCache::default()));
@@ -70,22 +73,23 @@ pub fn flush() {
 pub fn image(id: u64) -> Option<GpuImage> {
     let mut renderer = RENDERER_INSTANCE.lock().unwrap();
     let renderer = renderer.as_mut()?;
-    
+
     let texture = renderer.textures.get(&id)?.clone();
-    let mut texture_descriptor = descriptor(texture.texture.width(), texture.texture.height());
-    texture_descriptor.usage = TextureUsages::COPY_SRC
-        | TextureUsages::COPY_DST
-        | TextureUsages::TEXTURE_BINDING
-        | TextureUsages::STORAGE_BINDING;
+    let texture_descriptor = descriptor(texture.texture.width(), texture.texture.height());
+    let view_descriptor = TextureViewDescriptor {
+        format: Some(TextureFormat::Rgba8UnormSrgb),
+        usage: Some(TextureUsages::TEXTURE_BINDING),
+        ..Default::default()
+    };
     let image = GpuImage {
-        texture_view: texture.texture.create_view(&TextureViewDescriptor {
-            format: Some(TextureFormat::Rgba8UnormSrgb),
-            ..Default::default()
-        }),
+        texture_view: texture
+            .srgb_view
+            .get_or_init(|| texture.texture.create_view(&view_descriptor))
+            .clone(),
         texture: texture.texture,
-        sampler: renderer.device.create_sampler(&Default::default()),
+        sampler: renderer.sampler.clone(),
         texture_descriptor,
-        texture_view_descriptor: None,
+        texture_view_descriptor: Some(view_descriptor),
         had_data: false,
     };
 
@@ -101,15 +105,69 @@ struct KrkrRenderer {
     encoder: Option<CommandEncoder>,
     pending: usize,
 
-    textures: HashMap<u64, CachedTexture>,
-    texture_cache: TextureCache,
+    textures: HashMap<u64, PooledTexture>,
+    texture_pool: TexturePool,
     upload_buffer: Vec<u8>,
     parameter_scratch: Vec<[f32; 4]>,
 
     pipeline: ComputePipeline,
     layout: BindGroupLayout,
+    sampler: Sampler,
 
     ext_nagano: Option<ExtNaganoExtension>,
+}
+
+#[derive(Clone)]
+struct PooledTexture {
+    texture: Texture,
+    default_view: TextureView,
+    srgb_view: Arc<OnceLock<TextureView>>,
+}
+
+impl PooledTexture {
+    fn new(device: &RenderDevice, width: u32, height: u32) -> Self {
+        let texture = device.create_texture(&descriptor(width, height));
+        Self {
+            default_view: texture.create_view(&TextureViewDescriptor::default()),
+            texture,
+            srgb_view: Arc::new(OnceLock::new()),
+        }
+    }
+}
+
+#[derive(Default)]
+struct TexturePool {
+    available: StdHashMap<(u32, u32), Vec<PooledTexture>>,
+    retired: VecDeque<(usize, PooledTexture)>,
+}
+
+impl TexturePool {
+    fn acquire(&mut self, device: &RenderDevice, width: u32, height: u32) -> PooledTexture {
+        if let Some(texture) = self.available.get_mut(&(width, height)).and_then(Vec::pop) {
+            return texture;
+        }
+        PooledTexture::new(device, width, height)
+    }
+
+    fn retire(&mut self, texture: PooledTexture) {
+        self.retired
+            .push_back((TEXTURE_POOL_RETIRE_FRAMES, texture));
+    }
+
+    fn update(&mut self) {
+        for _ in 0..self.retired.len() {
+            let (frames, texture) = self.retired.pop_front().unwrap();
+            if frames <= 1 {
+                let size = (texture.texture.width(), texture.texture.height());
+                let available = self.available.entry(size).or_default();
+                if available.len() < TEXTURE_POOL_MAX_PER_SIZE {
+                    available.push(texture);
+                }
+            } else {
+                self.retired.push_back((frames - 1, texture));
+            }
+        }
+    }
 }
 
 struct ExtNaganoExtension {
@@ -132,30 +190,28 @@ impl KrkrRenderer {
                 }))
         });
 
-        let operations_shader = {
-            let shader_id = AssetId::<Shader>::Uuid {
-                uuid: uuid!("b321f2eb-6264-4520-afe6-1ee741255770"),
-            };
-            shaders.set_shader(
-                shader_id,
-                Shader::from_wesl(super::shader::compose(), "krkr/operations.wesl"),
-            );
-            shaders
-                .get(0, shader_id, &[])
-                .expect("compile Kirikiri operations shader")
+        let operations_id = AssetId::<Shader>::Uuid {
+            uuid: uuid!("b321f2eb-6264-4520-afe6-1ee741255770"),
         };
-        let ext_nagano_shader = {
-            let shader_id = AssetId::<Shader>::Uuid {
-                uuid: uuid!("469f2285-95a9-4659-be73-d7d5bacf54e3"),
-            };
-            shaders.set_shader(
-                shader_id,
-                Shader::from_wesl(include_str!("nagano.wesl"), "krkr/extNagano.wesl"),
-            );
-            shaders
-                .get(0, shader_id, &[])
-                .expect("compile extNagano shader")
+        shaders.set_shader(
+            operations_id,
+            Shader::from_wesl(super::shader::compose(), "krkr/operations.wesl"),
+        );
+
+        let nagano_id = AssetId::<Shader>::Uuid {
+            uuid: uuid!("469f2285-95a9-4659-be73-d7d5bacf54e3"),
         };
+        shaders.set_shader(
+            nagano_id,
+            Shader::from_wesl(include_str!("nagano.wesl"), "krkr/extNagano.wesl"),
+        );
+
+        let operations_shader = shaders
+            .get(0, operations_id, &[])
+            .expect("compile Kirikiri operations shader");
+        let ext_nagano_shader = shaders
+            .get(0, nagano_id, &[])
+            .expect("compile extNagano shader");
 
         let mut entries: Vec<_> = (0..4)
             .map(|binding| BindGroupLayoutEntry {
@@ -242,11 +298,7 @@ impl KrkrRenderer {
         });
 
         {
-            let texture = device.create_texture(&descriptor(1, 1));
-            let _ = EMPTY_TEXTURE.set(CachedTexture {
-                default_view: texture.create_view(&TextureViewDescriptor::default()),
-                texture,
-            });
+            let _ = EMPTY_TEXTURE.set(PooledTexture::new(&device, 1, 1));
 
             let placeholder = |label| {
                 device.create_buffer(&BufferDescriptor {
@@ -260,22 +312,24 @@ impl KrkrRenderer {
             let _ = NAGANO_TABLES_DUMMY.set(placeholder(Some("Kirikiri placeholder tables")));
         }
 
+        let sampler = device.create_sampler(&Default::default());
         Self {
             device,
             queue,
             encoder: None,
             pending: 0,
             textures: HashMap::new(),
-            texture_cache: TextureCache::default(),
+            texture_pool: TexturePool::default(),
             upload_buffer: Vec::new(),
             parameter_scratch: Vec::new(),
             pipeline,
             layout,
+            sampler,
             ext_nagano,
         }
     }
 
-    fn texture(&self, id: u64) -> Result<CachedTexture, String> {
+    fn texture(&self, id: u64) -> Result<PooledTexture, String> {
         if id == 0 {
             return EMPTY_TEXTURE
                 .get()
@@ -304,7 +358,7 @@ impl KrkrRenderer {
     }
 
     fn update(&mut self) {
-        self.texture_cache.update();
+        self.texture_pool.update();
     }
 
     unsafe fn upload(&mut self, c: &RenderCommand) -> Result<(), String> {
@@ -722,15 +776,16 @@ impl KrkrRenderer {
                 {
                     return Err(format!("invalid texture {w}x{h}, format {}", c.format));
                 }
-                self.textures.insert(
-                    c.target,
-                    self.texture_cache
-                        .get(&self.device, descriptor(w as u32, h as u32)),
-                );
+                let texture = self.texture_pool.acquire(&self.device, w as u32, h as u32);
+                if let Some(previous) = self.textures.insert(c.target, texture) {
+                    self.texture_pool.retire(previous);
+                }
             }
             // drop texture
             1 => {
-                self.textures.remove(&c.target);
+                if let Some(texture) = self.textures.remove(&c.target) {
+                    self.texture_pool.retire(texture);
+                }
             }
             // upload texture
             2 => unsafe {
@@ -818,17 +873,15 @@ impl KrkrRenderer {
 
     fn dispatch_compute(
         &mut self,
-        inputs: [CachedTexture; 4],
-        old: CachedTexture,
+        inputs: [PooledTexture; 4],
+        old: PooledTexture,
         data: &[[f32; 4]],
         dispatch_size: [u32; 2],
-        output: Option<CachedTexture>,
-    ) -> CachedTexture {
+        output: Option<PooledTexture>,
+    ) -> PooledTexture {
         let output = output.unwrap_or_else(|| {
-            self.texture_cache.get(
-                &self.device,
-                descriptor(old.texture.width(), old.texture.height()),
-            )
+            self.texture_pool
+                .acquire(&self.device, old.texture.width(), old.texture.height())
         });
 
         // not box blur
@@ -907,7 +960,7 @@ impl KrkrRenderer {
         output
     }
 
-    fn draw(&mut self, c: &RenderCommand, source: Option<CachedTexture>) -> Result<(), String> {
+    fn draw(&mut self, c: &RenderCommand, source: Option<PooledTexture>) -> Result<(), String> {
         if c.method.is_null() {
             return Err("missing texture operation".into());
         }
@@ -982,122 +1035,152 @@ impl KrkrRenderer {
 
         let mut gaussian_data = std::mem::take(&mut self.parameter_scratch);
         gaussian_data.clear();
-        let nagano_tables_only = operation == Operation::EXT_NAGANO && data[2][0] == 8.0;
-        let data: &[[f32; 4]] = if matches!(
-            operation,
-            Operation::LAYER_EX_RASTER | Operation::EXTRANS_WAVE
-        ) {
-            if c.data.is_null() || c.pitch != old.texture.height() as i32 {
-                return Err("invalid raster shifts".into());
-            }
-            let shifts =
-                unsafe { std::slice::from_raw_parts(c.data.cast::<f32>(), c.pitch as usize) };
-            gaussian_data.extend_from_slice(&data);
-            gaussian_data.extend(shifts.iter().map(|s| [*s, 0.0, 0.0, 0.0]));
-            &gaussian_data
-        } else if nagano_tables_only {
-            if c.pitch != 512 || c.data.is_null() {
-                return Err("invalid Nagano tables".into());
-            }
-            &data
-        } else if operation == Operation::EXT_NAGANO {
-            if c.pitch < 0 || c.pitch > 100_000_000 || (c.pitch > 0 && c.data.is_null()) {
-                return Err("invalid Nagano records".into());
-            }
-            gaussian_data.extend_from_slice(&data);
-            if c.pitch > 0 {
-                gaussian_data.extend_from_slice(unsafe {
-                    std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), c.pitch as usize)
-                });
-            }
-            &gaussian_data
-        } else if matches![
-            operation,
-            Operation::EXTRANS_TURN | Operation::EXTRANS_ROTATE
-        ] {
-            let expected = if operation == Operation::EXTRANS_TURN {
-                64 * 64 * 2
+        let result: Result<PooledTexture, String> = (|| {
+            let nagano_tables_only = operation == Operation::EXT_NAGANO && data[2][0] == 8.0;
+            let parameters: &[[f32; 4]] = if matches!(
+                operation,
+                Operation::LAYER_EX_RASTER | Operation::EXTRANS_WAVE
+            ) {
+                if c.data.is_null() || c.pitch != old.texture.height() as i32 {
+                    return Err("invalid raster shifts".into());
+                }
+                let shifts =
+                    unsafe { std::slice::from_raw_parts(c.data.cast::<f32>(), c.pitch as usize) };
+                gaussian_data.extend_from_slice(&data);
+                gaussian_data.extend(shifts.iter().map(|s| [*s, 0.0, 0.0, 0.0]));
+                &gaussian_data
+            } else if nagano_tables_only {
+                if c.pitch != 512 || c.data.is_null() {
+                    return Err("invalid Nagano tables".into());
+                }
+                &data
+            } else if operation == Operation::EXT_NAGANO {
+                if c.pitch < 0 || c.pitch > 100_000_000 || (c.pitch > 0 && c.data.is_null()) {
+                    return Err("invalid Nagano records".into());
+                }
+                gaussian_data.extend_from_slice(&data);
+                if c.pitch > 0 {
+                    gaussian_data.extend_from_slice(unsafe {
+                        std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), c.pitch as usize)
+                    });
+                }
+                &gaussian_data
+            } else if matches![
+                operation,
+                Operation::EXTRANS_TURN | Operation::EXTRANS_ROTATE
+            ] {
+                let expected = if operation == Operation::EXTRANS_TURN {
+                    64 * 64 * 2
+                } else {
+                    c.parameters[6] as i32 * 10
+                };
+                if c.data.is_null() || c.pitch != expected || expected <= 0 {
+                    return Err("invalid transition geometry".into());
+                }
+                let records = unsafe {
+                    std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), expected as usize)
+                };
+                gaussian_data.extend_from_slice(&data);
+                gaussian_data.extend_from_slice(records);
+                &gaussian_data
+            } else if matches![
+                operation,
+                Operation::LAYER_EX_IMAGE_GAUSSIAN_H | Operation::LAYER_EX_IMAGE_GAUSSIAN_V
+            ] {
+                let weights = gaussian_weights(c.parameters[4])?;
+                data[3][1] = weights.len() as f32;
+                gaussian_data.extend_from_slice(&data);
+                gaussian_data.extend(weights.iter().map(|w| [*w, 0.0, 0.0, 0.0]));
+                &gaussian_data
             } else {
-                c.parameters[6] as i32 * 10
+                &data
             };
-            if c.data.is_null() || c.pitch != expected || expected <= 0 {
-                return Err("invalid transition geometry".into());
-            }
-            let records =
-                unsafe { std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), expected as usize) };
-            gaussian_data.extend_from_slice(&data);
-            gaussian_data.extend_from_slice(records);
-            &gaussian_data
-        } else if matches![
-            operation,
-            Operation::LAYER_EX_IMAGE_GAUSSIAN_H | Operation::LAYER_EX_IMAGE_GAUSSIAN_V
-        ] {
-            let weights = gaussian_weights(c.parameters[4])?;
-            data[3][1] = weights.len() as f32;
-            gaussian_data.extend_from_slice(&data);
-            gaussian_data.extend(weights.iter().map(|w| [*w, 0.0, 0.0, 0.0]));
-            &gaussian_data
-        } else {
-            &data
-        };
 
-        let dispatch_size = [width as u32, height as u32];
-        let output = if nagano_tables_only {
-            let mut ext_nagano = self.ext_nagano.take().unwrap();
-            let tables =
-                unsafe { std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), c.pitch as usize) };
-            let output =
-                ext_nagano.universal_3d(self, inputs, old.clone(), data, tables, dispatch_size);
-            self.ext_nagano = Some(ext_nagano);
-            output
-        } else if operation == Operation::EXT_NAGANO_BLUR_FADE && c.parameters[8] == 0.0 {
-            let mut ext_nagano = self.ext_nagano.take().unwrap();
-            let mut blur = |input: CachedTexture, rx: f32, ry: f32, first_slot: usize| {
-                let mut result = input;
-                if rx > 0.0 {
-                    result = ext_nagano.blur_box_pass(self, result, rx, true, first_slot);
-                }
-                if ry > 0.0 {
-                    result = ext_nagano.blur_box_pass(self, result, ry, false, first_slot + 1);
-                }
-                result
-            };
-            let source_blurred = blur(
-                inputs[0].clone(),
-                c.parameters[4] as f32,
-                c.parameters[5] as f32,
-                0,
-            );
-            let destination_blurred = blur(
-                inputs[1].clone(),
-                c.parameters[6] as f32,
-                c.parameters[7] as f32,
-                2,
-            );
-            self.ext_nagano = Some(ext_nagano);
-
-            gaussian_data[3] = [0.0; 4];
-            gaussian_data[4][0] = 1.0;
-            gaussian_data[4][1] = 1.0;
-            self.dispatch_compute(
-                [
-                    source_blurred,
-                    destination_blurred,
-                    inputs[2].clone(),
+            let dispatch_size = [width as u32, height as u32];
+            let output = if nagano_tables_only {
+                let mut ext_nagano = self.ext_nagano.take().unwrap();
+                let tables = unsafe {
+                    std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), c.pitch as usize)
+                };
+                let output = ext_nagano.universal_3d(
+                    self,
+                    inputs,
                     old.clone(),
-                ],
-                old.clone(),
-                &gaussian_data,
-                dispatch_size,
-                None,
-            )
-        } else {
-            self.dispatch_compute(inputs, old.clone(), data, dispatch_size, None)
-        };
+                    parameters,
+                    tables,
+                    dispatch_size,
+                );
+                self.ext_nagano = Some(ext_nagano);
+                output
+            } else if operation == Operation::EXT_NAGANO_BLUR_FADE && c.parameters[8] == 0.0 {
+                let mut ext_nagano = self.ext_nagano.take().unwrap();
+                let mut blur = |input: PooledTexture, rx: f32, ry: f32| {
+                    let mut result = input;
+                    let mut scratch = false;
+                    if rx > 0.0 {
+                        let next = ext_nagano.blur_box_pass(self, result.clone(), rx, true);
+                        if scratch {
+                            self.texture_pool.retire(result);
+                        }
+                        result = next;
+                        scratch = true;
+                    }
+                    if ry > 0.0 {
+                        let next = ext_nagano.blur_box_pass(self, result.clone(), ry, false);
+                        if scratch {
+                            self.texture_pool.retire(result);
+                        }
+                        result = next;
+                        scratch = true;
+                    }
+                    (result, scratch)
+                };
+                let (source_blurred, source_scratch) = blur(
+                    inputs[0].clone(),
+                    c.parameters[4] as f32,
+                    c.parameters[5] as f32,
+                );
+                let (destination_blurred, destination_scratch) = blur(
+                    inputs[1].clone(),
+                    c.parameters[6] as f32,
+                    c.parameters[7] as f32,
+                );
+                self.ext_nagano = Some(ext_nagano);
+
+                let mut final_data = data;
+                final_data[3] = [0.0; 4];
+                final_data[4][0] = 1.0;
+                final_data[4][1] = 1.0;
+                let output = self.dispatch_compute(
+                    [
+                        source_blurred.clone(),
+                        destination_blurred.clone(),
+                        inputs[2].clone(),
+                        old.clone(),
+                    ],
+                    old.clone(),
+                    &final_data,
+                    dispatch_size,
+                    None,
+                );
+                if source_scratch {
+                    self.texture_pool.retire(source_blurred);
+                }
+                if destination_scratch {
+                    self.texture_pool.retire(destination_blurred);
+                }
+                output
+            } else {
+                self.dispatch_compute(inputs, old.clone(), parameters, dispatch_size, None)
+            };
+            Ok(output)
+        })();
 
         self.parameter_scratch = gaussian_data;
 
-        self.textures.insert(c.target, output);
+        if let Some(previous) = self.textures.insert(c.target, result?) {
+            self.texture_pool.retire(previous);
+        }
         if self.pending >= 64 {
             self.flush();
         }
@@ -1110,11 +1193,10 @@ impl ExtNaganoExtension {
     fn blur_box_pass(
         &mut self,
         renderer: &mut KrkrRenderer,
-        input: CachedTexture,
+        input: PooledTexture,
         radius: f32,
         horizontal: bool,
-        slot: usize,
-    ) -> CachedTexture {
+    ) -> PooledTexture {
         let mut data = [[0.0; 4]; 26];
         data[0] = [
             0.0,
@@ -1125,9 +1207,10 @@ impl ExtNaganoExtension {
         data[1][0] = if horizontal { 40.0 } else { 41.0 };
         data[3][if horizontal { 0 } else { 1 }] = radius;
 
-        let output = renderer.texture_cache.get(
+        let output = renderer.texture_pool.acquire(
             &renderer.device,
-            descriptor(input.texture.width(), input.texture.height()),
+            input.texture.width(),
+            input.texture.height(),
         );
         let dispatch_size = [input.texture.width(), input.texture.height()];
         renderer.dispatch_compute(
@@ -1142,16 +1225,16 @@ impl ExtNaganoExtension {
     fn universal_3d(
         &mut self,
         renderer: &mut KrkrRenderer,
-        inputs: [CachedTexture; 4],
-        old: CachedTexture,
+        inputs: [PooledTexture; 4],
+        old: PooledTexture,
         data: &[[f32; 4]],
         tables: &[[f32; 4]],
         dispatch_size: [u32; 2],
-    ) -> CachedTexture {
+    ) -> PooledTexture {
         let (width, height) = (old.texture.width(), old.texture.height());
         let output = renderer
-            .texture_cache
-            .get(&renderer.device, descriptor(width, height));
+            .texture_pool
+            .acquire(&renderer.device, width, height);
 
         renderer.encoder().copy_texture_to_texture(
             old.texture.as_image_copy(),
