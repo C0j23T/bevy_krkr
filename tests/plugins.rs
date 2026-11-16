@@ -42,6 +42,8 @@ fn every_plugin_attaches_on_link() {
         ("saveStruct.dll", "(new Array()).toStructString"),
         ("win32dialog.dll", "global.WIN32Dialog"),
         ("windowEx.dll", "Window.getWindowRect"),
+        ("gfxFire.dll", "global.gfxFire"),
+        ("layerExAreaAverage.dll", "Layer.stretchCopyAA"),
     ];
     for (module, member) in expected {
         let before = engine.eval(&format!("typeof {member}")).unwrap();
@@ -212,4 +214,27 @@ fn every_plugin_attaches_on_link() {
             .expect("link built-in KAGParserEx");
     }
     assert_eq!(engine.eval("typeof (new KAGParser()).paramMacros").unwrap(), "Object");
+
+    engine
+        .exec_script(r#"Plugins.link("PackinOne.dll");"#, "link PackinOne")
+        .expect("Plugins.link(PackinOne.dll)");
+    for member in [
+        "fillAlpha",
+        "copyRightBlueToLeftAlpha",
+        "copyBottomBlueToTopAlpha",
+        "copyAlphaToProvince",
+        "clipAlphaRect",
+        "fillByProvince",
+        "shrinkCopy",
+        "shrinkCopyFast",
+    ] {
+        assert_eq!(
+            engine.eval(&format!("typeof Layer.{member}")).unwrap(),
+            "Object",
+            "PackinOne: Layer.{member}"
+        );
+    }
+    assert_eq!(engine.eval("typeof System.addFont").unwrap(), "Object");
+    assert_eq!(engine.eval("typeof Layer.light").unwrap(), "Object");
+    assert_eq!(engine.eval("typeof Layer.copyRaster").unwrap(), "Object");
 }
