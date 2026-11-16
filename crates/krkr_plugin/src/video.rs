@@ -75,6 +75,9 @@ struct Player {
     anchor: f64,
     rate: f64,
     loop_begin: Option<f64>,
+    imported_frames: u64,
+    cpu_frames: u64,
+    last_upload: Option<crate::render::video::UploadResult>,
 }
 
 impl Player {
@@ -135,7 +138,6 @@ impl Player {
                     let Some(output) = self.decoder.next()? else {
                         break;
                     };
-                    audio::push(self.id, output.audio);
                     output.frame
                 }
             };
@@ -143,11 +145,14 @@ impl Player {
                 self.eof = true;
                 break;
             };
-            if frame.time > position {
+            if frame.time > position && !(self.preview && self.state.status != 1) {
                 self.pending = Some(frame);
                 break;
             }
             present = Some(frame);
+            if self.preview && self.state.status != 1 {
+                break;
+            }
         }
         if self.state.status == 1
             && self.eof
@@ -176,19 +181,35 @@ impl Player {
                 frame.android.take(),
                 frame.pixels.as_ref().map(|pixels| pixels.data(0)),
             );
-            match uploaded {
-                Ok(crate::render::video::UploadResult::Imported) if frame.pixels.is_none() => {
-                    self.decoder.use_gpu_prefetch()?
+            let uploaded = match uploaded {
+                Ok(crate::render::video::UploadResult::Imported) => {
+                    self.decoder.use_gpu_prefetch()?;
+                    crate::render::video::UploadResult::Imported
                 }
-                Err(_error) if frame.pixels.is_none() => {
+                Err(error) if frame.pixels.is_none() => {
+                    warn!(
+                        "video path: player={} GPU import failed; requesting CPU fallback: {error}",
+                        self.id
+                    );
                     self.decoder.use_cpu_fallback()?;
                     return Ok(());
                 }
-                result => {
-                    result?;
-                }
-            }
+                result => result?,
+            };
             self.render()?;
+            match uploaded {
+                crate::render::video::UploadResult::Imported => self.imported_frames += 1,
+                crate::render::video::UploadResult::Cpu => self.cpu_frames += 1,
+            }
+            if self.last_upload != Some(uploaded)
+                || (self.imported_frames + self.cpu_frames) % 300 == 0
+            {
+                info!(
+                    "video path: player={} current={uploaded:?} imported_frames={} cpu_upload_frames={} pts={:.3}",
+                    self.id, self.imported_frames, self.cpu_frames, frame.time
+                );
+                self.last_upload = Some(uploaded);
+            }
             self.state.position = frame.time;
             self.state.frame = (frame.time * self.state.fps).round().max(0.0) as u64;
             self.preview = false;
@@ -212,8 +233,8 @@ unsafe fn dispatch(command: &mut VideoCommand) -> Result<(), String> {
             let state = decoder.state();
             let id = players.next;
             players.next = id.checked_add(1).ok_or("video handles exhausted")?;
-            let decoder = worker::Worker::new(decoder)?;
             audio::open(id);
+            let decoder = worker::Worker::new(decoder, id).inspect_err(|_| audio::close(id))?;
             players.players.insert(
                 id,
                 Player {
@@ -230,6 +251,9 @@ unsafe fn dispatch(command: &mut VideoCommand) -> Result<(), String> {
                     anchor: 0.0,
                     rate: 1.0,
                     loop_begin: None,
+                    imported_frames: 0,
+                    cpu_frames: 0,
+                    last_upload: None,
                 },
             );
             command.player = id;

@@ -3,7 +3,10 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use super::decoder::{AudioFrame, Decoder, Frame};
+use super::{
+    audio,
+    decoder::{Decoder, Frame},
+};
 
 enum Command {
     Seek(u64, f64),
@@ -21,7 +24,6 @@ enum Command {
 
 pub struct Output {
     pub frame: Option<Frame>,
-    pub audio: Vec<AudioFrame>,
 }
 
 type Message = (u64, Result<Output, String>);
@@ -32,17 +34,17 @@ pub struct Worker {
     epoch: u64,
     cpu_fallback: bool,
     gpu_confirmed: bool,
-    pending_audio: Vec<AudioFrame>,
+    audio_id: u64,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Worker {
-    pub fn new(decoder: Decoder) -> Result<Self, String> {
+    pub fn new(decoder: Decoder, audio_id: u64) -> Result<Self, String> {
         let (commands, receiver) = mpsc::channel();
         let (sender, frames) = mpsc::sync_channel(4);
         let thread = thread::Builder::new()
             .name("krkr-video".into())
-            .spawn(move || decode(decoder, receiver, sender))
+            .spawn(move || decode(decoder, receiver, sender, audio_id))
             .map_err(|e| e.to_string())?;
         Ok(Self {
             commands,
@@ -50,7 +52,7 @@ impl Worker {
             epoch: 0,
             cpu_fallback: false,
             gpu_confirmed: false,
-            pending_audio: Vec::new(),
+            audio_id,
             thread: Some(thread),
         })
     }
@@ -60,6 +62,7 @@ impl Worker {
             .epoch
             .checked_add(1)
             .ok_or("video seek sequence exhausted")?;
+        audio::reset(self.audio_id, self.epoch);
         self.commands
             .send(Command::Seek(self.epoch, seconds))
             .map_err(|e| e.to_string())?;
@@ -86,7 +89,6 @@ impl Worker {
         self.epoch = epoch;
         self.cpu_fallback = false;
         self.gpu_confirmed = false;
-        self.pending_audio.clear();
         Ok(state)
     }
 
@@ -96,19 +98,14 @@ impl Worker {
                 Ok((epoch, result)) => {
                     self.thread.as_ref().unwrap().thread().unpark();
                     if epoch == self.epoch {
-                        let mut output = result?;
+                        let output = result?;
                         if self.cpu_fallback
                             && output
                                 .frame
                                 .as_ref()
                                 .is_some_and(|frame| frame.pixels.is_none())
                         {
-                            self.pending_audio.append(&mut output.audio);
                             continue;
-                        }
-                        if !self.pending_audio.is_empty() {
-                            self.pending_audio.append(&mut output.audio);
-                            output.audio = std::mem::take(&mut self.pending_audio);
                         }
                         return Ok(Some(output));
                     }
@@ -130,13 +127,7 @@ impl Worker {
         self.thread.as_ref().unwrap().thread().unpark();
         confirmed.recv().map_err(|e| e.to_string())?;
         self.cpu_fallback = true;
-        while let Ok((epoch, result)) = self.frames.try_recv() {
-            if epoch == self.epoch
-                && let Ok(mut output) = result
-            {
-                self.pending_audio.append(&mut output.audio);
-            }
-        }
+        while self.frames.try_recv().is_ok() {}
         Ok(())
     }
 
@@ -163,13 +154,17 @@ impl Drop for Worker {
     }
 }
 
-fn decode(mut decoder: Decoder, commands: Receiver<Command>, frames: SyncSender<Message>) {
+fn decode(
+    mut decoder: Decoder,
+    commands: Receiver<Command>,
+    frames: SyncSender<Message>,
+    audio_id: u64,
+) {
     let mut scaler = None;
     let mut software_output = !decoder.hardware;
     let mut gpu_confirmed = false;
     let mut epoch = 0;
     let mut pending: Option<Message> = None;
-    let mut pending_audio = Vec::new();
     let mut ended = false;
     let mut seek_target = f64::NEG_INFINITY;
     loop {
@@ -187,6 +182,7 @@ fn decode(mut decoder: Decoder, commands: Receiver<Command>, frames: SyncSender<
                     .map(|()| decoder.state());
                 if result.is_ok() {
                     epoch = next;
+                    audio::reset(audio_id, epoch);
                     seek_target = seconds;
                     pending = None;
                     ended = false;
@@ -199,22 +195,17 @@ fn decode(mut decoder: Decoder, commands: Receiver<Command>, frames: SyncSender<
             Ok(Command::CpuFallback(reply)) => {
                 software_output = true;
                 gpu_confirmed = true;
-                if let Some((_, Ok(mut output))) = pending.take() {
-                    pending_audio.append(&mut output.audio);
-                }
+                pending = None;
                 let _ = reply.send(());
             }
             Ok(Command::GpuReady) => gpu_confirmed = true,
             Err(TryRecvError::Empty) => {}
         }
         if pending.is_none() && !ended {
-            let result = decoder.next(&mut scaler, software_output).map(|frame| {
-                pending_audio.append(&mut decoder.audio_frames);
-                Output {
-                    frame,
-                    audio: std::mem::take(&mut pending_audio),
-                }
-            });
+            let result = decoder
+                .next(&mut scaler, software_output)
+                .map(|frame| Output { frame });
+            audio::push(audio_id, epoch, std::mem::take(&mut decoder.audio_frames));
             ended = result
                 .as_ref()
                 .map_or(true, |output| output.frame.is_none());
@@ -241,5 +232,38 @@ fn decode(mut decoder: Decoder, commands: Receiver<Command>, frames: SyncSender<
             }
         }
         thread::park();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn pcm_reaches_mixer_without_render_thread_receiving_video() {
+        let id = u64::MAX - 1;
+        audio::open(id);
+        let decoder = Decoder::open(
+            include_bytes!("../../../../tests/fixtures/video.mp4").to_vec(),
+            false,
+        )
+        .unwrap();
+        let worker = Worker::new(decoder, id).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut audible = false;
+        while Instant::now() < deadline {
+            audio::update(id, 0.0, true, 1.0, true);
+            let mut pcm = vec![0.0; 2048];
+            audio::mix(&mut pcm, 48000.0);
+            if pcm.iter().any(|sample| sample.abs() > 0.01) {
+                audible = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        drop(worker);
+        audio::close(id);
+        assert!(audible, "PCM delivery depended on receiving a video frame");
     }
 }

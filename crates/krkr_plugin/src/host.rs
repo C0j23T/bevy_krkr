@@ -7,7 +7,7 @@
 use std::ffi::CString;
 
 use bevy::prelude::*;
-use krkr_script::{last_error, Tjs2Engine};
+use krkr_script::{Tjs2Engine, last_error};
 use krkr_sys as sys;
 
 /// TJS2 source of the host (`krkr_plugin/src/host.tjs`).

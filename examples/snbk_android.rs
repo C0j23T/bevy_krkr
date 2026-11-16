@@ -14,3 +14,6 @@
 
 #[path = "snbk.rs"]
 mod app;
+
+#[path = "android/storage_access.rs"]
+mod storage_access;

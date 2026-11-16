@@ -14,13 +14,17 @@ resolver = "2"
 bevy = { version = "0.20", default-features = false, features = ["2d", "jpeg", "default_font"] }
 thiserror = "2"
 
+[patch.crates-io]
+ffmpeg-sys-next = { path = "vendor/ffmpeg-sys-next" }
+wgpu-external-frame = { path = "vendor/video/wgpu-external-frame" }
+
 # ──────────────────────────────────────────────────────────────────────────────
 [package]
 name    = "bevy_krkr"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-2.0-or-later"
-description = "Bevy integration layer for Kirikiri2 / KAG3 (via Kirikiroid2 FFI)"
+description = "Bevy integration layer for Kirikiri2 (via Kirikiroid2 FFI)"
 repository  = "https://github.com/C0j23T/bevy_krkr"
 keywords    = ["bevy", "visual-novel", "kirikiri", "kag"]
 categories  = ["game-engines"]
@@ -37,8 +41,15 @@ krkr_sys    = { path = "crates/krkr_sys" }
 
 bevy = { workspace = true }
 
+[target.'cfg(target_os = "android")'.dependencies]
+bevy = { workspace = true }
+
 [dev-dependencies]
 bevy-inspector-egui = { git = "https://github.com/jakobhellermann/bevy-inspector-egui.git" }
+
+[target.'cfg(target_os = "android")'.dev-dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+jni = "0.21"
 
 [features]
 default  = ["real_ffi", "xp3filter", "opus", "video-ffmpeg"]
@@ -47,6 +58,7 @@ xp3filter = ["krkr_sys/plugin-xp3filter"]
 opus = ["krkr_sys/opus"]
 video-ffmpeg = ["krkr_plugin/video-ffmpeg"]
 video-bundled = ["video-ffmpeg", "krkr_plugin/video-bundled"]
+android-native-activity = ["bevy/android-native-activity"]
 
 [[example]]
 name = "snbk"
@@ -55,6 +67,11 @@ path = "examples/snbk.rs"
 [[example]]
 name = "snbk_android"
 path = "examples/snbk_android.rs"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "android_video"
+path = "examples/android_video.rs"
 crate-type = ["cdylib"]
 
 [[example]]

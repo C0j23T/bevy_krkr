@@ -1,6 +1,6 @@
 # 文件宿主层
 
-`krkr_storage` 提供同步文件系统 trait、dummy 与 Linux 实现及 C ABI。C++ 保留 TJS、Storage 名称归一化、AutoPath、归档与 `tTJSBinaryStream` 适配；Rust 拥有文件句柄、目录访问、元数据与文件修改。资源读取不依赖 Bevy ECS，调用期间不等待下一帧。
+`krkr_storage` 提供同步文件系统 trait、dummy、Linux 与 Android 文件系统实现及 C ABI。C++ 保留 TJS、Storage 名称归一化、AutoPath、归档与 `tTJSBinaryStream` 适配；Rust 拥有文件句柄、目录访问、元数据与文件修改。资源读取不依赖 Bevy ECS，调用期间不等待下一帧。
 
 ## 接口与平台
 
@@ -10,7 +10,7 @@ Linux 后端复用 Rust 标准库，独占重命名使用 `libc::renameat2`；�
 
 Storage 的空路径存在性检查返回 false；资源搜索未找到字体等可选文件时，不会把空路径解释成媒体名。`BevyKrkrPlugin` 在初始化前提供 Bevy 内置的 Fira Mono 字节；未找到其他字体时，FreeType 直接从内存注册该后备字体，无需临时文件。Fira Mono 子集不覆盖中文，游戏应自行提供中文字体。直接使用 FFI 的宿主可通过 `krkr_sys::font::set_fallback_font` 在启动前设置静态字体字节。
 
-Dummy 对文件访问返回 `Unsupported`，不会伪造读写成功。Linux 默认使用 Linux 后端，其他目标默认使用 dummy；宿主可在启动引擎前安装自己的 `Arc<dyn FileSystem>`。已打开的流独立拥有生命周期，不因更换后端失效。尚未实现 Android/iOS 后端、URI 授权或 Bevy AssetReader 适配，这些目标不能据此视为已可运行。
+Dummy 对文件访问返回 `Unsupported`，不会伪造读写成功。Linux 默认使用 Linux 后端，Android 默认使用 Android 后端，其他目标默认使用 dummy；宿主可在启动引擎前安装自己的 `Arc<dyn FileSystem>`。Android 后端使用宿主提供的应用私有目录作为可写根目录。共享外部存储的权限请求属于应用宿主，不属于 `krkr_storage`；Android 示例展示了相应流程，详见 [Android 示例](android.md)。已打开的流独立拥有生命周期，不因更换后端失效。尚未实现 URI 授权或 Bevy AssetReader 适配。
 
 ## ABI 与错误
 

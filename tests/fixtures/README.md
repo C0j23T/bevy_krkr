@@ -10,6 +10,13 @@ ffmpeg -f lavfi -i color=c=red:s=64x64:r=10:d=0.5 \
   -shortest -y video.mp4
 ```
 
+`video-44100.mp4` uses the same generated video with 44.1 kHz AAC audio to
+check that resampling to 48 kHz preserves a continuous PCM timeline.
+
+```sh
+ffmpeg -i video.mp4 -map 0:v -map 0:a -c:v copy -c:a aac -ar 44100 -y video-44100.mp4
+```
+
 `not-video.txt` exercises invalid media input.
 
 `multistream.mp4` contains red 64×64 and blue 32×32 H.264 streams and

@@ -1228,8 +1228,10 @@ dependencies = [
 name = "bevy_krkr"
 version = "0.1.0"
 dependencies = [
+ "android-activity",
  "bevy",
  "bevy-inspector-egui",
+ "jni 0.21.1",
  "krkr_plugin",
  "krkr_script",
  "krkr_sys",
@@ -2971,8 +2973,6 @@ dependencies = [
 [[package]]
 name = "ffmpeg-sys-next"
 version = "9.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "226c264da7fce6bd034bfc0b20f87ce4ecc97b3294c407503557910c05e43588"
 dependencies = [
  "bindgen 0.73.2",
  "cc",
@@ -6626,8 +6626,6 @@ dependencies = [
 [[package]]
 name = "wgpu-external-frame"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b0f57d53023798db6ab76e5d40053d57bc469abedb75131928bb8d6569b1d4a"
 dependencies = [
  "ash",
  "glow",

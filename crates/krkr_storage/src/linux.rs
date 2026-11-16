@@ -6,6 +6,18 @@ use std::{
 };
 
 pub struct LinuxFileSystem;
+#[cfg(target_os = "android")]
+pub struct AndroidFileSystem(std::path::PathBuf);
+#[cfg(target_os = "android")]
+impl Default for AndroidFileSystem {
+    fn default() -> Self {
+        Self(std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir))
+    }
+}
+#[cfg(target_os = "android")]
+impl AndroidFileSystem {
+    pub fn new(root: PathBuf) -> Self { Self(root) }
+}
 fn metadata(m: fs::Metadata) -> Metadata {
     Metadata {
         kind: if m.is_file() {
@@ -94,7 +106,7 @@ impl FileSystem for LinuxFileSystem {
                 source.as_ptr(),
                 libc::AT_FDCWD,
                 destination.as_ptr(),
-                libc::RENAME_NOREPLACE,
+                libc::RENAME_NOREPLACE as _,
             )
         };
         if result != 0 {
@@ -195,5 +207,25 @@ impl FileSystem for LinuxFileSystem {
             .join("bevy_krkr");
         fs::create_dir_all(&base)?;
         Ok(base)
+    }
+}
+
+#[cfg(target_os = "android")]
+impl FileSystem for AndroidFileSystem {
+    fn open(&self, path: &Path, mode: OpenMode) -> io::Result<Box<dyn FileStream>> { LinuxFileSystem.open(path, mode) }
+    fn metadata(&self, path: &Path) -> io::Result<Metadata> { LinuxFileSystem.metadata(path) }
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<Entry>> { LinuxFileSystem.read_dir(path) }
+    fn create_dir(&self, path: &Path, recursive: bool) -> io::Result<()> { LinuxFileSystem.create_dir(path, recursive) }
+    fn remove_file(&self, path: &Path) -> io::Result<()> { LinuxFileSystem.remove_file(path) }
+    fn remove_dir(&self, path: &Path) -> io::Result<()> { LinuxFileSystem.remove_dir(path) }
+    fn copy(&self, from: &Path, to: &Path, overwrite: bool) -> io::Result<()> { LinuxFileSystem.copy(from, to, overwrite) }
+    fn rename(&self, from: &Path, to: &Path, overwrite: bool) -> io::Result<()> { LinuxFileSystem.rename(from, to, overwrite) }
+    fn replace(&self, path: &Path, bytes: &[u8]) -> io::Result<()> { LinuxFileSystem.replace(path, bytes) }
+    fn resolve(&self, path: &Path, insensitive: bool) -> io::Result<PathBuf> { LinuxFileSystem.resolve(path, insensitive) }
+    fn set_modified(&self, path: &Path, seconds: i64) -> io::Result<()> { LinuxFileSystem.set_modified(path, seconds) }
+    fn writable_root(&self) -> io::Result<PathBuf> {
+        let root = self.0.join("bevy_krkr");
+        fs::create_dir_all(&root)?;
+        Ok(root)
     }
 }

@@ -70,6 +70,11 @@ blend modes, transforms, blur, gamma and transition masks. Layer groups are
 composited before applying their opacity. The final GPU texture is registered
 as a Bevy `GpuImage` and displayed by `KirikiriCamera`.
 
+The display layout uses the window's physical resolution on every platform.
+`KirikiriScreen` retains the game's image dimensions and uses `Transform.scale`
+to fit uniformly along the limiting axis, centered with the original aspect
+ratio preserved, updating when the window is resized.
+
 `krkr_scene_build` returns a GPU texture identity. Pixel readback happens only
 for explicit script pixel access or `render::read_pixels`, used by GPU tests.
 Raw FFI hosts must initialize the renderer with `render::initialize` before
@@ -117,12 +122,12 @@ scene compositor. Play, pause, stop, seek, rate, visibility, volume,
 balance, looping and frame/end events use the original `VideoOverlay` API.
 Playback rates also change audio pitch. Compressed files are held in memory.
 
-The hardware path selects VAAPI/CUDA/Vulkan on Linux, D3D11VA/CUDA on Windows,
-VideoToolbox on Apple platforms and MediaCodec on Android. The installed or
-supplied FFmpeg build must enable the chosen decoder. Hardware frames are
-transferred to CPU memory before the Rust GPU upload; native decoder surfaces
-are not imported into wgpu. Android uses NDK MediaCodec without a Java
-surface. Android/iOS builds and device playback have not been validated.
+The hardware path uses MediaCodec and Vulkan AHardwareBuffer import on Android,
+with software decoding as a fallback. Linux, Windows and Apple platforms use
+their available FFmpeg hardware decoders and the corresponding texture upload
+path. Android video frames stay on the GPU when external-buffer import works.
+The Kirikiri screen is uniformly scaled to fit the primary window's physical
+resolution and centered, preserving the game's aspect ratio.
 Audio and video streams can be counted and selected by their type-relative index.
 Layer buffers, mixing bitmaps, mixer properties, stop frames, audio disabling
 and color controls follow KRMoviePlayer's unsupported behavior.
@@ -229,6 +234,9 @@ data file (that game keeps its voice/CG/event images in **7z** archives) and
 runs the game's own start-up scripts. Its `startup.tjs` builds the game UI on a
 Kirikiri `Window`, whose layers the host draws like the script-created
 screen's.
+
+For an Android NativeActivity smoke-test host and integration details for
+embedding the library in a game's existing Bevy app, see [Android](docs/android.md).
 
 That archive's `startup.tjs` currently stops at `PSBFile` (see below), so it
 does not reach the game's own title screen yet; the example prints where it

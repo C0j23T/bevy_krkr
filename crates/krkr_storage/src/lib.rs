@@ -7,10 +7,12 @@ use std::{
 };
 
 pub mod ffi;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxFileSystem;
+#[cfg(target_os = "android")]
+pub use linux::AndroidFileSystem;
 
 #[derive(Clone, Copy, Debug)]
 pub enum OpenMode {
@@ -102,7 +104,9 @@ impl FileSystem for DummyFileSystem {}
 static BACKEND: LazyLock<RwLock<Arc<dyn FileSystem>>> = LazyLock::new(|| {
     #[cfg(target_os = "linux")]
     let backend: Arc<dyn FileSystem> = Arc::new(LinuxFileSystem);
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "android")]
+    let backend: Arc<dyn FileSystem> = Arc::new(AndroidFileSystem::default());
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let backend: Arc<dyn FileSystem> = Arc::new(DummyFileSystem);
     RwLock::new(backend)
 });

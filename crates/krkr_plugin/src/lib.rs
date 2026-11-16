@@ -26,13 +26,13 @@ pub mod render;
 #[cfg(feature = "video-ffmpeg")]
 pub mod video;
 
-use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 
 use bevy::app::AppExit;
 use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
-use krkr_script::{last_error, Tjs2Engine};
+use krkr_script::{Tjs2Engine, last_error};
 use krkr_sys as sys;
 
 pub use host::KrkrScreen;

@@ -36,13 +36,14 @@ struct AudioDecoder {
     stream: usize,
     time_base: f64,
     resampler: software::resampling::context::Context,
+    next_time: Option<f64>,
 }
 
 pub struct Frame {
     pub pixels: Option<frame::Video>,
     pub native: Option<frame::Video>,
     #[cfg(target_os = "android")]
-    pub android: Option<wgpu_external_frame::ahardware_buffer::HardwareBufferFrame>,
+    pub android: Option<crate::render::video::AndroidVideoFrame>,
     pub width: u32,
     pub height: u32,
     pub pitch: u32,
@@ -239,6 +240,7 @@ impl Decoder {
             output.discard_pending()?;
         }
         if let Some(audio) = &mut self.audio {
+            audio.next_time = None;
             audio.decoder.flush();
             unsafe {
                 ffi::swr_close(audio.resampler.as_mut_ptr());
@@ -264,6 +266,9 @@ impl Decoder {
         let mut discard_before = f64::NEG_INFINITY;
         #[cfg(target_os = "android")]
         if software_output && self.backend == "mediacodec" {
+            bevy::log::warn!(
+                "video path: replacing MediaCodec with software decoder for CPU fallback"
+            );
             let position = self.next_time;
             let stream = self
                 .input
@@ -345,10 +350,18 @@ impl Decoder {
         };
         self.next_time = time + 1.0 / self.fps;
         #[cfg(target_os = "android")]
-        let android = self
-            .android_output
-            .as_ref()
-            .and_then(|output| output.acquire(&decoded).ok());
+        let android =
+            self.android_output
+                .as_ref()
+                .and_then(|output| match output.acquire(&decoded) {
+                    Ok(frame) => Some(frame),
+                    Err(error) => {
+                        bevy::log::warn!(
+                            "video path: MediaCodec ImageReader acquire failed: {error}"
+                        );
+                        None
+                    }
+                });
         let native = native_video_frame(&decoded);
         if !software_output {
             return Ok(Some(Frame {
@@ -640,6 +653,7 @@ impl AudioDecoder {
                 stream: stream.index(),
                 time_base: f64::from(stream.time_base()),
                 resampler,
+                next_time: None,
             })
         };
         create().map_err(|e| e.to_string())
@@ -655,8 +669,14 @@ impl AudioDecoder {
                 Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => break,
                 Err(error) => return Err(error.to_string()),
             }
-            let time =
+            let input_time =
                 decoded.timestamp().or(decoded.pts()).unwrap_or(0) as f64 * self.time_base - start;
+            let delay = self.resampler.delay().map_or(0, |delay| delay.output);
+            let time = input_time - delay as f64 / 48000.0;
+            let time = self
+                .next_time
+                .filter(|next| (next - time).abs() < 0.001)
+                .unwrap_or(time);
             if decoded.rate() == 0 {
                 return Err("invalid audio sample rate".into());
             }
@@ -671,12 +691,15 @@ impl AudioDecoder {
             self.resampler
                 .run(&decoded, &mut pcm)
                 .map_err(|e| e.to_string())?;
-            let samples = pcm
+            let samples: Vec<f32> = pcm
                 .plane::<(f32, f32)>(0)
                 .iter()
                 .flat_map(|&(left, right)| [left, right])
                 .collect();
-            frames.push(AudioFrame { time, samples });
+            self.next_time = Some(time + pcm.samples() as f64 / 48000.0);
+            if !samples.is_empty() {
+                frames.push(AudioFrame { time, samples });
+            }
         }
         Ok(frames)
     }
@@ -685,6 +708,28 @@ impl AudioDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resampled_audio_has_no_gaps_between_frames() {
+        let mut decoder = Decoder::open(
+            include_bytes!("../../../../tests/fixtures/video-44100.mp4").to_vec(),
+            false,
+        )
+        .unwrap();
+        let mut scaler = None;
+        let mut end: Option<f64> = None;
+        let mut count = 0;
+        while decoder.next(&mut scaler, true).unwrap().is_some() {
+            for frame in std::mem::take(&mut decoder.audio_frames) {
+                if let Some(end) = end {
+                    assert!((frame.time - end).abs() < 1e-9, "gap: {}", frame.time - end);
+                }
+                end = Some(frame.time + frame.samples.len() as f64 / 96000.0);
+                count += 1;
+            }
+        }
+        assert!(count > 10);
+    }
 
     #[test]
     fn stream_selection_changes_decoded_video_and_audio() {

@@ -8,7 +8,7 @@ pub(crate) mod video;
 
 use bevy::{
     asset::RenderAssetUsages,
-    camera::{ScalingMode, Viewport, visibility::RenderLayers},
+    camera::{ScalingMode, visibility::RenderLayers},
     prelude::*,
     render::{
         Render, RenderApp, RenderSystems,
@@ -163,7 +163,10 @@ fn show_scene(
     mut texture: ResMut<SceneTexture>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<SpriteMeshMaterial>>,
-    screen_materials: Query<&MeshMaterial2d<SpriteMeshMaterial>, With<KirikiriScreen>>,
+    mut screen_materials: Query<
+        (&MeshMaterial2d<SpriteMeshMaterial>, &mut Transform),
+        With<KirikiriScreen>,
+    >,
 ) {
     let (mut width, mut height) = (0, 0);
     let id = screen.as_ref().map_or(0, |screen| unsafe {
@@ -195,42 +198,28 @@ fn show_scene(
     }
     scene.size = size;
 
-    // The frame is presented one texel per screen pixel: the camera renders into
-    // a viewport of exactly the frame size and its projection covers exactly that
-    // viewport, so neither the window size nor the scale factor (HiDPI) scales the
-    // sprite. Anything else resamples it, and a pattern of one-pixel rows comes out
-    // as rows of alternating thickness.
     let viewport_size = windows
         .single()
-        .map_or(size, |window| size.min(window.resolution.physical_size()));
-    let offset = windows.single().map_or(UVec2::ZERO, |window| {
-        (window
-            .resolution
-            .physical_size()
-            .saturating_sub(viewport_size))
-            / 2
-    });
+        .map_or(size, |window| window.resolution.physical_size());
+    if viewport_size.x == 0 || viewport_size.y == 0 {
+        return;
+    }
+    let scale = (viewport_size.as_vec2() / size.as_vec2()).min_element();
+    let displayed = size.as_vec2() * scale;
     for (mut camera, mut projection) in &mut cameras {
-        let viewport = Viewport {
-            physical_position: offset,
-            physical_size: viewport_size,
-            ..default()
-        };
-        let matches_viewport = camera.viewport.as_ref().is_some_and(|current| {
-            current.physical_position == viewport.physical_position
-                && current.physical_size == viewport.physical_size
-        });
-        if !matches_viewport {
-            camera.viewport = Some(viewport);
+        if camera.viewport.is_some() {
+            camera.viewport = None;
         }
-        if let Projection::Orthographic(orthographic) = &mut *projection
+        if let Projection::Orthographic(orthographic) = &*projection
             && !matches!(orthographic.scaling_mode, ScalingMode::Fixed { width, height }
                 if width == viewport_size.x as f32 && height == viewport_size.y as f32)
         {
-            orthographic.scaling_mode = ScalingMode::Fixed {
-                width: viewport_size.x as f32,
-                height: viewport_size.y as f32,
-            };
+            if let Projection::Orthographic(orthographic) = &mut *projection {
+                orthographic.scaling_mode = ScalingMode::Fixed {
+                    width: viewport_size.x as f32,
+                    height: viewport_size.y as f32,
+                };
+            }
         }
     }
 
@@ -244,7 +233,7 @@ fn show_scene(
                 || previous.sampler.id() != image.sampler.id()
         });
     if binding_changed {
-        for material in &screen_materials {
+        for (material, _) in &screen_materials {
             if let Some(material) = materials.get_mut(&material.0) {
                 // Replacing a GpuImage does not rebuild an existing material binding.
                 material.into_inner();
@@ -253,13 +242,19 @@ fn show_scene(
         texture.0 = Some((handle, image));
     }
 
+    let transform = Transform::from_xyz(-displayed.x / 2.0, displayed.y / 2.0, 0.0)
+        .with_scale(Vec3::new(scale, scale, 1.0));
+    for (_, mut current) in &mut screen_materials {
+        if *current != transform {
+            *current = transform;
+        }
+    }
     if let Some(entity) = scene.entity {
         if resized {
             let handle = scene.image.as_ref().unwrap().clone();
             let mut sprite = Sprite::from_image(handle);
             sprite.custom_size = Some(size.as_vec2());
             sprite.alpha_mode = SpriteAlphaMode::Opaque;
-            let transform = Transform::from_xyz(-(width as f32) / 2.0, height as f32 / 2.0, 0.0);
             commands.entity(entity).insert((sprite, transform));
         }
     } else {
@@ -267,7 +262,6 @@ fn show_scene(
         let mut sprite = Sprite::from_image(handle);
         sprite.custom_size = Some(size.as_vec2());
         sprite.alpha_mode = SpriteAlphaMode::Opaque;
-        let transform = Transform::from_xyz(-(width as f32) / 2.0, height as f32 / 2.0, 0.0);
         scene.entity = Some(
             commands
                 .spawn((

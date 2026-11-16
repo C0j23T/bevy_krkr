@@ -66,6 +66,9 @@ fn main() {
             _ => data = Some(arg),
         }
     }
+    #[cfg(target_os = "android")]
+    let data = data.unwrap_or_else(|| "/storage/emulated/0/bevy_krkr/game/data.xp3".into());
+    #[cfg(not(target_os = "android"))]
     let data = data.unwrap_or_else(|| DEFAULT_DATA.into());
     info!("snbk: data={data}");
 
@@ -89,6 +92,8 @@ fn main() {
         data,
         dump_log,
         startup_failed: false,
+        #[cfg(target_os = "android")]
+        storage_requested: false,
     })
     .add_systems(Startup, setup)
     .add_systems(Update, (start_game, log_window, exit_when_done))
@@ -100,6 +105,8 @@ struct Session {
     data: String,
     dump_log: Option<String>,
     startup_failed: bool,
+    #[cfg(target_os = "android")]
+    storage_requested: bool,
 }
 
 fn setup(mut commands: Commands, game: Res<Session>, mut enter: MessageWriter<KirikiriEnterEvent>) {
@@ -116,6 +123,37 @@ fn start_game(
     engine: Option<NonSend<Tjs2Engine>>,
     mut done: Local<bool>,
 ) {
+    #[cfg(target_os = "android")]
+    {
+        let Some(android_app) = bevy::android::ANDROID_APP.get() else { return };
+        let storage = crate::storage_access::StorageAccess::new(android_app);
+        match storage.has_external_storage_access() {
+            Ok(true) => {}
+            Ok(false) => {
+                if !game.storage_requested {
+                    game.storage_requested = true;
+                    if let Err(error) = storage.request_external_storage_access() {
+                        warn!("snbk: cannot request external storage access: {error}");
+                        game.startup_failed = true;
+                    }
+                }
+                return;
+            }
+            Err(error) => {
+                warn!("snbk: cannot check external storage access: {error}");
+                game.startup_failed = true;
+                return;
+            }
+        }
+        let Some(root) = android_app.internal_data_path() else {
+            warn!("snbk: Android internal data path is unavailable");
+            game.startup_failed = true;
+            return;
+        };
+        bevy_krkr::storage::set_filesystem(std::sync::Arc::new(
+            bevy_krkr::storage::AndroidFileSystem::new(root),
+        ));
+    }
     let Some(engine) = engine else { return };
     if *done {
         return;

@@ -3,3 +3,4 @@
 /editor
 /.vscode
 /.cargo
+/vendor/ffmpeg-sys-next/Cargo.lock

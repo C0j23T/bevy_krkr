@@ -30,11 +30,19 @@ struct VideoGpu {
     importer: Option<HardwareBufferImporter>,
     #[cfg(target_os = "android")]
     converter: Option<VideoYcbcrConverter>,
+    #[cfg(target_os = "android")]
+    import_format: Option<&'static str>,
 }
 
 #[cfg(target_os = "android")]
 pub(crate) struct AndroidVideoOutput {
     reader: std::sync::Arc<AndroidReader>,
+}
+
+#[cfg(target_os = "android")]
+pub(crate) struct AndroidVideoFrame {
+    buffer: HardwareBufferFrame,
+    crop: ndk::media::image_reader::CropRect,
 }
 
 #[cfg(target_os = "android")]
@@ -143,7 +151,7 @@ impl AndroidVideoOutput {
     pub(crate) fn acquire(
         &self,
         native: &ffmpeg_next::frame::Video,
-    ) -> Result<HardwareBufferFrame, String> {
+    ) -> Result<AndroidVideoFrame, String> {
         use ndk::media::image_reader::AcquireResult;
         use std::os::fd::OwnedFd;
 
@@ -169,12 +177,16 @@ impl AndroidVideoOutput {
             }
         };
         let buffer = image.hardware_buffer().map_err(|e| e.to_string())?;
-        Ok(
-            HardwareBufferFrame::new(&buffer, fence).with_lease(Box::new(AndroidImageLease {
-                _image: image,
-                _reader: self.reader.clone(),
-            })),
-        )
+        let crop = image.crop_rect().map_err(|e| e.to_string())?;
+        Ok(AndroidVideoFrame {
+            buffer: HardwareBufferFrame::new(&buffer, fence).with_lease(Box::new(
+                AndroidImageLease {
+                    _image: image,
+                    _reader: self.reader.clone(),
+                },
+            )),
+            crop,
+        })
     }
 
     pub(crate) fn discard_pending(&self) -> Result<(), String> {
@@ -209,26 +221,91 @@ pub(crate) fn android_import_available() -> bool {
 
 #[cfg(target_os = "android")]
 fn import_android(
-    frame: Option<HardwareBufferFrame>,
+    frame: Option<AndroidVideoFrame>,
     width: u32,
     height: u32,
 ) -> Option<(Texture, bool)> {
     use wgpu_external_frame::ahardware_buffer::ImportedHardwareBuffer;
 
     let frame = frame?;
-    let description = frame.buffer().describe();
-    if width == 0 || height == 0 || description.width != width || description.height != height {
+    let description = frame.buffer.buffer().describe();
+    let crop = frame.crop;
+    if width == 0
+        || height == 0
+        || crop.left < 0
+        || crop.top < 0
+        || i64::from(crop.right) - i64::from(crop.left) != i64::from(width)
+        || i64::from(crop.bottom) - i64::from(crop.top) != i64::from(height)
+        || i64::from(crop.right) > i64::from(description.width)
+        || i64::from(crop.bottom) > i64::from(description.height)
+    {
+        bevy::log::warn!(
+            "video path: invalid AHardwareBuffer crop {crop:?}, buffer={}x{}, video={width}x{height}",
+            description.width,
+            description.height,
+        );
         return None;
     }
-    let force_opaque = frame.force_opaque();
+    let origin = [crop.left as u32, crop.top as u32];
+    let force_opaque = frame.buffer.force_opaque();
     let mut guard = VIDEO_GPU.lock().ok()?;
     let gpu = guard.as_mut()?;
-    let imported = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        gpu.importer.as_mut()?.import(frame).ok()
-    }))
-    .ok()??;
+    let _submission = super::surface_sync::lock();
+    let importer = gpu.importer.as_mut()?;
+    let imported =
+        match std::panic::catch_unwind(AssertUnwindSafe(|| importer.import(frame.buffer))) {
+            Ok(Ok(imported)) => imported,
+            Ok(Err(error)) => {
+                bevy::log::warn!("video path: AHardwareBuffer import failed: {error:?}");
+                return None;
+            }
+            Err(_) => {
+                bevy::log::warn!("video path: AHardwareBuffer importer panicked");
+                return None;
+            }
+        };
+    let format = match &imported {
+        ImportedHardwareBuffer::Rgba(_) => "RGBA alias",
+        ImportedHardwareBuffer::Ycbcr420(_) => "YCbCr420 + GPU conversion",
+    };
     let (texture, force_opaque) = match imported {
-        ImportedHardwareBuffer::Rgba(texture) => (texture, force_opaque),
+        ImportedHardwareBuffer::Rgba(texture) => {
+            let texture =
+                if origin == [0, 0] && texture.width() == width && texture.height() == height {
+                    texture
+                } else {
+                    let output = gpu.device.wgpu_device().create_texture(&TextureDescriptor {
+                        label: Some("Kirikiri video cropped RGBA"),
+                        size: Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: TextureDimension::D2,
+                        format: texture.format(),
+                        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    });
+                    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                    encoder.copy_texture_to_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            origin: wgpu::Origin3d {
+                                x: origin[0],
+                                y: origin[1],
+                                z: 0,
+                            },
+                            ..texture.as_image_copy()
+                        },
+                        output.as_image_copy(),
+                        output.size(),
+                    );
+                    gpu.queue.submit([encoder.finish()]);
+                    output
+                };
+            (texture, force_opaque)
+        }
         ImportedHardwareBuffer::Ycbcr420(planes) => {
             let converter = gpu
                 .converter
@@ -242,6 +319,7 @@ fn import_android(
                     planes.encoding,
                     width,
                     height,
+                    origin,
                 ),
                 true,
             )
@@ -249,6 +327,15 @@ fn import_android(
     };
     if texture.width() != width || texture.height() != height {
         return None;
+    }
+    if gpu.import_format != Some(format) {
+        bevy::log::info!(
+            "video path: AHardwareBuffer -> wgpu Vulkan import succeeded ({format}); buffer={}x{} format={:?} crop={crop:?}; CPU pixel upload bypassed",
+            description.width,
+            description.height,
+            description.format,
+        );
+        gpu.import_format = Some(format);
     }
     Some((texture.into(), force_opaque))
 }
@@ -303,6 +390,7 @@ impl VideoYcbcrConverter {
                 r#"
 struct Conversion {
     rows: array<vec4<f32>, 3>,
+    origin: vec4<u32>,
 }
 @group(0) @binding(0) var luma: texture_2d<f32>;
 @group(0) @binding(1) var chroma: texture_2d<f32>;
@@ -328,16 +416,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if any(id.xy >= size) {
         return;
     }
-    let position = vec2<i32>(id.xy);
-    let y = textureLoad(luma, position, 0).r;
-    let uv = sample_chroma(id.xy);
+    let source = id.xy + conversion.origin.xy;
+    let y = textureLoad(luma, vec2<i32>(source), 0).r;
+    let uv = sample_chroma(source);
     let sample = vec4<f32>(y, uv, 1.0);
     let rgb = vec3<f32>(
         dot(conversion.rows[0], sample),
         dot(conversion.rows[1], sample),
         dot(conversion.rows[2], sample)
     );
-    textureStore(output, position, vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0));
+    textureStore(output, vec2<i32>(id.xy), vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0));
 }
 "#
                 .into(),
@@ -353,7 +441,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         });
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Kirikiri video YCbCr matrix"),
-            size: 48,
+            size: 64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -372,6 +460,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         encoding: wgpu_external_frame::YcbcrEncoding,
         width: u32,
         height: u32,
+        origin: [u32; 2],
     ) -> wgpu::Texture {
         let output = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Kirikiri video converted RGBA"),
@@ -416,6 +505,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             &self.parameters,
             0,
             bytemuck::cast_slice(&video_ycbcr_rows(encoding)),
+        );
+        queue.write_buffer(
+            &self.parameters,
+            48,
+            bytemuck::cast_slice(&[origin[0], origin[1], 0, 0]),
         );
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Kirikiri video YCbCr conversion"),
@@ -533,6 +627,8 @@ pub(crate) fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Opti
         importer,
         #[cfg(target_os = "android")]
         converter: None,
+        #[cfg(target_os = "android")]
+        import_format: None,
     });
 }
 
@@ -602,6 +698,7 @@ fn import_native(
             None,
         );
         return std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let _submission = super::surface_sync::lock();
             importer.copy_to_texture(frame).into()
         }))
         .ok()
@@ -620,7 +717,7 @@ pub fn upload_video(
     height: u32,
     pitch: u32,
     native: Option<&ffmpeg_next::frame::Video>,
-    #[cfg(target_os = "android")] android: Option<HardwareBufferFrame>,
+    #[cfg(target_os = "android")] android: Option<AndroidVideoFrame>,
     pixels: Option<&[u8]>,
 ) -> Result<UploadResult, String> {
     #[cfg(target_os = "android")]
@@ -734,6 +831,52 @@ mod tests {
         }
     }
 
+    fn readback_video_texture(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        output: &wgpu::Texture,
+    ) -> Vec<u8> {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("video conversion test readback"),
+            size: u64::from(output.height()) * 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            output.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: Some(output.height()),
+                },
+            },
+            output.size(),
+        );
+        queue.submit([encoder.finish()]);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap();
+            });
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(10)),
+            })
+            .unwrap();
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
+        let bytes = buffer.slice(..).get_mapped_range().unwrap().to_vec();
+        buffer.unmap();
+        bytes
+    }
+
     #[test]
     fn ycbcr_gpu_conversion_handles_color_range_and_partial_workgroups() {
         fn block_on<F: std::future::Future>(future: F) -> F::Output {
@@ -821,44 +964,9 @@ mod tests {
                 YcbcrEncoding { matrix, range },
                 6,
                 2,
+                [0, 0],
             );
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("video conversion test readback"),
-                size: 512,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            let mut encoder = device.create_command_encoder(&Default::default());
-            encoder.copy_texture_to_buffer(
-                output.as_image_copy(),
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &buffer,
-                    layout: TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(256),
-                        rows_per_image: Some(2),
-                    },
-                },
-                output.size(),
-            );
-            queue.submit([encoder.finish()]);
-            let (sender, receiver) = std::sync::mpsc::channel();
-            buffer
-                .slice(..)
-                .map_async(wgpu::MapMode::Read, move |result| {
-                    sender.send(result).unwrap();
-                });
-            device
-                .poll(wgpu::PollType::Wait {
-                    submission_index: None,
-                    timeout: Some(std::time::Duration::from_secs(10)),
-                })
-                .unwrap();
-            receiver
-                .recv_timeout(std::time::Duration::from_secs(10))
-                .unwrap()
-                .unwrap();
-            let bytes = buffer.slice(..).get_mapped_range().unwrap();
+            let bytes = readback_video_texture(device, queue, &output);
             let rows = video_ycbcr_rows(YcbcrEncoding { matrix, range });
             for row in 0..2 {
                 for x in 0..6 {
@@ -893,8 +1001,6 @@ mod tests {
                     }
                 }
             }
-            drop(bytes);
-            buffer.unmap();
         }
 
         queue.write_texture(
@@ -928,48 +1034,56 @@ mod tests {
             },
             6,
             2,
+            [0, 0],
         );
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("video chroma edge test readback"),
-            size: 512,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = device.create_command_encoder(&Default::default());
-        encoder.copy_texture_to_buffer(
-            output.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(256),
-                    rows_per_image: Some(2),
-                },
-            },
-            output.size(),
-        );
-        queue.submit([encoder.finish()]);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        buffer
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                sender.send(result).unwrap();
-            });
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(std::time::Duration::from_secs(10)),
-            })
-            .unwrap();
-        receiver
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .unwrap()
-            .unwrap();
-        let bytes = buffer.slice(..).get_mapped_range().unwrap();
+        let bytes = readback_video_texture(device, queue, &output);
         let reds: Vec<_> = (0..6).map(|x| bytes[x * 4]).collect();
         assert!(reds[0] < reds[1] && reds[1] < reds[2] && reds[2] <= reds[3]);
         assert!(reds[1] - reds[0] < reds[3] - reds[0]);
-        drop(bytes);
-        buffer.unmap();
+
+        let padded_luma = plane(6, 6, TextureFormat::R8Unorm);
+        let mut luma_pixels = [0; 36];
+        luma_pixels[12..24].fill(128);
+        queue.write_texture(
+            padded_luma.as_image_copy(),
+            &luma_pixels,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(6),
+                rows_per_image: Some(6),
+            },
+            padded_luma.size(),
+        );
+        let padded_chroma = plane(3, 3, TextureFormat::Rg8Unorm);
+        queue.write_texture(
+            padded_chroma.as_image_copy(),
+            &[128, 128, 85, 255, 85, 255].repeat(3),
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(6),
+                rows_per_image: Some(3),
+            },
+            padded_chroma.size(),
+        );
+        let cropped = converter.convert(
+            device,
+            queue,
+            &padded_luma.create_view(&Default::default()),
+            &padded_chroma.create_view(&Default::default()),
+            YcbcrEncoding {
+                matrix: YcbcrMatrix::Bt709,
+                range: YcbcrRange::Full,
+            },
+            4,
+            2,
+            [2, 2],
+        );
+        let cropped_pixels = readback_video_texture(device, queue, &cropped);
+        for row in 0..2 {
+            assert_eq!(
+                &cropped_pixels[row * 256..row * 256 + 16],
+                &bytes[row * 256 + 8..row * 256 + 24]
+            );
+        }
     }
 }
