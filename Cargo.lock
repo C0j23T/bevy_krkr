@@ -3831,6 +3831,7 @@ dependencies = [
  "krkr_shim",
  "krkr_sys",
  "libc",
+ "ndk",
  "wesl",
  "wgpu",
  "wgpu-external-frame",

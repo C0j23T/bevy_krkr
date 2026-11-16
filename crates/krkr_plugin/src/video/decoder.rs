@@ -22,6 +22,8 @@ pub struct Decoder {
     audio_indices: Vec<usize>,
     video_indices: Vec<usize>,
     pub(crate) hardware: bool,
+    #[cfg(target_os = "android")]
+    android_output: Option<crate::render::video::AndroidVideoOutput>,
 }
 
 pub struct AudioFrame {
@@ -39,6 +41,8 @@ struct AudioDecoder {
 pub struct Frame {
     pub pixels: Option<frame::Video>,
     pub native: Option<frame::Video>,
+    #[cfg(target_os = "android")]
+    pub android: Option<wgpu_external_frame::ahardware_buffer::HardwareBufferFrame>,
     pub width: u32,
     pub height: u32,
     pub pitch: u32,
@@ -70,14 +74,21 @@ impl Decoder {
         };
         let context = codec::context::Context::from_parameters(stream.parameters())
             .map_err(|e| e.to_string())?;
+        #[cfg(target_os = "android")]
+        let mut android_output = None;
         let (video, backend) = if hardware {
-            hardware_decoder(context)?
+            hardware_decoder(
+                context,
+                #[cfg(target_os = "android")]
+                &mut android_output,
+            )?
         } else {
             (
                 context.decoder().video().map_err(|e| e.to_string())?,
                 "software".into(),
             )
         };
+        let hardware = hardware && backend != "software";
         let audio_indices: Vec<_> = input
             .streams()
             .filter(|s| s.parameters().medium() == media::Type::Audio)
@@ -122,6 +133,8 @@ impl Decoder {
             audio_indices,
             video_indices,
             hardware,
+            #[cfg(target_os = "android")]
+            android_output,
         })
     }
 
@@ -165,8 +178,14 @@ impl Decoder {
         if video {
             let context = codec::context::Context::from_parameters(stream.parameters())
                 .map_err(|e| e.to_string())?;
+            #[cfg(target_os = "android")]
+            let mut android_output = None;
             let (decoder, backend) = if self.hardware {
-                hardware_decoder(context)?
+                hardware_decoder(
+                    context,
+                    #[cfg(target_os = "android")]
+                    &mut android_output,
+                )?
             } else {
                 (
                     context.decoder().video().map_err(|e| e.to_string())?,
@@ -197,6 +216,11 @@ impl Decoder {
             };
             self.stream = index;
             self.video = decoder;
+            #[cfg(target_os = "android")]
+            {
+                self.android_output = android_output;
+            }
+            self.hardware &= backend != "software";
             self.backend = backend;
         } else {
             self.audio = Some(AudioDecoder::open(stream)?);
@@ -210,6 +234,10 @@ impl Decoder {
             .seek(timestamp, ..timestamp)
             .map_err(|e| e.to_string())?;
         self.video.flush();
+        #[cfg(target_os = "android")]
+        if let Some(output) = &self.android_output {
+            output.discard_pending()?;
+        }
         if let Some(audio) = &mut self.audio {
             audio.decoder.flush();
             unsafe {
@@ -232,66 +260,102 @@ impl Decoder {
         scaler: &mut Option<software::scaling::context::Context>,
         software_output: bool,
     ) -> Result<Option<Frame>, String> {
+        #[cfg(target_os = "android")]
+        let mut discard_before = f64::NEG_INFINITY;
+        #[cfg(target_os = "android")]
+        if software_output && self.backend == "mediacodec" {
+            let position = self.next_time;
+            let stream = self
+                .input
+                .stream(self.stream)
+                .ok_or("missing video stream")?;
+            let context = codec::context::Context::from_parameters(stream.parameters())
+                .map_err(|e| e.to_string())?;
+            self.video = context.decoder().video().map_err(|e| e.to_string())?;
+            if let Some(output) = &self.android_output {
+                output.discard_pending()?;
+            }
+            self.android_output = None;
+            self.hardware = false;
+            self.backend = "software".into();
+            self.seek(position)?;
+            discard_before = position;
+        }
         if self.eof {
             return Ok(None);
         }
         let mut decoded = frame::Video::empty();
-        loop {
-            match self.video.receive_frame(&mut decoded) {
-                Ok(()) => break,
-                Err(ffmpeg::Error::Eof) => {
-                    self.eof = true;
-                    return Ok(None);
-                }
-                Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => {}
-                Err(e) => return Err(e.to_string()),
-            }
-            if self.draining {
-                return Err("video decoder did not finish draining".into());
-            }
-            let mut packet = ffmpeg::Packet::empty();
+        let time = loop {
             loop {
-                match packet.read(&mut self.input) {
-                    Ok(()) if packet.stream() == self.stream => {
-                        self.video.send_packet(&packet).map_err(|e| e.to_string())?;
-                        break;
-                    }
-                    Ok(()) => {
-                        if let Some(audio) = &mut self.audio
-                            && packet.stream() == audio.stream
-                        {
-                            audio
-                                .decoder
-                                .send_packet(&packet)
-                                .map_err(|e| e.to_string())?;
-                            self.audio_frames.extend(audio.receive(self.start)?);
-                        }
-                    }
+                match self.video.receive_frame(&mut decoded) {
+                    Ok(()) => break,
                     Err(ffmpeg::Error::Eof) => {
-                        self.video.send_eof().map_err(|e| e.to_string())?;
-                        if let Some(audio) = &mut self.audio {
-                            audio.decoder.send_eof().map_err(|e| e.to_string())?;
-                            self.audio_frames.extend(audio.receive(self.start)?);
-                        }
-                        self.draining = true;
-                        break;
+                        self.eof = true;
+                        return Ok(None);
                     }
+                    Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => {}
                     Err(e) => return Err(e.to_string()),
                 }
+                if self.draining {
+                    return Err("video decoder did not finish draining".into());
+                }
+                let mut packet = ffmpeg::Packet::empty();
+                loop {
+                    match packet.read(&mut self.input) {
+                        Ok(()) if packet.stream() == self.stream => {
+                            self.video.send_packet(&packet).map_err(|e| e.to_string())?;
+                            break;
+                        }
+                        Ok(()) => {
+                            if let Some(audio) = &mut self.audio
+                                && packet.stream() == audio.stream
+                            {
+                                audio
+                                    .decoder
+                                    .send_packet(&packet)
+                                    .map_err(|e| e.to_string())?;
+                                self.audio_frames.extend(audio.receive(self.start)?);
+                            }
+                        }
+                        Err(ffmpeg::Error::Eof) => {
+                            self.video.send_eof().map_err(|e| e.to_string())?;
+                            if let Some(audio) = &mut self.audio {
+                                audio.decoder.send_eof().map_err(|e| e.to_string())?;
+                                self.audio_frames.extend(audio.receive(self.start)?);
+                            }
+                            self.draining = true;
+                            break;
+                        }
+                        Err(e) => return Err(e.to_string()),
+                    }
+                }
             }
-        }
-        let time = decoded
-            .timestamp()
-            .or(decoded.pts())
-            .map_or(self.next_time, |pts| {
-                pts as f64 * self.time_base - self.start
-            });
+            let time = decoded
+                .timestamp()
+                .or(decoded.pts())
+                .map_or(self.next_time, |pts| {
+                    pts as f64 * self.time_base - self.start
+                });
+            #[cfg(target_os = "android")]
+            if time + 0.001 < discard_before {
+                decoded = frame::Video::empty();
+                continue;
+            }
+            break time;
+        };
         self.next_time = time + 1.0 / self.fps;
+        #[cfg(target_os = "android")]
+        let android = self
+            .android_output
+            .as_ref()
+            .and_then(|output| output.acquire(&decoded).ok());
         let native = native_video_frame(&decoded);
         if !software_output {
             return Ok(Some(Frame {
                 pixels: None,
                 native,
+                #[cfg(target_os = "android")]
+                android,
                 width: self.width,
                 height: self.height,
                 pitch: 0,
@@ -367,6 +431,8 @@ impl Decoder {
             pitch: rgba.stride(0) as u32,
             pixels: Some(rgba),
             native,
+            #[cfg(target_os = "android")]
+            android,
             width: self.width,
             height: self.height,
             time,
@@ -405,24 +471,66 @@ fn native_video_frame(decoded: &frame::Video) -> Option<frame::Video> {
     }
 }
 
-fn hardware_decoder(context: codec::Context) -> Result<(ffmpeg::decoder::Video, String), String> {
+fn hardware_decoder(
+    context: codec::Context,
+    #[cfg(target_os = "android")] output: &mut Option<crate::render::video::AndroidVideoOutput>,
+) -> Result<(ffmpeg::decoder::Video, String), String> {
     #[cfg(target_os = "android")]
     {
+        let mut parameters = codec::Parameters::new();
+        let result = unsafe {
+            ffi::avcodec_parameters_from_context(parameters.as_mut_ptr(), context.as_ptr())
+        };
+        if result < 0 {
+            return Err(ffmpeg::Error::from(result).to_string());
+        }
+        let mut context = context;
         let codec_name = match context.id() {
             codec::Id::MPEG2VIDEO => "mpeg2",
             id => id.name(),
         };
         let name = format!("{codec_name}_mediacodec");
-        let codec = codec::decoder::find_by_name(&name)
-            .ok_or_else(|| format!("decoder {name} unavailable"))?;
-        let mut options = ffmpeg::Dictionary::new();
-        options.set("ndk_codec", "1");
+        let codec = codec::decoder::find_by_name(&name);
+        if let Some(codec) = codec {
+            if crate::render::video::android_import_available() {
+                let (width, height) =
+                    unsafe { ((*context.as_ptr()).width, (*context.as_ptr()).height) };
+                if width > 0 && height > 0 {
+                    if let Ok((surface, device)) =
+                        crate::render::video::AndroidVideoOutput::new(width as u32, height as u32)
+                    {
+                        unsafe {
+                            (*context.as_mut_ptr()).hw_device_ctx = device;
+                        }
+                        *output = Some(surface);
+                    }
+                }
+            }
+            if output.is_some() {
+                let mut options = ffmpeg::Dictionary::new();
+                options.set("ndk_codec", "1");
+                match context
+                    .decoder()
+                    .open_as_with(codec, options)
+                    .and_then(|decoder| decoder.video())
+                {
+                    Ok(video) => return Ok((video, "mediacodec".into())),
+                    Err(error) => {
+                        bevy::log::warn!(
+                            "MediaCodec initialization failed, using software decoding: {error}"
+                        );
+                        *output = None;
+                    }
+                }
+            }
+        }
+        let context =
+            codec::Context::from_parameters(parameters).map_err(|error| error.to_string())?;
         return context
             .decoder()
-            .open_as_with(codec, options)
-            .and_then(|d| d.video())
-            .map(|video| (video, "mediacodec".into()))
-            .map_err(|e| e.to_string());
+            .video()
+            .map(|video| (video, "software".into()))
+            .map_err(|error| error.to_string());
     }
     #[cfg(not(target_os = "android"))]
     unsafe {

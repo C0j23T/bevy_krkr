@@ -11,6 +11,7 @@ use decoder::{Decoder, Frame};
 
 static PLAYERS: Mutex<Option<Players>> = Mutex::new(None);
 
+/// Add before DefaultPlugins to enable Android hardware video texture import.
 pub struct KrkrVideoPlugin {
     pub hardware: bool,
 }
@@ -22,7 +23,11 @@ impl Default for KrkrVideoPlugin {
 }
 
 impl Plugin for KrkrVideoPlugin {
-    fn build(&self, _: &mut App) {
+    fn build(&self, _app: &mut App) {
+        #[cfg(target_os = "android")]
+        if self.hardware {
+            crate::render::video::configure_vulkan_import(_app);
+        }
         initialize(self.hardware);
     }
 }
@@ -159,12 +164,16 @@ impl Player {
             audio::update(self.id, self.anchor, false, self.rate, false);
         }
         if let Some(frame) = present {
+            #[cfg(target_os = "android")]
+            let mut frame = frame;
             let uploaded = crate::render::video::upload_video(
                 &mut self.image,
                 frame.width,
                 frame.height,
                 frame.pitch,
                 frame.native.as_ref(),
+                #[cfg(target_os = "android")]
+                frame.android.take(),
                 frame.pixels.as_ref().map(|pixels| pixels.data(0)),
             );
             match uploaded {
