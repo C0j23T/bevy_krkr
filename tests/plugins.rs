@@ -41,6 +41,7 @@ fn every_plugin_attaches_on_link() {
         ("getabout.dll", "System.getAboutString"),
         ("saveStruct.dll", "(new Array()).toStructString"),
         ("win32dialog.dll", "global.WIN32Dialog"),
+        ("windowEx.dll", "Window.getWindowRect"),
     ];
     for (module, member) in expected {
         let before = engine.eval(&format!("typeof {member}")).unwrap();
@@ -51,6 +52,58 @@ fn every_plugin_attaches_on_link() {
         assert_ne!(before, "Object", "{module}: {member} existed before linking");
         assert_eq!(after, "Object", "{module}: {member} is missing after linking");
     }
+
+    // windowEx reports the host's screen texture, not the Win32 window frame:
+    // x/y are 0 and the size is the front window's paint box.
+    // SAFETY: this test process is single-threaded while the variable is set.
+    unsafe { std::env::set_var("BEVY_KRKR_WINDOW_EX", "42") };
+    engine
+        .exec_script(
+            "global.wexWindow = new Window(); wexWindow.setInnerSize(320, 200); wexWindow.visible = true;",
+            "windowEx window",
+        )
+        .unwrap();
+    for (expression, expected) in [
+        ("wexWindow.getWindowRect().x", "0"),
+        ("wexWindow.getWindowRect().y", "0"),
+        ("wexWindow.getWindowRect().w", "320"),
+        ("wexWindow.getWindowRect().h", "200"),
+        ("wexWindow.getClientRect().w", "320"),
+        ("wexWindow.getClientRect().h", "200"),
+        ("System.getDisplayMonitors().count", "1"),
+        ("System.getDisplayMonitors()[0].x", "0"),
+        ("System.getDisplayMonitors()[0].y", "0"),
+        ("System.getDisplayMonitors()[0].w", "320"),
+        ("System.getDisplayMonitors()[0].h", "200"),
+        ("System.getDisplayMonitors()[0].primary", "1"),
+        ("System.getDisplayMonitors()[0].monitor.w", "320"),
+        ("System.getDisplayMonitors()[0].work.h", "200"),
+        ("System.getDisplayMonitors(10, 10, 100, 100).count", "1"),
+        ("System.getDisplayMonitors(400, 400, 100, 100).count", "0"),
+        ("System.getMonitorInfo().primary", "1"),
+        ("System.getMonitorInfo().monitor.w", "320"),
+        ("System.getMonitorInfo().work.h", "200"),
+        ("System.getSystemMetrics('CXSCREEN')", "320"),
+        ("System.getSystemMetrics('CYSCREEN')", "200"),
+        ("System.getSystemMetrics('CMONITORS')", "1"),
+        ("System.getDoubleClickTime()", "500"),
+        ("System.readEnvValue('BEVY_KRKR_WINDOW_EX')", "42"),
+        ("System.expandEnvString('%BEVY_KRKR_WINDOW_EX%')", "42"),
+        ("Window.getNotificationNum('PAINT')", "15"),
+        ("Window.getNotificationName(15)", "PAINT"),
+        ("Scripts.eval('1 + 2')", "3"),
+    ] {
+        assert_eq!(engine.eval(expression).unwrap(), expected, "{expression}");
+    }
+    engine
+        .exec_script("System.setCursorPos(7, 9);", "windowEx cursor")
+        .unwrap();
+    assert_eq!(engine.eval("System.getCursorPos().x").unwrap(), "7");
+    assert_eq!(engine.eval("System.getCursorPos().y").unwrap(), "9");
+    engine
+        .exec_script("wexWindow.visible = false; invalidate wexWindow;", "windowEx cleanup")
+        .unwrap();
+
     assert_ne!(engine.eval("typeof Storages.fstat").unwrap(), "Object");
     engine
         .exec_script(r#"Plugins.link("fstat.dll");"#, "link fstat")

@@ -46,6 +46,10 @@ The extNagano transition implementations follow the recovered sources in
 ヤマモト / Shun / chiyoclone.net / シノハラ (tp_stub: W.Dee), and follows
 Kirikiri's license. The GPU implementations are covered by per-frame pixel
 comparisons with outputs generated from the recovered sources.
+The windowEx adapter in `Kirikiroid2/src/core/environ/bevy/plugins/WindowEx.cpp`
+follows [krkrsdl3](https://github.com/krkrsdl3/krkrsdl3) `plugins/windowEx.cpp`
+and the API of [wamsoft/windowEx](https://github.com/wamsoft/windowEx).
+Copyright (c) W.Dee and contributors; license follows Kirikiri.
 Kirikiri's full notices and redistribution conditions are reproduced below.
 
 ## Kirikiroid2

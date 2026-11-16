@@ -6,4 +6,3 @@
 - C++ 负责 TJS、Storage 和输入流适配，Rust 负责宿主能力；FFI 按完整操作设计，不逐项映射第三方库 API。
 - 图形处理优先复用 Bevy GPU 命令与纹理，避免逐帧读取 GPU 像素到 CPU 再上传。
 - 仅运行受影响的测试，按子系统分批验证；不默认运行全量测试或 example。
-- 插件适配范围与验收要求见 [NVL Maker 适配文档](docs/nvl-maker-compatibility.md)。
