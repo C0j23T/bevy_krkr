@@ -810,7 +810,7 @@ fn krkr_operations(composer: &mut ShaderComposer) {
             indoc! {"
                 let s = sample(source, coordinate(0u, at));
                 if (all(p[3] == vec4(0.0, 1.0, 0.0, 1.0))) {
-                    textureStore(output, xy, clamp(s, vec4(0), vec4(1)));
+                    textureStore(output, xy, clamp(vec4(s.rgb, select(s.a, 1.0, p[1].w == 1.0)), vec4(0), vec4(1)));
                 } else {
                     let y = dot(s.rgb, vec3(0.299, 0.587, 0.114));
                     let cb = (s.b - y) / 1.772;
@@ -818,7 +818,8 @@ fn krkr_operations(composer: &mut ShaderComposer) {
                     let angle = radians(p[3].z);
                     let chroma = vec2(cb * cos(angle) - cr * sin(angle), cb * sin(angle) + cr * cos(angle)) * p[3].w;
                     let luma = y * p[3].y + p[3].x;
-                    let result = vec4(luma + 1.402 * chroma.y, luma - 0.344136 * chroma.x - 0.714136 * chroma.y, luma + 1.772 * chroma.x, s.a);
+                    let alpha = select(s.a, 1.0, p[1].w == 1.0);
+                    let result = vec4(luma + 1.402 * chroma.y, luma - 0.344136 * chroma.x - 0.714136 * chroma.y, luma + 1.772 * chroma.x, alpha);
                     textureStore(output, xy, clamp(result, vec4(0), vec4(1)));
                 }
             "},

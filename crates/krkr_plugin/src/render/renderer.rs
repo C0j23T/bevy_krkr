@@ -55,7 +55,7 @@ pub fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Option<Rend
         );
     }
     #[cfg(feature = "video-ffmpeg")]
-    super::video::initialize(device.clone(), queue.clone());
+    super::video::initialize(device.clone(), queue.clone(), adapter.clone());
     let mut renderer = RENDERER_INSTANCE.lock().unwrap();
     assert!(
         renderer.as_ref().is_none_or(|g| g.textures.is_empty()),
@@ -80,7 +80,12 @@ pub fn flush() {
 }
 
 #[cfg(feature = "video-ffmpeg")]
-pub(crate) fn color_video(target: u64, texture: &Texture, color: [f64; 4]) -> Result<(), String> {
+pub(crate) fn color_video(
+    target: u64,
+    texture: &Texture,
+    color: [f64; 4],
+    force_opaque: bool,
+) -> Result<(), String> {
     let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
     let renderer = guard.as_mut().ok_or("Bevy renderer is not initialized")?;
     let destination = renderer.texture(target)?;
@@ -95,6 +100,7 @@ pub(crate) fn color_video(target: u64, texture: &Texture, color: [f64; 4]) -> Re
     let mut command: RenderCommand = unsafe { std::mem::zeroed() };
     command.method = c"VideoColor".as_ptr();
     command.target = target;
+    command.geometry = u32::from(force_opaque);
     command.rect = [
         0,
         0,

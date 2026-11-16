@@ -14,6 +14,8 @@ enum Command {
         f64,
         SyncSender<Result<krkr_shim::video::VideoState, String>>,
     ),
+    CpuFallback(SyncSender<()>),
+    GpuReady,
     Close,
 }
 
@@ -28,6 +30,9 @@ pub struct Worker {
     commands: Sender<Command>,
     frames: Receiver<Message>,
     epoch: u64,
+    cpu_fallback: bool,
+    gpu_confirmed: bool,
+    pending_audio: Vec<AudioFrame>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -43,6 +48,9 @@ impl Worker {
             commands,
             frames,
             epoch: 0,
+            cpu_fallback: false,
+            gpu_confirmed: false,
+            pending_audio: Vec::new(),
             thread: Some(thread),
         })
     }
@@ -76,6 +84,9 @@ impl Worker {
         self.thread.as_ref().unwrap().thread().unpark();
         let state = result.recv().map_err(|e| e.to_string())??;
         self.epoch = epoch;
+        self.cpu_fallback = false;
+        self.gpu_confirmed = false;
+        self.pending_audio.clear();
         Ok(state)
     }
 
@@ -85,13 +96,60 @@ impl Worker {
                 Ok((epoch, result)) => {
                     self.thread.as_ref().unwrap().thread().unpark();
                     if epoch == self.epoch {
-                        return result.map(Some);
+                        let mut output = result?;
+                        if self.cpu_fallback
+                            && output
+                                .frame
+                                .as_ref()
+                                .is_some_and(|frame| frame.pixels.is_none())
+                        {
+                            self.pending_audio.append(&mut output.audio);
+                            continue;
+                        }
+                        if !self.pending_audio.is_empty() {
+                            self.pending_audio.append(&mut output.audio);
+                            output.audio = std::mem::take(&mut self.pending_audio);
+                        }
+                        return Ok(Some(output));
                     }
                 }
                 Err(TryRecvError::Empty) => return Ok(None),
                 Err(TryRecvError::Disconnected) => return Err("video decoder stopped".into()),
             }
         }
+    }
+
+    pub fn use_cpu_fallback(&mut self) -> Result<(), String> {
+        if self.cpu_fallback {
+            return Ok(());
+        }
+        let (reply, confirmed) = mpsc::sync_channel(1);
+        self.commands
+            .send(Command::CpuFallback(reply))
+            .map_err(|e| e.to_string())?;
+        self.thread.as_ref().unwrap().thread().unpark();
+        confirmed.recv().map_err(|e| e.to_string())?;
+        self.cpu_fallback = true;
+        while let Ok((epoch, result)) = self.frames.try_recv() {
+            if epoch == self.epoch
+                && let Ok(mut output) = result
+            {
+                self.pending_audio.append(&mut output.audio);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn use_gpu_prefetch(&mut self) -> Result<(), String> {
+        if self.gpu_confirmed || self.cpu_fallback {
+            return Ok(());
+        }
+        self.commands
+            .send(Command::GpuReady)
+            .map_err(|e| e.to_string())?;
+        self.thread.as_ref().unwrap().thread().unpark();
+        self.gpu_confirmed = true;
+        Ok(())
     }
 }
 
@@ -107,8 +165,11 @@ impl Drop for Worker {
 
 fn decode(mut decoder: Decoder, commands: Receiver<Command>, frames: SyncSender<Message>) {
     let mut scaler = None;
+    let mut software_output = !decoder.hardware;
+    let mut gpu_confirmed = false;
     let mut epoch = 0;
-    let mut pending = None;
+    let mut pending: Option<Message> = None;
+    let mut pending_audio = Vec::new();
     let mut ended = false;
     let mut seek_target = f64::NEG_INFINITY;
     loop {
@@ -130,15 +191,29 @@ fn decode(mut decoder: Decoder, commands: Receiver<Command>, frames: SyncSender<
                     pending = None;
                     ended = false;
                     scaler = None;
+                    software_output = !decoder.hardware;
+                    gpu_confirmed = false;
                 }
                 let _ = reply.send(result);
             }
+            Ok(Command::CpuFallback(reply)) => {
+                software_output = true;
+                gpu_confirmed = true;
+                if let Some((_, Ok(mut output))) = pending.take() {
+                    pending_audio.append(&mut output.audio);
+                }
+                let _ = reply.send(());
+            }
+            Ok(Command::GpuReady) => gpu_confirmed = true,
             Err(TryRecvError::Empty) => {}
         }
         if pending.is_none() && !ended {
-            let result = decoder.next(&mut scaler).map(|frame| Output {
-                frame,
-                audio: std::mem::take(&mut decoder.audio_frames),
+            let result = decoder.next(&mut scaler, software_output).map(|frame| {
+                pending_audio.append(&mut decoder.audio_frames);
+                Output {
+                    frame,
+                    audio: std::mem::take(&mut pending_audio),
+                }
             });
             ended = result
                 .as_ref()
@@ -155,7 +230,12 @@ fn decode(mut decoder: Decoder, commands: Receiver<Command>, frames: SyncSender<
         }
         if let Some(output) = pending.take() {
             match frames.try_send(output) {
-                Ok(()) => continue,
+                Ok(()) => {
+                    if !software_output && !gpu_confirmed {
+                        thread::park();
+                    }
+                    continue;
+                }
                 Err(TrySendError::Full(output)) => pending = Some(output),
                 Err(TrySendError::Disconnected(_)) => break,
             }

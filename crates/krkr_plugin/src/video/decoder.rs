@@ -21,7 +21,7 @@ pub struct Decoder {
     pub backend: String,
     audio_indices: Vec<usize>,
     video_indices: Vec<usize>,
-    hardware: bool,
+    pub(crate) hardware: bool,
 }
 
 pub struct AudioFrame {
@@ -37,7 +37,7 @@ struct AudioDecoder {
 }
 
 pub struct Frame {
-    pub pixels: frame::Video,
+    pub pixels: Option<frame::Video>,
     pub native: Option<frame::Video>,
     pub width: u32,
     pub height: u32,
@@ -230,6 +230,7 @@ impl Decoder {
     pub fn next(
         &mut self,
         scaler: &mut Option<software::scaling::context::Context>,
+        software_output: bool,
     ) -> Result<Option<Frame>, String> {
         if self.eof {
             return Ok(None);
@@ -287,6 +288,16 @@ impl Decoder {
             });
         self.next_time = time + 1.0 / self.fps;
         let native = native_video_frame(&decoded);
+        if !software_output {
+            return Ok(Some(Frame {
+                pixels: None,
+                native,
+                width: self.width,
+                height: self.height,
+                pitch: 0,
+                time,
+            }));
+        }
         let mut transferred = frame::Video::empty();
         if self.hardware
             && !cfg!(target_os = "android")
@@ -354,7 +365,7 @@ impl Decoder {
             .map_err(|e| e.to_string())?;
         Ok(Some(Frame {
             pitch: rgba.stride(0) as u32,
-            pixels: rgba,
+            pixels: Some(rgba),
             native,
             width: self.width,
             height: self.height,
@@ -579,9 +590,9 @@ mod tests {
             decoder.select_stream(true, index, 0.0).unwrap();
             let mut scaler = None;
             let mut samples = Vec::new();
-            while let Some(frame) = decoder.next(&mut scaler).unwrap() {
+            while let Some(frame) = decoder.next(&mut scaler, true).unwrap() {
                 assert_eq!(frame.width, if index == 0 { 64 } else { 32 });
-                let rgba = frame.pixels.data(0);
+                let rgba = frame.pixels.as_ref().unwrap().data(0);
                 assert!(rgba[if index == 0 { 0 } else { 2 }] > 240);
                 for audio in std::mem::take(&mut decoder.audio_frames) {
                     samples.extend(audio.samples.chunks_exact(2).map(|pair| pair[0]));

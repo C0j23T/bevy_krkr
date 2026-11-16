@@ -11,8 +11,6 @@ krkr_script = { path = "../krkr_script" }
 cpal        = "0.18"
 bevy        = { workspace = true }
 wgpu = { version = "30", default-features = false }
-wgpu-hal = { version = "30", default-features = false, features = ["vulkan", "metal"] }
-wgpu-types = "30"
 libc = "0.2"
 krkr_shim = { path = "../krkr_shim" }
 bytemuck = { version = "1", features = ["derive"] }
@@ -22,6 +20,9 @@ ffmpeg-sys-next = { version = "9", default-features = false, optional = true }
 indoc = "2.0.8"
 itertools = "0.15.0"
 fearless_simd = "1.2.0"
+
+[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "ios"))'.dependencies]
+wgpu-external-frame = "0.4"
 
 [features]
 video-ffmpeg = ["dep:ffmpeg-next"]

@@ -159,14 +159,26 @@ impl Player {
             audio::update(self.id, self.anchor, false, self.rate, false);
         }
         if let Some(frame) = present {
-            crate::render::video::upload_video(
+            let uploaded = crate::render::video::upload_video(
                 &mut self.image,
                 frame.width,
                 frame.height,
                 frame.pitch,
                 frame.native.as_ref(),
-                frame.pixels.data(0),
-            )?;
+                frame.pixels.as_ref().map(|pixels| pixels.data(0)),
+            );
+            match uploaded {
+                Ok(crate::render::video::UploadResult::Imported) if frame.pixels.is_none() => {
+                    self.decoder.use_gpu_prefetch()?
+                }
+                Err(_error) if frame.pixels.is_none() => {
+                    self.decoder.use_cpu_fallback()?;
+                    return Ok(());
+                }
+                result => {
+                    result?;
+                }
+            }
             self.render()?;
             self.state.position = frame.time;
             self.state.frame = (frame.time * self.state.fps).round().max(0.0) as u64;
