@@ -16,6 +16,12 @@ use wgpu_external_frame::ahardware_buffer::{DeviceRequirements, HardwareBufferIm
 #[cfg(target_os = "android")]
 use wgpu_external_frame::ahardware_buffer::{HardwareBufferFrame, HardwareBufferLease};
 
+#[cfg(target_os = "ios")]
+use wgpu_external_frame::{
+    YcbcrEncoding, YcbcrMatrix, YcbcrRange,
+    io_surface::{Ycbcr420IoSurfaceFrame, Ycbcr420Plane},
+};
+
 #[cfg(target_os = "linux")]
 use wgpu_external_frame::dma_buf::{DmaBufFormat, DmaBufFrame, DmaBufImporter, DmaBufPlane};
 
@@ -32,6 +38,8 @@ struct VideoGpu {
     converter: Option<VideoYcbcrConverter>,
     #[cfg(target_os = "android")]
     import_format: Option<&'static str>,
+    #[cfg(target_os = "ios")]
+    converter: Option<VideoYcbcrConverter>,
 }
 
 #[cfg(target_os = "android")]
@@ -43,6 +51,12 @@ pub(crate) struct AndroidVideoOutput {
 pub(crate) struct AndroidVideoFrame {
     buffer: HardwareBufferFrame,
     crop: ndk::media::image_reader::CropRect,
+}
+
+#[cfg(target_os = "ios")]
+#[link(name = "CoreVideo", kind = "framework")]
+unsafe extern "C" {
+    fn CVPixelBufferGetIOSurface(buffer: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
 }
 
 #[cfg(target_os = "android")]
@@ -340,19 +354,13 @@ fn import_android(
     Some((texture.into(), force_opaque))
 }
 
-#[cfg(any(
-    target_os = "android",
-    all(test, any(target_os = "linux", target_os = "ios"))
-))]
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 struct VideoYcbcrConverter {
     pipeline: wgpu::ComputePipeline,
     parameters: wgpu::Buffer,
 }
 
-#[cfg(any(
-    target_os = "android",
-    all(test, any(target_os = "linux", target_os = "ios"))
-))]
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 fn video_ycbcr_rows(encoding: wgpu_external_frame::YcbcrEncoding) -> [[f32; 4]; 3] {
     use wgpu_external_frame::{YcbcrMatrix, YcbcrRange};
 
@@ -378,10 +386,7 @@ fn video_ycbcr_rows(encoding: wgpu_external_frame::YcbcrEncoding) -> [[f32; 4]; 
     ]
 }
 
-#[cfg(any(
-    target_os = "android",
-    all(test, any(target_os = "linux", target_os = "ios"))
-))]
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 impl VideoYcbcrConverter {
     fn new(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -392,6 +397,7 @@ struct Conversion {
     rows: array<vec4<f32>, 3>,
     origin: vec4<u32>,
 }
+
 @group(0) @binding(0) var luma: texture_2d<f32>;
 @group(0) @binding(1) var chroma: texture_2d<f32>;
 @group(0) @binding(2) var output: texture_storage_2d<rgba8unorm, write>;
@@ -528,6 +534,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
+#[cfg(target_os = "ios")]
+fn video_ycbcr_encoding(frame: &ffmpeg_next::frame::Video) -> YcbcrEncoding {
+    use ffmpeg_next::util::color::{range::Range, space::Space};
+
+    let matrix = match frame.color_space() {
+        Space::BT709 => YcbcrMatrix::Bt709,
+        Space::BT2020NCL | Space::BT2020CL => YcbcrMatrix::Bt2020,
+        _ => YcbcrMatrix::Bt601,
+    };
+    let range = match frame.color_range() {
+        Range::JPEG => YcbcrRange::Full,
+        _ => YcbcrRange::Video,
+    };
+    YcbcrEncoding { matrix, range }
+}
+
 #[cfg(target_os = "android")]
 struct VideoDeviceRequirements(DeviceRequirements);
 
@@ -581,8 +603,12 @@ pub(crate) fn probe(device: &RenderDevice, adapter: &RenderAdapter) -> &'static 
     }
     #[cfg(target_os = "ios")]
     {
-        let _ = backend;
-        return "CPU upload: VideoToolbox-to-Metal texture import is not implemented";
+        return if backend != wgpu::Backend::Metal {
+            "CPU upload: iOS video import requires the Metal backend"
+        } else {
+            let _ = device;
+            "Metal IOSurface import available; VideoToolbox format is validated per frame"
+        };
     }
     #[cfg(target_os = "android")]
     {
@@ -616,6 +642,11 @@ pub(crate) fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Opti
             }))
             .ok()
         });
+    #[cfg(target_os = "ios")]
+    let converter = adapter
+        .as_ref()
+        .filter(|adapter| adapter.get_info().backend == wgpu::Backend::Metal)
+        .map(|_| VideoYcbcrConverter::new(device.wgpu_device()));
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let _ = adapter;
     *VIDEO_GPU.lock().unwrap() = Some(VideoGpu {
@@ -629,6 +660,8 @@ pub(crate) fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Opti
         converter: None,
         #[cfg(target_os = "android")]
         import_format: None,
+        #[cfg(target_os = "ios")]
+        converter,
     });
 }
 
@@ -704,7 +737,46 @@ fn import_native(
         .ok()
         .map(|texture| (texture, force_opaque));
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "ios")]
+    {
+        let frame =
+            native.filter(|frame| frame.format() == ffmpeg_next::format::Pixel::VIDEOTOOLBOX)?;
+        let pixel_buffer = unsafe { (*frame.as_ptr()).data[3].cast::<std::ffi::c_void>() };
+        if pixel_buffer.is_null() {
+            return None;
+        }
+        let surface = unsafe { CVPixelBufferGetIOSurface(pixel_buffer) };
+        if surface.is_null() {
+            return None;
+        }
+        let gpu_guard = VIDEO_GPU.lock().ok()?;
+        let gpu = gpu_guard.as_ref()?;
+        let converter = gpu.converter.as_ref()?;
+        let encoding = video_ycbcr_encoding(frame);
+        let _submission = super::surface_sync::lock();
+        return std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let retained =
+                unsafe { Ycbcr420IoSurfaceFrame::retain(std::ptr::NonNull::new(surface).unwrap()) }
+                    .with_owner(frame.clone());
+            let luma = retained.import(gpu.device.wgpu_device(), Ycbcr420Plane::Luma);
+            let chroma = retained.import(gpu.device.wgpu_device(), Ycbcr420Plane::Chroma);
+            let luma_view = luma.create_view(&Default::default());
+            let chroma_view = chroma.create_view(&Default::default());
+            let texture = converter.convert(
+                gpu.device.wgpu_device(),
+                &gpu.queue,
+                &luma_view,
+                &chroma_view,
+                encoding,
+                width,
+                height,
+                [0, 0],
+            );
+            (texture, false)
+        }))
+        .ok();
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "ios")))]
     {
         let _ = (native, width, height);
         None
