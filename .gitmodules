@@ -17,3 +17,6 @@
 [submodule "external_plugins/sqlite3"]
 	path = external_plugins/sqlite3
 	url = /home/hepta/Workspace/bevy_krkr/external_plugins/sqlite3
+[submodule "external_plugins/ExtKAGParser"]
+	path = external_plugins/ExtKAGParser
+	url = /home/hepta/Workspace/bevy_krkr/external_plugins/ExtKAGParser
