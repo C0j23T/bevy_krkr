@@ -20,6 +20,8 @@ Storage 自动搜索路径查找，再查找宿主应用目录与 `plugin` 目�
 加载去重使用传入名称的精确匹配；存在 `V2Link` 时调用，不以其返回值判定失败。
 卸载前触发 TJS 垃圾回收，`V2Unlink` 负返回值阻止卸载。退出时按加载顺序逆序卸载。
 外部转场仍在使用时拒绝卸载，保护在 GPU 提交中引用的插件对象。
+支持 `RTLD_NODELETE` 的平台与 krkrz 一样保留库映射，直到进程退出，确保 TJS
+关闭时残留的暂存对象仍能调用有效代码；卸载仍移除插件成员和 GPU 方法。
 
 PSD 插件源码位于子模块 `external_plugins/psdfile`。构建脚本会应用
 `tools/external-plugins/psdfile-bmp-header.patch`，确保非 Windows 平台的 BMP
@@ -47,3 +49,17 @@ cargo test --test external_psb -- --ignored
 `psb://容器/资源键` 只读媒体。MDF 资源从解压后的容器读取；重复加载替换旧状态。
 不支持加密 PSB、v4、MFL、写入或媒体目录枚举。标准测试使用合成容器，
 设置 `PSB_SAMPLE` 可额外验证一个本地真实容器，不运行游戏。
+
+## SQLite 与扩展 KAG
+
+```sh
+tools/external-plugins/build.sh sqlite3
+tools/external-plugins/build.sh ExtKAGParser
+cargo test --test external_sqlite --test external_kag -- --ignored --test-threads=1
+```
+
+`sqlite3.dll` 提供 `Sqlite` / `SqliteStatement`、绑定、事务、Unicode/blob，以及
+只读 Storage / XP3 VFS；写入数据库使用标准本地路径。`ExtKAGParser.dll`
+加载时替换全局 `KAGParser`，卸载时恢复原值；覆盖宏、循环、局部变量、参数宏、
+跨行标签、状态保存恢复和赋值。两个独立仓库均只依赖标准 tp_stub 与 ncbind，
+有活实例时拒绝卸载，已验证卸载重载和宿主关闭。

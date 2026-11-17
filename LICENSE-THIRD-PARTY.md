@@ -66,6 +66,11 @@ that same krkrsdl3 revision. Its full upstream terms are retained in
 the system zlib library; zlib's notices are reproduced below with Kirikiroid2's
 third-party notices.
 
+The independent `external_plugins/sqlite3` and `external_plugins/ExtKAGParser`
+plugins adapt the corresponding directories at that same krkrsdl3 revision.
+Their complete terms are retained in each repository's `LICENSE`; SQLite's
+public-domain notices remain in the bundled amalgamation sources.
+
 External plugins use the independently supplied Kirikiri Z `tp_stub` ABI
 (validated at revision `7d91ba56bcfe241df349b01badd915a156bc47cf`) and
 [wamsoft/ncbind](https://github.com/wamsoft/ncbind), revision

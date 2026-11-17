@@ -25,6 +25,8 @@
 | `json.dll` | 独立外部 submodule；标准 `tp_stub.h`；JSON 解析、序列化、Storage 文本流、Unicode、卸载重载已验证；见 [外部插件](external-plugins.md) |
 | `psdfile.dll` | 原仓库移入 `external_plugins/psdfile` submodule；PSD 图层 RGBA、Storage BMP、卸载重载与宿主重启已验证 |
 | `psbfile.dll` | 独立 tp_stub 外部 submodule；PSB v1–v3、MDF、路径/octet、`psb://` 资源、重载与损坏输入；真实 snbk `window.pimg` 已验证 |
+| `sqlite3.dll` | 独立 tp_stub 外部 submodule；SQL 绑定、事务、Unicode/blob、Storage/XP3 只读 VFS、卸载重载与关闭已验证 |
+| `ExtKAGParser.dll` | 独立 tp_stub 外部 submodule；扩展宏/循环/局部变量、Unicode、状态恢复与赋值；卸载恢复原 KAGParser、重载与关闭已验证 |
 
 ## 已实现（未测试）
 
@@ -52,9 +54,7 @@
 | --- | --- | --- | --- |
 | `win32dialog.dll`（完整版） | 低 | 自绘 Win32 对话框控件模型 | 替换现有 15 行 stub，接入宿主消息框与输入框 |
 | `textrender.dll` | 中 | `TextRenderBase` 文本排版、链接与滚动度量 | 纯布局不绘制；需补 `Layer_FetchImageSize`，与 KAG 文本行为对照 |
-| `sqlite3.dll` | 中 | SQLite TJS 绑定与 XP3 VFS | 用 `cc` 编译 vendored `sqlite3.c`，VFS 接 Storage |
 | `wuffmpeg.dll` | 中 | FFmpeg 音频解码 creator | 接入现有 ffmpeg-next，处理与 `video-ffmpeg` 的依赖共享 |
-| `ExtKAGParser.dll` | 中 | 替代全局 `KAGParser` 的扩展解析器与 `TJSAry`/`TJSDic` | 纯解析；需与核心 KAGParserEx 做特性差异确认 |
 | `drawdeviceD3D.dll` | 高 | `iTVPDrawDevice` 与合成器（前后平面、转场、软件 DrawBuffer 上传） | 需宿主 LayerManager、窗口呈现与网格契约；WESL 像素接口可承载混合核，不能独立实现整个插件 |
 | `layerExDraw.dll`（完整 API） | 高 | GDI+ 兼容的矢量、文字与图像绘制 | 当前仅文字子集；Vello GPU 可共用 wgpu 30，仍需 alpha/颜色适配、GDI+ 对象与 EMF+ 兼容验证 |
 | `autotest.dll` | 高 | 离屏自动化（帧推进、抓帧、输入注入） | 需要 Bevy 侧 headless 测试宿主与抓帧/输入注入 |
