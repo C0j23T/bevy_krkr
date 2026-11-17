@@ -24,6 +24,7 @@
 | `layerExAreaAverage.dll` | `Layer.stretchCopyAA` 走 GPU compute；保留透明色权重与边界语义；真实 Vulkan 像素验证 |
 | `json.dll` | 独立外部 submodule；标准 `tp_stub.h`；JSON 解析、序列化、Storage 文本流、Unicode、卸载重载已验证；见 [外部插件](external-plugins.md) |
 | `psdfile.dll` | 原仓库移入 `external_plugins/psdfile` submodule；PSD 图层 RGBA、Storage BMP、卸载重载与宿主重启已验证 |
+| `psbfile.dll` | 独立 tp_stub 外部 submodule；PSB v1–v3、MDF、路径/octet、`psb://` 资源、重载与损坏输入；真实 snbk `window.pimg` 已验证 |
 
 ## 已实现（未测试）
 
@@ -38,7 +39,6 @@
 
 | 插件 | 难度 | 作用 | 迁移要点 |
 | --- | --- | --- | --- |
-| `psbfile.dll` | 中 | PSB/MDF 解析、`PSBFile` 与 `psb` 存储 media | 当前未链接 zlib，需加依赖或改走 `krkr_zlib_*`；解除 SNBK 启动阻塞 |
 | `emoteplayer.dll` | 高 | emote/PSB 动画引擎（物理、时间轴、网格、蒙版） | 依赖 `iTVPRenderBackend`，需在 Bevy GPU 实现渲染目标、网格、蒙版与读回语义 |
 | `motionplayer.dll` | 低 | 加载 `emoteplayer.dll` 的别名模块 | 本身只有模块依赖，需先有 `emoteplayer` |
 
@@ -56,8 +56,10 @@
 | `wuffmpeg.dll` | 中 | FFmpeg 音频解码 creator | 接入现有 ffmpeg-next，处理与 `video-ffmpeg` 的依赖共享 |
 | `ExtKAGParser.dll` | 中 | 替代全局 `KAGParser` 的扩展解析器与 `TJSAry`/`TJSDic` | 纯解析；需与核心 KAGParserEx 做特性差异确认 |
 | `drawdeviceD3D.dll` | 高 | `iTVPDrawDevice` 与合成器（前后平面、转场、软件 DrawBuffer 上传） | 需宿主 LayerManager、窗口呈现与网格契约；WESL 像素接口可承载混合核，不能独立实现整个插件 |
-| `layerExDraw.dll`（完整 API） | 高 | GDI+ 兼容的矢量、文字与图像绘制 | 补齐路径、渐变、矩阵、图像与记录接口；当前仅文字子集 |
+| `layerExDraw.dll`（完整 API） | 高 | GDI+ 兼容的矢量、文字与图像绘制 | 当前仅文字子集；Vello GPU 可共用 wgpu 30，仍需 alpha/颜色适配、GDI+ 对象与 EMF+ 兼容验证 |
 | `autotest.dll` | 高 | 离屏自动化（帧推进、抓帧、输入注入） | 需要 Bevy 侧 headless 测试宿主与抓帧/输入注入 |
 | `kirikiroid2.dll` 的 BPG/JXR/PVR 分支 | 高 | 图像加载器 | 新增解码库或格式实现；7z/ZIP/TAR/PNG/JPEG/WEBP 已完成 |
 
 ### 调查
+
+- `layerExDraw.dll`：[Vello GPU 后端评估](layer-ex-draw-vello.md)；有条件适合，完成同设备纹理、预乘 alpha、提交顺序及记录兼容验证后再接入。
