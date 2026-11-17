@@ -38,21 +38,19 @@
 | --- | --- |
 | `win32dialog.dll` | 独立 tp_stub 外部 submodule；控件模型、Unicode、公开 System 消息/输入协议、卸载已测试；宿主实际 UI、GDI、原生资源模板等未实现 |
 | `layerExDraw.dll` | 文字、字体度量、简化 Appearance、GPU clear 与矩形/椭圆的不透明实色整数子集；专项像素测试通过；描边、半透明形状、路径、图像、变换与记录未完成 |
+| `emoteplayer.dll` / `motionplayer.dll` | C++引擎与别名、GPU网格/蒙版/混合与source=target已验证；真实snbk Motion绘制通过；物理、时间轴、继承、hit test与完整游戏仍待独立验收 |
 
 ### 调查
 
 - `layerExDraw.dll`：[Vello GPU 后端评估](layer-ex-draw-vello.md)；同设备纹理、预乘 alpha、提交顺序与 EMF+ 兼容仍需验证。
+- `emoteplayer.dll`：[集成与验收](emote-integration.md)。
 
 ## 下一批实现
 
 | 插件 | 难度 | 作用 | 迁移要点 |
 | --- | --- | --- | --- |
-| `emoteplayer.dll` | 高 | emote/PSB 动画引擎（物理、时间轴、网格、蒙版） | 依赖 `iTVPRenderBackend`，需在 Bevy GPU 实现渲染目标、网格、蒙版与读回语义 |
-| `motionplayer.dll` | 低 | 加载 `emoteplayer.dll` 的别名模块 | 本身只有模块依赖，需先有 `emoteplayer` |
 
 ### 调查
-
-见 [emote-integration.md](emote-integration.md)
 
 ## 待实现
 
