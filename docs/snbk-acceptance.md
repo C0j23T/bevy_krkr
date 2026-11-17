@@ -4,6 +4,9 @@
 资源由引擎 Storage 与 xp3filter 读取；不能直接以通用归档工具读取加密 XP3
 来判断资源是否存在。
 
+归档与 patch 调查、按游戏引用功能分类的插件支持情况，以及 krkrsdl3 源码对照，见
+[snbk 插件支持报告](snbk-plugin-support.md)。
+
 ## 运行条件
 
 构建本机外部插件，将产物放到游戏目录或 `plugin` 子目录：
