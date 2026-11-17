@@ -7,7 +7,8 @@ use std::{collections::HashMap, sync::Mutex, time::Instant};
 use bevy::prelude::*;
 use krkr_shim::video::*;
 
-use decoder::{Decoder, Frame};
+pub(crate) use decoder::Decoder;
+use decoder::Frame;
 
 static PLAYERS: Mutex<Option<Players>> = Mutex::new(None);
 

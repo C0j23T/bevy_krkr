@@ -460,11 +460,12 @@ fn native_video_frame(decoded: &frame::Video) -> Option<frame::Video> {
     #[cfg(target_os = "linux")]
     {
         let mut drm = frame::Video::empty();
+        drm.set_format(format::Pixel::DRM_PRIME);
         let result = unsafe {
             ffi::av_hwframe_map(
                 drm.as_mut_ptr(),
                 decoded.as_ptr(),
-                ffi::AV_HWFRAME_MAP_READ as i32,
+                ffi::AV_HWFRAME_MAP_READ as i32 | ffi::AV_HWFRAME_MAP_DIRECT as i32,
             )
         };
         if result >= 0 && drm.format() == format::Pixel::DRM_PRIME {

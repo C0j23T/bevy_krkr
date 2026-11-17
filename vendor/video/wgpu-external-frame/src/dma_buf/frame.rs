@@ -4,19 +4,24 @@ const DRM_FORMAT_ARGB8888: u32 = u32::from_le_bytes(*b"AR24");
 const DRM_FORMAT_XRGB8888: u32 = u32::from_le_bytes(*b"XR24");
 const DRM_FORMAT_ABGR8888: u32 = u32::from_le_bytes(*b"AB24");
 const DRM_FORMAT_XBGR8888: u32 = u32::from_le_bytes(*b"XB24");
+const DRM_FORMAT_R8: u32 = u32::from_le_bytes(*b"R8  ");
+const DRM_FORMAT_GR88: u32 = u32::from_le_bytes(*b"GR88");
 
 /// The DRM format modifier that means "no modifier was negotiated".
 ///
 /// Vulkan import needs an explicit modifier and rejects this value; EGL import
 /// treats it as "omit the modifier attributes entirely".
-pub const DRM_FORMAT_MOD_INVALID: u64 = u64::MAX;
+pub const DRM_FORMAT_MOD_INVALID: u64 = (1 << 56) - 1;
 
 /// Pixel format of a DMA-BUF frame.
 ///
-/// Only the single-plane packed 32-bit formats are covered, which is what
-/// browser and compositor output uses.
+/// Single-plane RGB buffers and the separately exported planes of NV12 video.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DmaBufFormat {
+    /// One 8-bit channel, used for video luma.
+    R8,
+    /// Two 8-bit channels, used for interleaved video chroma.
+    Rg8,
     /// Little-endian BGRA with meaningful alpha.
     Bgra8,
     /// Little-endian BGRX; consumers must force alpha to one.
@@ -32,10 +37,12 @@ impl DmaBufFormat {
     ///
     /// # Panics
     ///
-    /// Panics for any code outside the four packed 32-bit formats above.
+    /// Panics for an unsupported DRM format.
     #[must_use]
     pub fn from_fourcc(value: u32) -> Self {
         match value {
+            DRM_FORMAT_R8 => Self::R8,
+            DRM_FORMAT_GR88 => Self::Rg8,
             DRM_FORMAT_ARGB8888 => Self::Bgra8,
             DRM_FORMAT_XRGB8888 => Self::Bgrx8,
             DRM_FORMAT_ABGR8888 => Self::Rgba8,
@@ -48,6 +55,8 @@ impl DmaBufFormat {
     #[must_use]
     pub const fn fourcc(self) -> u32 {
         match self {
+            Self::R8 => DRM_FORMAT_R8,
+            Self::Rg8 => DRM_FORMAT_GR88,
             Self::Bgra8 => DRM_FORMAT_ARGB8888,
             Self::Bgrx8 => DRM_FORMAT_XRGB8888,
             Self::Rgba8 => DRM_FORMAT_ABGR8888,
@@ -63,6 +72,8 @@ impl DmaBufFormat {
     #[must_use]
     pub const fn texture_format(self) -> wgpu::TextureFormat {
         match self {
+            Self::R8 => wgpu::TextureFormat::R8Unorm,
+            Self::Rg8 => wgpu::TextureFormat::Rg8Unorm,
             Self::Bgra8 | Self::Bgrx8 => wgpu::TextureFormat::Bgra8Unorm,
             Self::Rgba8 | Self::Rgbx8 => wgpu::TextureFormat::Rgba8Unorm,
         }
@@ -139,8 +150,7 @@ impl DmaBufFrame {
     ///
     /// # Panics
     ///
-    /// Panics when the dimensions are zero or the frame is not a single packed
-    /// 32-bit plane.
+    /// Panics when the dimensions are zero or the frame has multiple planes.
     #[must_use]
     pub fn new(
         width: u32,
@@ -151,11 +161,7 @@ impl DmaBufFrame {
         rendering_fence: Option<OwnedFd>,
     ) -> Self {
         assert!(width > 0 && height > 0, "DMA-BUF frame must be non-zero");
-        assert_eq!(
-            planes.len(),
-            1,
-            "DMA-BUF frames require one packed 32-bit plane"
-        );
+        assert_eq!(planes.len(), 1, "DMA-BUF frames require one plane");
         Self {
             width,
             height,

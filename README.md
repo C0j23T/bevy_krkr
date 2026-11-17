@@ -123,9 +123,12 @@ balance, looping and frame/end events use the original `VideoOverlay` API.
 Playback rates also change audio pitch. Compressed files are held in memory.
 
 The hardware path uses MediaCodec and Vulkan AHardwareBuffer import on Android,
-with software decoding as a fallback. Linux, Windows and Apple platforms use
-their available FFmpeg hardware decoders and the corresponding texture upload
-path. Android video frames stay on the GPU when external-buffer import works.
+with software decoding as a fallback. Linux imports FFmpeg's DRM PRIME frames
+through Vulkan DMA-BUF: NV12 luma and chroma planes are copied and converted to
+RGBA on the GPU; packed BGRA/RGBA frames use a GPU copy. The decoder requests
+direct DRM mapping, and frames stay alive until the GPU copy completes.
+Unsupported export formats retain the CPU upload fallback. Windows and Apple
+platforms use their available FFmpeg hardware decoders and texture upload paths.
 The Kirikiri screen is uniformly scaled to fit the primary window's physical
 resolution and centered, preserving the game's aspect ratio.
 Audio and video streams can be counted and selected by their type-relative index.
@@ -150,6 +153,14 @@ seek, audio, visibility, end events, looping and stream switching:
 ```sh
 cargo test --features video-ffmpeg --test video
 KRKR_TEST_HARDWARE=1 cargo test --features video-ffmpeg --test video
+```
+
+Linux hardware import has a separate test requiring VAAPI decoding and Vulkan
+DMA-BUF support. It checks all ten fixture frames report GPU import and retain
+their expected red/green pixels:
+
+```sh
+cargo test -p krkr_plugin --features video-ffmpeg --lib render::video::tests -- --include-ignored
 ```
 
 ## Codegen

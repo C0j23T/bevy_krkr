@@ -337,6 +337,8 @@ fn create_import_image(raw: &ash::Device, frame: &DmaBufFrame, plane: &DmaBufPla
         .push_next(&mut modifier)
         .image_type(vk::ImageType::TYPE_2D)
         .format(match frame.format {
+            DmaBufFormat::R8 => vk::Format::R8_UNORM,
+            DmaBufFormat::Rg8 => vk::Format::R8G8_UNORM,
             DmaBufFormat::Bgra8 | DmaBufFormat::Bgrx8 => vk::Format::B8G8R8A8_UNORM,
             DmaBufFormat::Rgba8 | DmaBufFormat::Rgbx8 => vk::Format::R8G8B8A8_UNORM,
         })

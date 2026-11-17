@@ -17,10 +17,9 @@ use wgpu_external_frame::ahardware_buffer::{DeviceRequirements, HardwareBufferIm
 use wgpu_external_frame::ahardware_buffer::{HardwareBufferFrame, HardwareBufferLease};
 
 #[cfg(target_os = "ios")]
-use wgpu_external_frame::{
-    YcbcrEncoding, YcbcrMatrix, YcbcrRange,
-    io_surface::{Ycbcr420IoSurfaceFrame, Ycbcr420Plane},
-};
+use wgpu_external_frame::io_surface::{Ycbcr420IoSurfaceFrame, Ycbcr420Plane};
+#[cfg(any(target_os = "linux", target_os = "ios"))]
+use wgpu_external_frame::{YcbcrEncoding, YcbcrMatrix, YcbcrRange};
 
 #[cfg(target_os = "linux")]
 use wgpu_external_frame::dma_buf::{DmaBufFormat, DmaBufFrame, DmaBufImporter, DmaBufPlane};
@@ -38,7 +37,7 @@ struct VideoGpu {
     converter: Option<VideoYcbcrConverter>,
     #[cfg(target_os = "android")]
     import_format: Option<&'static str>,
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "linux", target_os = "ios"))]
     converter: Option<VideoYcbcrConverter>,
 }
 
@@ -354,13 +353,13 @@ fn import_android(
     Some((texture.into(), force_opaque))
 }
 
-#[cfg(any(target_os = "android", target_os = "ios", test))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "ios", test))]
 struct VideoYcbcrConverter {
     pipeline: wgpu::ComputePipeline,
     parameters: wgpu::Buffer,
 }
 
-#[cfg(any(target_os = "android", target_os = "ios", test))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "ios", test))]
 fn video_ycbcr_rows(encoding: wgpu_external_frame::YcbcrEncoding) -> [[f32; 4]; 3] {
     use wgpu_external_frame::{YcbcrMatrix, YcbcrRange};
 
@@ -386,7 +385,7 @@ fn video_ycbcr_rows(encoding: wgpu_external_frame::YcbcrEncoding) -> [[f32; 4]; 
     ]
 }
 
-#[cfg(any(target_os = "android", target_os = "ios", test))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "ios", test))]
 impl VideoYcbcrConverter {
     fn new(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -534,7 +533,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "linux", target_os = "ios"))]
 fn video_ycbcr_encoding(frame: &ffmpeg_next::frame::Video) -> YcbcrEncoding {
     use ffmpeg_next::util::color::{range::Range, space::Space};
 
@@ -598,7 +597,9 @@ pub(crate) fn probe(device: &RenderDevice, adapter: &RenderAdapter) -> &'static 
         if backend != wgpu::Backend::Vulkan {
             return "CPU upload: Linux video import requires the Vulkan backend";
         }
-        let _ = device;
+        if !linux_device_supports_import(device) {
+            return "CPU upload: Vulkan DMA-BUF device extensions are unavailable";
+        }
         return "Vulkan DMA-BUF import available; FFmpeg export format is validated per frame";
     }
     #[cfg(target_os = "ios")]
@@ -629,8 +630,13 @@ pub(crate) fn probe(device: &RenderDevice, adapter: &RenderAdapter) -> &'static 
 
 pub(crate) fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Option<RenderAdapter>) {
     #[cfg(target_os = "linux")]
-    let importer =
-        adapter.map(|adapter| DmaBufImporter::new(device.wgpu_device(), &queue, &adapter));
+    let importer = adapter
+        .filter(|_| linux_device_supports_import(&device))
+        .map(|adapter| DmaBufImporter::new(device.wgpu_device(), &queue, &adapter));
+    #[cfg(target_os = "linux")]
+    let converter = importer
+        .as_ref()
+        .map(|_| VideoYcbcrConverter::new(device.wgpu_device()));
     #[cfg(target_os = "android")]
     let importer = adapter
         .filter(|_| android_device_supports_import(&device))
@@ -660,7 +666,7 @@ pub(crate) fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Opti
         converter: None,
         #[cfg(target_os = "android")]
         import_format: None,
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "linux", target_os = "ios"))]
         converter,
     });
 }
@@ -677,6 +683,112 @@ pub enum UploadResult {
     Cpu,
 }
 
+#[cfg(target_os = "linux")]
+fn linux_device_supports_import(device: &RenderDevice) -> bool {
+    let Some(device) = (unsafe { device.wgpu_device().as_hal::<wgpu::hal::api::Vulkan>() }) else {
+        return false;
+    };
+    [
+        c"VK_KHR_external_memory_fd",
+        c"VK_EXT_external_memory_dma_buf",
+        c"VK_EXT_image_drm_format_modifier",
+    ]
+    .iter()
+    .all(|extension| device.enabled_device_extensions().contains(extension))
+}
+
+#[cfg(target_os = "linux")]
+enum LinuxVideoPlanes {
+    Rgb(DmaBufFrame),
+    Nv12(DmaBufFrame, DmaBufFrame),
+}
+
+#[cfg(target_os = "linux")]
+fn linux_video_planes(
+    descriptor: &ffmpeg_next::ffi::AVDRMFrameDescriptor,
+    width: u32,
+    height: u32,
+) -> Option<LinuxVideoPlanes> {
+    let objects = descriptor
+        .objects
+        .get(..usize::try_from(descriptor.nb_objects).ok()?)?;
+    let layers = descriptor
+        .layers
+        .get(..usize::try_from(descriptor.nb_layers).ok()?)?;
+    if width == 0 || height == 0 || objects.is_empty() {
+        return None;
+    }
+    let plane = |plane: &ffmpeg_next::ffi::AVDRMPlaneDescriptor, width, height, format| {
+        let object = objects.get(usize::try_from(plane.object_index).ok()?)?;
+        let offset = u32::try_from(plane.offset).ok()?;
+        let stride = u32::try_from(plane.pitch).ok().filter(|pitch| *pitch > 0)?;
+        if u64::from(offset) >= object.size as u64 {
+            return None;
+        }
+        let fd = unsafe { libc::fcntl(object.fd, libc::F_DUPFD_CLOEXEC, 0) };
+        if fd < 0 {
+            return None;
+        }
+        Some(DmaBufFrame::new(
+            width,
+            height,
+            format,
+            object.format_modifier,
+            vec![DmaBufPlane {
+                fd: unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) },
+                offset,
+                stride,
+            }],
+            None,
+        ))
+    };
+    match layers {
+        [rgb]
+            if rgb.nb_planes == 1
+                && [*b"AR24", *b"XR24", *b"AB24", *b"XB24"]
+                    .map(u32::from_le_bytes)
+                    .contains(&rgb.format) =>
+        {
+            Some(LinuxVideoPlanes::Rgb(plane(
+                &rgb.planes[0],
+                width,
+                height,
+                DmaBufFormat::from_fourcc(rgb.format),
+            )?))
+        }
+        [luma, chroma]
+            if luma.format == u32::from_le_bytes(*b"R8  ")
+                && [*b"GR88", *b"RG88"]
+                    .map(u32::from_le_bytes)
+                    .contains(&chroma.format)
+                && luma.nb_planes == 1
+                && chroma.nb_planes == 1 =>
+        {
+            Some(LinuxVideoPlanes::Nv12(
+                plane(&luma.planes[0], width, height, DmaBufFormat::R8)?,
+                plane(
+                    &chroma.planes[0],
+                    width.div_ceil(2),
+                    height.div_ceil(2),
+                    DmaBufFormat::Rg8,
+                )?,
+            ))
+        }
+        [nv12] if nv12.format == u32::from_le_bytes(*b"NV12") && nv12.nb_planes == 2 => {
+            Some(LinuxVideoPlanes::Nv12(
+                plane(&nv12.planes[0], width, height, DmaBufFormat::R8)?,
+                plane(
+                    &nv12.planes[1],
+                    width.div_ceil(2),
+                    height.div_ceil(2),
+                    DmaBufFormat::Rg8,
+                )?,
+            ))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(not(target_os = "android"))]
 fn import_native(
     native: Option<&ffmpeg_next::frame::Video>,
@@ -687,55 +799,40 @@ fn import_native(
     {
         let frame =
             native.filter(|frame| frame.format() == ffmpeg_next::format::Pixel::DRM_PRIME)?;
-        let descriptor =
-            unsafe { &*(frame.data(0).as_ptr() as *const ffmpeg_next::ffi::AVDRMFrameDescriptor) };
-        if descriptor.nb_objects < 1
-            || descriptor.nb_objects > descriptor.objects.len() as i32
-            || descriptor.nb_layers != 1
-            || descriptor.layers[0].nb_planes != 1
-        {
-            return None;
-        }
-        let layer = descriptor.layers[0];
-        if ![
-            u32::from_le_bytes(*b"AR24"),
-            u32::from_le_bytes(*b"XR24"),
-            u32::from_le_bytes(*b"AB24"),
-            u32::from_le_bytes(*b"XB24"),
-        ]
-        .contains(&layer.format)
-        {
-            return None;
-        }
-        let format = DmaBufFormat::from_fourcc(layer.format);
-        let force_opaque = format.force_opaque();
-        let plane = layer.planes[0];
-        let object = descriptor.objects.get(plane.object_index as usize)?;
-        let fd = unsafe { libc::dup(object.fd) };
-        if fd < 0 {
-            return None;
-        }
+        let descriptor = unsafe {
+            (*frame.as_ptr()).data[0]
+                .cast::<ffmpeg_next::ffi::AVDRMFrameDescriptor>()
+                .as_ref()?
+        };
+        let planes = linux_video_planes(descriptor, width, height)?;
         let guard = VIDEO_GPU.lock().ok()?;
         let gpu = guard.as_ref()?;
         let importer = gpu.importer.as_ref()?;
-        let frame = DmaBufFrame::new(
-            width,
-            height,
-            format,
-            object.format_modifier,
-            vec![DmaBufPlane {
-                fd: unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) },
-                offset: plane.offset as u32,
-                stride: plane.pitch as u32,
-            }],
-            None,
-        );
         return std::panic::catch_unwind(AssertUnwindSafe(|| {
             let _submission = super::surface_sync::lock();
-            importer.copy_to_texture(frame).into()
+            match planes {
+                LinuxVideoPlanes::Rgb(frame) => {
+                    let opaque = frame.format.force_opaque();
+                    (importer.copy_to_texture(frame).into(), opaque)
+                }
+                LinuxVideoPlanes::Nv12(luma, chroma) => {
+                    let luma = importer.copy_to_texture(luma);
+                    let chroma = importer.copy_to_texture(chroma);
+                    let texture = gpu.converter.as_ref().unwrap().convert(
+                        gpu.device.wgpu_device(),
+                        &gpu.queue,
+                        &luma.create_view(&Default::default()),
+                        &chroma.create_view(&Default::default()),
+                        video_ycbcr_encoding(frame),
+                        width,
+                        height,
+                        [0, 0],
+                    );
+                    (texture.into(), false)
+                }
+            }
         }))
-        .ok()
-        .map(|texture| (texture, force_opaque));
+        .ok();
     }
     #[cfg(target_os = "ios")]
     {
@@ -881,6 +978,134 @@ mod tests {
     use super::*;
     use wgpu_external_frame::{YcbcrEncoding, YcbcrMatrix, YcbcrRange};
 
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        struct WakeThread(std::thread::Thread);
+        impl std::task::Wake for WakeThread {
+            fn wake(self: std::sync::Arc<Self>) {
+                self.0.unpark();
+            }
+            fn wake_by_ref(self: &std::sync::Arc<Self>) {
+                self.0.unpark();
+            }
+        }
+        let waker = std::task::Waker::from(std::sync::Arc::new(WakeThread(std::thread::current())));
+        let mut context = std::task::Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                std::task::Poll::Ready(value) => return value,
+                std::task::Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_drm_planes_validate_layout_and_object_references() {
+        use std::os::fd::AsRawFd;
+        let file = std::fs::File::open("/dev/null").unwrap();
+        let mut descriptor: ffmpeg_next::ffi::AVDRMFrameDescriptor = unsafe { std::mem::zeroed() };
+        descriptor.nb_objects = 1;
+        descriptor.objects[0].fd = file.as_raw_fd();
+        descriptor.objects[0].size = 8192;
+        descriptor.nb_layers = 1;
+        descriptor.layers[0].format = u32::from_le_bytes(*b"NV12");
+        descriptor.layers[0].nb_planes = 2;
+        descriptor.layers[0].planes[0].pitch = 64;
+        descriptor.layers[0].planes[1].pitch = 64;
+        descriptor.layers[0].planes[1].offset = 4096;
+        let Some(LinuxVideoPlanes::Nv12(luma, chroma)) = linux_video_planes(&descriptor, 63, 61)
+        else {
+            panic!("NV12 planes in one object must be supported");
+        };
+        assert_eq!((luma.width, luma.height), (63, 61));
+        assert_eq!((chroma.width, chroma.height), (32, 31));
+        assert_eq!(chroma.planes[0].offset, 4096);
+        descriptor.layers[0].planes[1].object_index = 1;
+        assert!(linux_video_planes(&descriptor, 63, 61).is_none());
+        descriptor.layers[0].planes[1].object_index = 0;
+        descriptor.layers[0].planes[1].offset = -1;
+        assert!(linux_video_planes(&descriptor, 63, 61).is_none());
+        descriptor.nb_layers = 5;
+        assert!(linux_video_planes(&descriptor, 63, 61).is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires a VAAPI decoder and Vulkan DMA-BUF import"]
+    fn linux_vaapi_frames_import_on_gpu() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::VULKAN,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device, queue) = block_on(adapter.request_device(&Default::default())).unwrap();
+        initialize(
+            device.clone().into(),
+            RenderQueue::new(queue.clone()),
+            Some(RenderAdapter::new(adapter)),
+        );
+        assert!(
+            VIDEO_GPU
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .importer
+                .is_some(),
+            "DMA-BUF extensions are required"
+        );
+        let mut decoder = crate::video::Decoder::open(
+            include_bytes!("../../../../tests/fixtures/video.mp4").to_vec(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(decoder.backend, "vaapi");
+        let mut scaler = None;
+        let mut image = None;
+        let mut count = 0;
+        while let Some(frame) = decoder.next(&mut scaler, false).unwrap() {
+            assert!(frame.pixels.is_none());
+            let native = frame
+                .native
+                .as_ref()
+                .expect("VAAPI must export a DRM frame");
+            assert_eq!(native.format(), ffmpeg_next::format::Pixel::DRM_PRIME);
+            let descriptor = unsafe {
+                &*(*native.as_ptr()).data[0].cast::<ffmpeg_next::ffi::AVDRMFrameDescriptor>()
+            };
+            assert!(
+                linux_video_planes(descriptor, frame.width, frame.height).is_some(),
+                "{descriptor:?}"
+            );
+            assert_eq!(
+                upload_video(
+                    &mut image,
+                    frame.width,
+                    frame.height,
+                    frame.pitch,
+                    Some(native),
+                    None,
+                )
+                .unwrap(),
+                UploadResult::Imported
+            );
+            let texture = image.as_ref().unwrap().texture.as_ref().unwrap();
+            let actual = readback_video_texture(&device, &queue, texture);
+            let expected_channel = usize::from(frame.time >= 0.5);
+            assert!(
+                actual[expected_channel] > 240
+                    && actual[1 - expected_channel] < 16
+                    && actual[2] < 16,
+                "pts={} rgba={:?}",
+                frame.time,
+                &actual[..4]
+            );
+            count += 1;
+        }
+        assert_eq!(count, 10);
+    }
+
     #[test]
     fn ycbcr_video_and_full_range_endpoints() {
         for matrix in [YcbcrMatrix::Bt601, YcbcrMatrix::Bt709, YcbcrMatrix::Bt2020] {
@@ -951,27 +1176,6 @@ mod tests {
 
     #[test]
     fn ycbcr_gpu_conversion_handles_color_range_and_partial_workgroups() {
-        fn block_on<F: std::future::Future>(future: F) -> F::Output {
-            struct WakeThread(std::thread::Thread);
-            impl std::task::Wake for WakeThread {
-                fn wake(self: std::sync::Arc<Self>) {
-                    self.0.unpark();
-                }
-                fn wake_by_ref(self: &std::sync::Arc<Self>) {
-                    self.0.unpark();
-                }
-            }
-            let waker =
-                std::task::Waker::from(std::sync::Arc::new(WakeThread(std::thread::current())));
-            let mut context = std::task::Context::from_waker(&waker);
-            let mut future = std::pin::pin!(future);
-            loop {
-                match future.as_mut().poll(&mut context) {
-                    std::task::Poll::Ready(value) => return value,
-                    std::task::Poll::Pending => std::thread::park(),
-                }
-            }
-        }
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = block_on(instance.request_adapter(&Default::default())).unwrap();
         let (device, queue) = block_on(adapter.request_device(&Default::default())).unwrap();
