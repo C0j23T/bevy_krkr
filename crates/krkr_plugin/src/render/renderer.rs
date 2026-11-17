@@ -1,5 +1,7 @@
 #[path = "layer_ex_draw.rs"]
 mod layer_ex_draw;
+#[path = "layer_ex_draw_record.rs"]
+mod layer_ex_draw_record;
 
 // krkr renderer
 

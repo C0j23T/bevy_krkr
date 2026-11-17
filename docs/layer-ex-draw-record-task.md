@@ -1,40 +1,13 @@
 # LayerExDraw EMF+ 接入任务
 
-当前内部记录在 C++ `plugins/LayerExDrawState.inc`：`RecordedDraw { Path path; Appearance appearance; Matrix transform; int smoothingMode; }`；`DrawState` 保存 `recordBackground`、`records`、`recording/replaying`，记录绘图时拷贝 path/appearance，并对 image 使用 `tTVPBaseTexture` 的独立写入快照。重放时组合已记录 transform 与当前 viewTransform，Layer 当前 clip 生效。修改 viewTransform 会重放；clear 清空记录并记背景色。`getRecordImage` 当前为 GPU 位图快照，尚非上游可缩放 Metafile 对象。
+当前 C++ `plugins/LayerExDrawState.inc` 通过 Rust opaque record 句柄保存绘图操作；Storage 仍由 C++ 读写。精确 C ABI 在 `BevyLayerExDraw.h`，Rust 导出位于 `crates/krkr_plugin/src/render/layer_ex_draw_record.rs`。`create/append/clone/query/replay/draw/encode/decode/release/free` 以完整操作传递，`RecordInfo` 为48字节（四个u32与bounds[4] double），解码完整成功后才发布新句柄。
 
-`saveRecord/loadRecord` 上游处理真实 EMF+。当前不支持，不能保存自定义格式或将 roundtrip 当作外部格式兼容性证据。前端 Storage 由 C++ 提供；编解码应放 Rust，消费和产生完整操作，而非暴露底层 EMF+ API。
+Rust registry 深拷贝每项完整 DrawRequest。append 中的 image 使用独立 GPU 纹理快照；clone 共享不可变纹理。replay 组合已记录 transform 与传入 view，沿用同设备同队列的 Vello 路径绘制；draw 还将源矩形映射为目标四边形裁剪。普通 append/replay/draw 没有 GPU 读回；encode 为显式导出读取图片资源。
 
-现有绘图 ABI 在 `Kirikiroid2/src/core/environ/bevy/BevyLayerExDraw.h`，完整 operation 144 字节，Paint 392 字节；`crates/krkr_shim/src/layer_ex_draw.rs` 拥有复制后的 `DrawRequest`。当前 Paint 扩展包含真实 gradient 边界点、环绕色、center/focus、二维tile、blend/gamma、compound 和 arrow cap，不代表每字段已经完整实现。
+格式实现在 `layer_ex_draw_record_format.rs`，依据 Microsoft `[MS-EMFPLUS] v20240423` 独立编写，未添加 parser 依赖或复制第三方解析器源码。当前编码生成真实 EMR_HEADER / EMR_COMMENT_EMFPLUS / EMR_EOF 外壳及 EMF+ Header、Clear、Object、FillPath、DrawPath、world transform、pixel page unit。Path 支持直线、cubic、多figure与close；brush 支持solid、hatch、texture的未压缩32位位图、polygon path gradient、linear gradient；pen 支持常规cap/join、dash、alignment、compound。解码实现对应对象，以及浮点/整数/相对path points、RLE point types、continued objects、save/restore/world transform。未知绘图记录、对象及未支持参数均明确失败。
 
-建议新增记录接口（独立结构；实现代理先与 C++ 负责人确认再落盘）：
+当前检查点不代表完整兼容。尚未实现 DrawImage/DrawString 等非Path绘图记录、压缩或嵌套metafile图像、custom cap、pen transform、非pixel page unit、SourceCopy compositing、外部clip操作、全部brush组合；记录图片再绘到另一个record尚缺保留源裁剪的append-record完整操作。EMF frame与非zero bounds、全部渐变字段的外部语义、资源释放/重启、像素一致性及TJS全流程仍须验证。不能将内部roundtrip或Wine结构接受解释为全部功能完成。
 
-```cpp
-struct TVPBevyRecordedDraw {
-    TVPBevyLayerExDraw operation;
-    uint32_t smoothing_mode;
-    uint32_t reserved;
-};
-struct TVPBevyRecord {
-    const TVPBevyRecordedDraw *operations;
-    uint32_t operation_count;
-    uint32_t background_argb;
-    uint32_t width,height;
-};
-extern "C" int krkr_layer_ex_record_encode(const TVPBevyRecord *,void **bytes,size_t *length);
-extern "C" void krkr_layer_ex_record_free(void *,size_t);
-```
+可review证据：格式单测包含内部vector roundtrip、全部截断位置、长度overflow、continued对象total/type约束；外部fixture包含Wine GDI+独立生成的curve+solid fill+dashed pen metafile，以及官方§3.2.32.21的path record与§3.2.32.22的FillPath bytes。Rust重新编码的文件由Wine独立枚举并播放成功（16条记录，两条path draw），尚无Windows-native像素对照。fixture来源、许可与生成/验证命令见 `crates/krkr_plugin/tests/fixtures/layer_ex_draw/README.md`。
 
-编码前 Rust 深拷贝每项完整 operation，忽略 target/clip 与回写 bounds；transform 只含绘图 transform，不含 viewTransform。image 纹理导出仅 saveRecord 显式操作允许读回。编码必须产生普通 EMF 外壳（EMR_HEADER、EMR_COMMENT_EMFPLUS、EMR_EOF）和真实 EmfPlusHeader/Object/FillPath/DrawPath/DrawImage 等记录。须核对brush/pen对象完整参数与图像颜色/预乘约定。
-
-解码建议返回 Rust 持有的 opaque record 句柄：一次 decode(bytes,length)->handle；query header；replay(handle,target,clip,viewTransform,alphaMode) 在GPU完成；release。C++ 将 opaque record 纳入 DrawState，在新绘图前允许同一记录继续追加。不能返回悬空指针或跨FFI保存TJS指针。具体生命周期与已记录 DrawRequest 的集成需在实现前确定。
-
-官方规范是 Microsoft `[MS-EMFPLUS] - v20240423`，已下载到 `/tmp/layerexdraw-emfplus.pdf`，纯文本 `/tmp/layerexdraw-emfplus.txt`。发布PDF：[MS-EMFPLUS](https://winprotocoldoc.z19.web.core.windows.net/MS-EMFPLUS/%5BMS-EMFPLUS%5D.pdf)，外壳：[MS-EMF](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-emf/)。重点：EmfPlusPath 2.2.1.6、Pen 2.2.1.7、LinearGradientBrushData 2.2.2.24、Header 2.3.3.3、FillPath 2.3.4.17、Object 2.3.5.1。
-
-调研候选 `metafile-emfplus 1.0.1` 只支持解析/播放且存在功能拒绝；其发布源 `/tmp/layerexdraw-metafile/metafile-emfplus-1.0.1`，许可仅 Apache-2.0。未经项目许可审查不添加依赖，不复制其代码。当前项目许可 GPL-2.0-or-later，第三方依赖的GPL版本约束需一起评估。Wine/libgdiplus 可用于独立对照验证，但不能把其bitmap光栅器引入普通绘制路径。
-
-测试按子系统：
-
-1. 编码结构与外部解析器核对、官方或Windows GDI+真实参考文件解码；涵盖曲线、多figure孔洞、brush/pen/transform/clip、图像/文字、continued object、畸形长度和资源上限。
-2. 在现有 `tests/layer_ex_draw.rs` 上验证 record 后清空Appearance/修改源图不影响重放；改viewTransform/Layer尺寸后仍为矢量；getRecordImage再绘到新尺寸保持语义。
-3. saveRecord->loadRecord->GPU像素与原图比较，同时至少一份外部GDI+生成的EMF+参考，不以仅内部roundtrip结论替代兼容验证。
-4. 正常绘图与record/redraw没有GPU读回；只有显式saveRecord导出图像资源可能读回。验证交错命令、destroy/restart与资源释放。
+官方规范：[MS-EMFPLUS](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-emfplus/)、[MS-EMF](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-emf/)。本机PDF/文本位于`/tmp/layerexdraw-emfplus.pdf`和`/tmp/layerexdraw-emfplus.txt`。后续按格式、C++对象/Storage、GPU像素三个子系统验证，不默认运行全量测试或example。

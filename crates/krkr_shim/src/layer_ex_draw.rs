@@ -156,7 +156,10 @@ unsafe fn copy_slice<T: Copy>(
 }
 
 impl DrawRequest {
-    unsafe fn copy(operation: &DrawOperation) -> Result<Self, String> {
+    /// # Safety
+    /// Every nonempty array in `operation`, including paint arrays, must point to
+    /// initialized, aligned, readable elements until this function returns.
+    pub unsafe fn copy(operation: &DrawOperation) -> Result<Self, String> {
         if operation.target == 0
             || operation.fill_rule > 1
             || operation.alpha_mode > 2

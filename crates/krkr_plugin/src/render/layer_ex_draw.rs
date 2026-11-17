@@ -327,6 +327,14 @@ impl KrkrRenderer {
     }
 
     pub(super) fn draw_layer_ex(&mut self, request: &DrawRequest) -> Result<[f64; 4], String> {
+        self.draw_layer_ex_clipped(request, None)
+    }
+
+    pub(super) fn draw_layer_ex_clipped(
+        &mut self,
+        request: &DrawRequest,
+        clip_quad: Option<&[[f64; 2]; 4]>,
+    ) -> Result<[f64; 4], String> {
         let target = self.texture(request.target)?;
         let width =
             u16::try_from(target.texture.width()).map_err(|_| "LayerExDraw target too wide")?;
@@ -363,6 +371,18 @@ impl KrkrRenderer {
             clip_right as f64,
             clip_bottom as f64,
         ));
+        if let Some(quad) = clip_quad {
+            if quad.iter().flatten().any(|value| !value.is_finite()) {
+                return Err("invalid record source clip".into());
+            }
+            let mut clip = BezPath::new();
+            clip.move_to((quad[0][0], quad[0][1]));
+            for point in &quad[1..] {
+                clip.line_to((point[0], point[1]));
+            }
+            clip.close_path();
+            scene.push_clip_path(&clip);
+        }
         let transform = Affine::new(request.transform);
         let mut bounds: Option<Rect> = None;
         for (paint_index, paint) in request.paints.iter().enumerate() {
@@ -586,6 +606,9 @@ impl KrkrRenderer {
             };
             let rect = (transform * geometry).bounding_box();
             bounds = Some(bounds.map_or(rect, |bounds| bounds.union(rect)));
+        }
+        if clip_quad.is_some() {
+            scene.pop_clip();
         }
         scene.pop_clip();
         if clip_left == clip_right

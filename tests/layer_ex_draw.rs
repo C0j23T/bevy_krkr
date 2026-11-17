@@ -113,7 +113,8 @@ fn geometry_path_transform_alpha_and_stroke() {
     assert_eq!(value("s.getMaskPixel(3,4)"),0);
     assert_eq!(value("s.getMainPixel(11,4)"),0x00ff00);
     run("global.recorded=s.getRecordImage(); s.record=false; s.resetViewTransform(); s.clear(0); s.drawImage(0,0,recorded);");
-    assert_eq!(value("s.getMainPixel(11,4)"),0x00ff00);
+    assert_eq!(value("s.getMainPixel(3,4)"),0x00ff00);
+    assert_eq!(value("recorded.GetType()"),2);
     run("s.clear(0); app.clear(); app.addBrush(0xff402010); s.drawRectangle(app,1,2,3,4); global.regions=s.getColorRegionRects(0xff402010);");
     assert_eq!(value("regions.count"),1);
     assert_eq!(engine.eval("regions[0].join(',')").unwrap(),"1,2,3,4");
@@ -155,7 +156,14 @@ fn geometry_path_transform_alpha_and_stroke() {
     assert_eq!(value("s.getMaskPixel(5,10)"),255);
     run("s.clear(0); app.clear(); app.addPen(0xffffffff,%[width:6,compoundArray:[0,0.2,0.8,1]]); s.drawLine(app,4,16,24,16);");
     assert_eq!(value("s.getMaskPixel(12,16)"),0);
-    run("global.rejected=0; try { s.saveRecord('unsupported.emf'); } catch(e) { rejected=1; }");
+    let emf=std::env::temp_dir().join(format!("krkr-layerexdraw-{}.emf",std::process::id()));
+    run("s.record=true; s.clear(0); app.clear(); app.addBrush(0xff20a040); s.drawRectangle(app,2,3,6,5);");
+    run(&format!("s.saveRecord('{}'); s.record=false; s.clear(0); s.loadRecord('{}');",emf.display(),emf.display()));
+    assert_eq!(value("s.getMainPixel(4,5)"),0x40a020);
+    run(&format!("global.metafile=new GdiPlus.Image('{}'); s.record=false; s.clear(0); s.drawImageStretch(0,0,64,64,metafile,0,0,32,32);",emf.display()));
+    assert_eq!(value("s.getMainPixel(8,10)"),0x40a020);
+    std::fs::remove_file(emf).unwrap();
+    run("global.rejected=0; try { s.loadRecord('nonexistent.emf'); } catch(e) { rejected=1; }");
     assert_eq!(value("rejected"),1);
     drop(engine);
     unsafe { sys::krkr_engine_shutdown() };
