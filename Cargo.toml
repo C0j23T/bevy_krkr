@@ -82,5 +82,5 @@ path = "examples/extrans_showcase.rs"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
-strip = true
+# strip = true
 opt-level = "z"

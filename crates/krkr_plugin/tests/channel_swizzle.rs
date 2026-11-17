@@ -93,8 +93,44 @@ fn gpu_channel_arrays_preserve_pixels_and_clip() {
     read.data = actual.as_mut_ptr().cast();
     dispatch(read);
     let mut expected = source;
-    expected[4..12].chunks_exact_mut(4).for_each(|p| p.swap(0, 2));
+    expected[4..12]
+        .chunks_exact_mut(4)
+        .for_each(|p| p.swap(0, 2));
     assert_eq!(actual, expected);
+
+    let blue = [0u8, 0, 255, 255].repeat(6);
+    let mut upload = command(2, 1);
+    upload.data = blue.as_ptr().cast_mut().cast();
+    dispatch(upload);
+
+    let mut fill = command(4, 2);
+    fill.method = c"FillARGB".as_ptr();
+    fill.parameters[12..16].copy_from_slice(&[1.0, 0.0, 0.0, 1.0]);
+    dispatch(fill);
+    let mut pixels = vec![0; blue.len()];
+    let mut read = command(3, 2);
+    read.data = pixels.as_mut_ptr().cast();
+    dispatch(read);
+    assert_eq!(pixels, [255u8, 0, 0, 255].repeat(6));
+
+    fill.rect = [1, 0, 2, 1];
+    fill.parameters[12..16].copy_from_slice(&[0.0, 1.0, 0.0, 1.0]);
+    dispatch(fill);
+    read.data = pixels.as_mut_ptr().cast();
+    dispatch(read);
+    let mut expected = [255u8, 0, 0, 255].repeat(6);
+    expected[4..8].copy_from_slice(&[0, 255, 0, 255]);
+    assert_eq!(pixels, expected);
+
+    let mut copy = command(4, 2);
+    copy.method = c"Copy".as_ptr();
+    copy.sources[0] = 1;
+    copy.source_rects[0] = [0.0, 0.0, 3.0, 2.0];
+    dispatch(copy);
+    read.data = pixels.as_mut_ptr().cast();
+    dispatch(read);
+    assert_eq!(pixels, blue);
+
     for id in [1, 2] {
         dispatch(command(1, id));
     }

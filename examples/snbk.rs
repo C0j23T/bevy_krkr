@@ -56,6 +56,7 @@ fn main() {
         primary_window: Some(Window {
             title: "bevy_krkr – snbk/data.xp3".into(),
             resolution: (1280, 720).into(),
+            present_mode: bevy::window::PresentMode::AutoNoVsync,
             ..default()
         }),
         ..default()

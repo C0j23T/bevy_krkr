@@ -48,7 +48,8 @@ static RENDERER_INSTANCE: Mutex<Option<KrkrRenderer>> = Mutex::new(None);
 
 const GAUSSIAN_WEIGHT_CACHE_CAPACITY: usize = 64;
 const TEXTURE_POOL_RETIRE_FRAMES: usize = 3;
-const TEXTURE_POOL_MAX_PER_SIZE: usize = 2;
+const TEXTURE_POOL_MAX_PER_SIZE: usize = 128;
+const TEXTURE_POOL_MAX_AVAILABLE_BYTES: u64 = 512 * 1024 * 1024;
 
 static GAUSSIAN_WEIGHTS: LazyLock<Mutex<GaussianWeightCache>> =
     LazyLock::new(|| Mutex::new(GaussianWeightCache::default()));
@@ -220,11 +221,13 @@ impl PooledTexture {
 struct TexturePool {
     available: StdHashMap<(u32, u32), Vec<PooledTexture>>,
     retired: VecDeque<(usize, PooledTexture)>,
+    available_bytes: u64,
 }
 
 impl TexturePool {
     fn acquire(&mut self, device: &RenderDevice, width: u32, height: u32) -> PooledTexture {
         if let Some(texture) = self.available.get_mut(&(width, height)).and_then(Vec::pop) {
+            self.available_bytes -= texture_bytes(width, height);
             return texture;
         }
         PooledTexture::new(device, width, height)
@@ -240,9 +243,14 @@ impl TexturePool {
             let (frames, texture) = self.retired.pop_front().unwrap();
             if frames <= 1 {
                 let size = (texture.texture.width(), texture.texture.height());
-                let available = self.available.entry(size).or_default();
-                if available.len() < TEXTURE_POOL_MAX_PER_SIZE {
-                    available.push(texture);
+                let bytes = texture_bytes(size.0, size.1);
+                let count = self.available.get(&size).map_or(0, Vec::len);
+                if count < TEXTURE_POOL_MAX_PER_SIZE
+                    && self.available_bytes.saturating_add(bytes)
+                        <= TEXTURE_POOL_MAX_AVAILABLE_BYTES
+                {
+                    self.available.entry(size).or_default().push(texture);
+                    self.available_bytes += bytes;
                 }
             } else {
                 self.retired.push_back((frames - 1, texture));
@@ -1343,7 +1351,16 @@ impl KrkrRenderer {
                 .acquire(&self.device, old.texture.width(), old.texture.height())
         });
 
-        if !matches!(data[1][0].to_bits(), 40 | 41) {
+        let operation = data[1][0].to_bits();
+        let replaces_entire_target =
+            operation == Operation::FILL_ARGB.0 || operation == Operation::COPY.0;
+        let full_overwrite = replaces_entire_target
+            && data[1][3] == 0.0
+            && data[0][0] <= 0.0
+            && data[0][1] <= 0.0
+            && data[0][2] >= old.texture.width() as f32
+            && data[0][3] >= old.texture.height() as f32;
+        if !matches!(operation, 40 | 41) && !full_overwrite {
             self.encoder().copy_texture_to_texture(
                 old.texture.as_image_copy(),
                 output.texture.as_image_copy(),
@@ -1845,6 +1862,10 @@ fn descriptor(width: u32, height: u32) -> TextureDescriptor<'static> {
             | TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[TextureFormat::Rgba8UnormSrgb],
     }
+}
+
+fn texture_bytes(width: u32, height: u32) -> u64 {
+    u64::from(width) * u64::from(height) * 4
 }
 
 #[inline]
