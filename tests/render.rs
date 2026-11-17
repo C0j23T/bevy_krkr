@@ -62,6 +62,14 @@ fn gpu_layer_operations() {
     near(pixel(5, 5), [128, 0, 127, 255]);
     near(pixel(12, 12), [0, 128, 127, 255]);
     assert_eq!(pixel(30, 30), [0, 0, 255, 255]);
+    let (mut width, mut height) = (0, 0);
+    let first_id = unsafe {
+        sys::krkr_scene_build(std::ptr::null_mut(), &mut width, &mut height)
+    };
+    let second_id = unsafe {
+        sys::krkr_scene_build(std::ptr::null_mut(), &mut width, &mut height)
+    };
+    assert_eq!(first_id, second_id, "static scenes should reuse their texture");
     script(&engine, "child.setPos(20,20);");
     near(pixel(26, 26), [0, 128, 127, 255]);
     assert_eq!(pixel(29, 29), [0, 0, 255, 255]);
