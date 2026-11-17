@@ -1050,7 +1050,7 @@ impl KrkrRenderer {
         }
         if operation == Operation::LAYER_EX_TEXT_PAINT {
             data[1][2] = 0.0;
-        } else {
+        } else if operation != Operation::CHANNEL_SWIZZLE {
             data[2][1] = blend as f32;
         }
         data[6..9].copy_from_slice(&c.source_rects);
@@ -1091,6 +1091,17 @@ impl KrkrRenderer {
                     unsafe { std::slice::from_raw_parts(c.data.cast::<f32>(), c.pitch as usize) };
                 gaussian_data.extend_from_slice(&data);
                 gaussian_data.extend(shifts.iter().map(|s| [*s, 0.0, 0.0, 0.0]));
+                &gaussian_data
+            } else if operation == Operation::SHRINK_COPY {
+                let expected = 2i64 * (i64::from(c.rect[2]) - i64::from(c.rect[0])
+                    + i64::from(c.rect[3]) - i64::from(c.rect[1]));
+                if c.data.is_null() || i64::from(c.pitch) != expected || expected <= 0 {
+                    return Err("invalid shrink copy area tables".into());
+                }
+                gaussian_data.extend_from_slice(&data);
+                gaussian_data.extend_from_slice(unsafe {
+                    std::slice::from_raw_parts(c.data.cast::<[f32; 4]>(), c.pitch as usize)
+                });
                 &gaussian_data
             } else if nagano_tables_only {
                 if c.pitch != 512 || c.data.is_null() {

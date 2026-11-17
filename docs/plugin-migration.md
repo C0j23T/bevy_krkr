@@ -17,6 +17,9 @@
 | --- | --- |
 | `windowEx.dll` | 窗口矩形取宿主画面纹理；显示器为单一假显示器；光标、系统度量、环境变量接宿主；Win32 专属接口为空实现 |
 | `PackinOne.dll` | 批量加载 `layerExBTOA`/`layerExImage`/`layerExRaster`/`shrinkCopy`/`addFont`/`yz_scripts_ext`/`fstat`/`saveStruct` |
+| `layerExBTOA.dll` | 6 个 Layer 函数走 GPU；蓝色/alpha 通道、province 阈值与填色、区域 alpha；真实 Vulkan 像素验证 |
+| `shrinkCopy.dll` | GPU compute 面积平均；`shrinkCopyFast` 保留分轴截断、尾部采样与不透明输出；真实 Vulkan 像素验证 |
+| `layerExAreaAverage.dll` | `Layer.stretchCopyAA` 走 GPU compute；保留透明色权重与边界语义；真实 Vulkan 像素验证 |
 
 ## 已实现（未测试）
 
@@ -24,9 +27,6 @@
 
 | 插件 | 范围 |
 | --- | --- |
-| `layerExBTOA.dll` | 6 个 Layer 像素函数；`fillAlpha` 走 GPU `FillMask`，其余可改为 GPU 通道操作 |
-| `shrinkCopy.dll` | `Layer.shrinkCopy` / `shrinkCopyFast` 可改为 GPU compute 面积平均 |
-| `layerExAreaAverage.dll` | `Layer.stretchCopyAA` 可改为 GPU compute 面积平均 |
 
 ### 调查
 

@@ -428,6 +428,7 @@ impl<'a> ShaderComposer<'a> {
 fn add_operations(composer: &mut ShaderComposer) {
     krkr_operations(composer);
     layerex_operations(composer);
+    pixel_operations(composer);
     extrans_operations(composer);
     nagano_operations(composer);
 }
@@ -1313,4 +1314,119 @@ fn nagano_operations(composer: &mut ShaderComposer) {
             textureStore(output, xy, clamp(result, vec4(0), vec4(1)));
         "},
     );
+}
+
+fn pixel_operations(composer: &mut ShaderComposer) {
+    composer.add_operation(Operation::CHANNEL_SWIZZLE, indoc! {"
+        let s = sample(source, coordinate(0u, at));
+        let channels = vec4<u32>(p[2]);
+        textureStore(output, xy, vec4(s[channels.x], s[channels.y], s[channels.z], s[channels.w]));
+    "});
+    composer.add_operation(Operation::AREA_AVERAGE, indoc! {"
+        let step = vec2<i32>(p[3].xy);
+        let first = vec2<i32>(p[6].xy) * 4096 + (xy - vec2<i32>(p[0].xy)) * step;
+        let last = first + step;
+        let low = first / 4096;
+        let high = min((last + 4095) / 4096, vec2<i32>(textureDimensions(source)) - 1);
+        var alpha = 0.0;
+        var color = vec3(0.0);
+        var transparent = vec3(0.0);
+        var area_total = 0.0;
+        var color_total = 0.0;
+        var transparent_total = 0.0;
+        for (var y = low.y; y < high.y; y++) {
+            let height = min((y + 1) * 4096, last.y) - max(y * 4096, first.y);
+            for (var x = low.x; x < high.x; x++) {
+                let width = min((x + 1) * 4096, last.x) - max(x * 4096, first.x);
+                let area = floor(f32(width) * f32(height) / 4096.0);
+                let s = round(fetch(source, vec2(x, y)) * 255.0);
+                alpha += s.a * area;
+                area_total += area;
+                if (s.a > 0.0) {
+                    let weight = floor(area * s.a / 256.0);
+                    color += s.rgb * weight;
+                    color_total += weight;
+                } else {
+                    transparent += s.rgb * area;
+                    transparent_total += area;
+                }
+            }
+        }
+        var result = fetch(previous, xy);
+        if (area_total > 0.0) {
+            if (color_total == 0.0) {
+                color = transparent;
+                color_total = transparent_total;
+            }
+            result = vec4(floor(color / max(color_total, 1.0)), floor(alpha / area_total)) / 255.0;
+        }
+        textureStore(output, xy, result);
+    "});
+    composer.add_operation(Operation::SHRINK_COPY, indoc! {"
+        let position = xy - vec2<i32>(p[0].xy);
+        let horizontal = 26 + position.x * 2;
+        let vertical = 26 + (i32(p[0].z - p[0].x) + position.y) * 2;
+        let h = p[horizontal];
+        let ht = p[horizontal + 1];
+        let v = p[vertical];
+        let vt = p[vertical + 1];
+        var sum = vec4(0.0);
+        for (var y = -1; y <= i32(v.y); y++) {
+            var ya = 256.0;
+            var yc = 256.0;
+            if (y == -1) { ya = v.z; yc = v.w; }
+            if (y == i32(v.y)) { ya = vt.x; yc = vt.y; }
+            for (var x = -1; x <= i32(h.y); x++) {
+                var xa = 256.0;
+                var xc = 256.0;
+                if (x == -1) { xa = h.z; xc = h.w; }
+                if (x == i32(h.y)) { xa = ht.x; xc = ht.y; }
+                if (xa * ya > 0.0) {
+                    let s = round(fetch(source, vec2<i32>(i32(h.x) + x, i32(v.x) + y)) * 255.0);
+                    sum += s * vec4(vec3(xc * yc), xa * ya);
+                }
+            }
+        }
+        textureStore(output, xy, floor(sum / max(ht.z * vt.z, 1.0)) / 255.0);
+    "});
+    composer.add_operation(Operation::SHRINK_COPY_FAST, indoc! {"
+        let step = vec2<i32>(p[3].xy);
+        let first = xy * step;
+        let last = min(first + step, vec2<i32>(textureDimensions(source)));
+        var sum = vec3(0.0);
+        for (var y = first.y; y < last.y; y++) {
+            var line = vec3(0.0);
+            for (var x = first.x; x < last.x; x++) {
+                line += round(fetch(source, vec2(x, y)).rgb * 255.0);
+            }
+            sum += floor(line / f32(last.x - first.x));
+        }
+        textureStore(output, xy, vec4(floor(sum / f32(last.y - first.y)) / 255.0, 1.0));
+    "});
+    composer.add_operation(Operation::LAYER_EX_BTOA, indoc! {"
+        let mode = u32(p[3].x);
+        var d = fetch(previous, xy);
+        if (mode <= 1u) {
+            d.a = fetch(source, xy + vec2<i32>(p[3].yz)).b;
+        } else if (mode == 2u) {
+            let alpha = round(fetch(source, xy).a * 255.0);
+            var value = alpha;
+            if (p[3].y >= 0.0) {
+                value = select(0.0, 1.0, alpha >= p[3].y && p[3].y < 256.0);
+            }
+            d = vec4(vec3(value / 255.0), 1.0);
+        } else if (mode == 3u) {
+            if (all(vec2<f32>(xy) >= p[4].xy) && all(vec2<f32>(xy) < p[4].zw)) {
+                let a = u32(round(d.a * 255.0));
+                let b = u32(round(fetch(source, xy + vec2<i32>(p[3].yz)).a * 255.0));
+                let product = a * b;
+                d.a = f32((product + (product >> 7u)) >> 8u) / 255.0;
+            } else if (p[3].w >= 0.0) {
+                d.a = p[3].w / 255.0;
+            }
+        } else if (mode == 4u && round(fetch(source, xy).r * 255.0) == p[3].y) {
+            d = p[5];
+        }
+        textureStore(output, xy, d);
+    "});
 }
