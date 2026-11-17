@@ -5,7 +5,7 @@
 - Fate `util.dll` unlink 已修复并获用户实机确认；focused 测试1/1。Kirikiroid2 `8bcb9c8`，根 `d778425`；不要再代跑 Fate。
 - Emote GPU闭环与真实sd001.mtn绘制已通过；提交见最新git log。`emote_validation`继续物理/时间轴/继承/hit/重启验收。PSB打开已测两遍禁止重复；atri/snbk资源可用。
 - XP3 资源需参考 xp3filter 解密；已通知 emote_mesh_test。负责人定位 data720.xp3 内33个 .mtn，正在用项目 Storage 验证。
-- LayerExDraw clear与真实矩形/椭圆不透明整数子集已存档（根`688c895`，K2`8b24735`）；`layerexdraw_lead`按`docs/layerexdraw-task.md`组织Vello后端及完整对象适配。现有依赖还没有vello_gpu。
+- LayerExDraw：`layerexdraw_lead`写C++对象/Path/Matrix/图像/文字/记录，`layerexdraw_gpu`写vello_gpu依赖与Rust后端；任务契约见layerexdraw-task.md/layer-ex-draw-ffi.md。均在工作树未验收，勿误报完成。
 - Fate 与 Emote 验收后，按时间运行 `test_games/snbk` 收尾测试；必须按当前实现更新 `docs/plugin-migration.md`。
-- LayerExDraw 旧集成测试仍在 morphing 最后一帧有 RGB 各差 1 的失败，不能误报为通过。
-- 保留现存用户改动：`external_plugins/psdfile` 内 `psdclass.cpp` 与未跟踪 `psdfile.so`；Emote 代理正在改 `crates/krkr_plugin/src/render/renderer.rs`。
+- 旧morphing末帧失败已定位：nagano.wesl权重255/256；完成帧应直接返回src2，尚未修复，不能误报通过。
+- PSD源码已按用户要求存档：根`298e8f6`，PSD`0f8a684`；保留其`.gitignore`工作树改动。用户另删除了两份docs文档，勿恢复或夹带提交。
