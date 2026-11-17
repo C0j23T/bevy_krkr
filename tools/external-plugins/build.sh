@@ -65,3 +65,9 @@ for logic_plugin in sqlite3 ExtKAGParser win32dialog; do
     cmake --build "$build_dir/$logic_plugin" --parallel 4
   fi
 done
+
+if [[ $plugin == all || $plugin == textrender ]]; then
+  cmake -S "$repo_dir/external_plugins/textrender" -B "$build_dir/textrender" \
+    -DTPSTUB_DIR="$stub_dir" -DNCBIND_DIR="$ncbind_dir" -DCMAKE_BUILD_TYPE=Release
+  cmake --build "$build_dir/textrender" --parallel 4
+fi
