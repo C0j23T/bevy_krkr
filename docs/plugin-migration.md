@@ -37,8 +37,11 @@
 | 插件 | 范围 |
 | --- | --- |
 | `win32dialog.dll` | 独立 tp_stub 外部 submodule；控件模型、Unicode、公开 System 消息/输入协议、卸载已测试；宿主实际 UI、GDI、原生资源模板等未实现 |
+| `layerExDraw.dll` | 文字、字体度量、简化 Appearance 与 GPU `clear(argb)`；清除像素测试通过；路径、图像、变换与记录未完成 |
 
 ### 调查
+
+- `layerExDraw.dll`：[Vello GPU 后端评估](layer-ex-draw-vello.md)；同设备纹理、预乘 alpha、提交顺序与 EMF+ 兼容仍需验证。
 
 ## 下一批实现
 
@@ -57,10 +60,7 @@
 | --- | --- | --- | --- |
 | `wuffmpeg.dll` | 中 | FFmpeg 音频解码 creator | 接入现有 ffmpeg-next，处理与 `video-ffmpeg` 的依赖共享 |
 | `drawdeviceD3D.dll` | 高 | `iTVPDrawDevice` 与合成器（前后平面、转场、软件 DrawBuffer 上传） | 需宿主 LayerManager、窗口呈现与网格契约；WESL 像素接口可承载混合核，不能独立实现整个插件 |
-| `layerExDraw.dll`（完整 API） | 高 | GDI+ 兼容的矢量、文字与图像绘制 | 当前仅文字子集；Vello GPU 可共用 wgpu 30，仍需 alpha/颜色适配、GDI+ 对象与 EMF+ 兼容验证 |
 | `autotest.dll` | 高 | 离屏自动化（帧推进、抓帧、输入注入） | 需要 Bevy 侧 headless 测试宿主与抓帧/输入注入 |
 | `kirikiroid2.dll` 的 BPG/JXR/PVR 分支 | 高 | 图像加载器 | 新增解码库或格式实现；7z/ZIP/TAR/PNG/JPEG/WEBP 已完成 |
 
 ### 调查
-
-- `layerExDraw.dll`：[Vello GPU 后端评估](layer-ex-draw-vello.md)；有条件适合，完成同设备纹理、预乘 alpha、提交顺序及记录兼容验证后再接入。
