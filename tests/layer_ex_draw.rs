@@ -75,9 +75,9 @@ fn geometry_path_transform_alpha_and_stroke() {
     run(r#"
         s.setClip(0,0,32,32); s.clear(0); app.clear(); app.addPen(0xffffffff,1);
         path=new GdiPlus.Path(); path.drawArc(1,1,20,10,45,90); path.startFigure();
-        path.drawCurve([[1,20],[10,12],[20,24]]); path.closeFigure(); s.drawPath(app,path);
+        path.drawCurve([[1,20],[10,12],[20,24]]); path.closeFigure(); bounds=s.drawPath(app,path);
     "#);
-    assert!(value("bounds.width")>0);
+    assert!(value("int(bounds.width)")>0);
     run(r#"
         s.resetTransform(); s.resetViewTransform(); s.clear(0);
         global.src=new Layer(w,s); src.setImageSize(4,4); src.type=ltAlpha; src.clear(0xffff0000);
@@ -105,6 +105,58 @@ fn geometry_path_transform_alpha_and_stroke() {
     let mut left=0;
     for y in 0..24 { for x in 0..10 { left+=value(&format!("s.getMaskPixel({x},{y})")); } }
     assert_eq!(left,0);
+    run(r#"
+        s.resetTransform(); s.record=true; s.clear(0); app.clear(); app.addBrush(0xff00ff00);
+        s.drawRectangle(app,2,3,4,5); app.clear();
+        s.translateViewTransform(8,0);
+    "#);
+    assert_eq!(value("s.getMaskPixel(3,4)"),0);
+    assert_eq!(value("s.getMainPixel(11,4)"),0x00ff00);
+    run("global.recorded=s.getRecordImage(); s.record=false; s.resetViewTransform(); s.clear(0); s.drawImage(0,0,recorded);");
+    assert_eq!(value("s.getMainPixel(11,4)"),0x00ff00);
+    run("s.clear(0); app.clear(); app.addBrush(0xff402010); s.drawRectangle(app,1,2,3,4); global.regions=s.getColorRegionRects(0xff402010);");
+    assert_eq!(value("regions.count"),1);
+    assert_eq!(engine.eval("regions[0].join(',')").unwrap(),"1,2,3,4");
+    let saved=std::env::temp_dir().join(format!("krkr-layerexdraw-{}.png",std::process::id()));
+    run(&format!("s.saveImage('{}','image/png'); global.loaded=new GdiPlus.Image('{}'); s.clear(0); s.drawImage(0,0,loaded);",saved.display(),saved.display()));
+    assert_eq!(value("s.getMainPixel(2,3)"),0x102040);
+    std::fs::remove_file(saved).unwrap();
+    run(r#"
+        app.clear(); app.addBrush(%[type:1,hatchStyle:4,foreColor:0xffff0000,backColor:0xff0000ff]);
+        s.clear(0); s.drawRectangle(app,0,0,16,16);
+    "#);
+    assert_eq!(value("s.getMaskPixel(2,2)"),255);
+    let mut red=0;
+    let mut blue=0;
+    for y in 0..8 { for x in 0..8 {
+        let pixel=value(&format!("s.getMainPixel({x},{y})"));
+        red+=i64::from(pixel==255); blue+=i64::from(pixel==0xff0000);
+    } }
+    assert!(red>0 && blue>0);
+    run(r#"
+        app.clear(); app.addBrush(%[type:3,points:[[0,0],[20,0],[20,20],[0,20]],centerPoint:[10,10],centerColor:0xffffffff,surroundColors:[0xff0000ff]]);
+        s.clear(0); s.drawRectangle(app,0,0,20,20);
+    "#);
+    let center=value("s.getMainPixel(10,10)");
+    let edge=value("s.getMainPixel(19,10)");
+    assert!((center&255)>(edge&255));
+    run(r#"
+        app.clear(); app.addBrush(%[type:4,rect:[0,0,8,8],mode:2,color1:0xffff0000,color2:0xff0000ff,wrapMode:1]);
+        s.clear(0); s.drawRectangle(app,0,0,24,24);
+    "#);
+    assert_ne!(value("s.getMainPixel(3,3)"),value("s.getMainPixel(11,3)"));
+    run(r#"
+        s.clear(0); app.clear(); app.addPen(0xffffffff,%[width:2,startCap:%[width:4,height:5,filled:true],endCap:2]);
+        s.drawLine(app,8,16,24,16);
+    "#);
+    assert_eq!(value("s.getMaskPixel(16,16)"),255);
+    run("s.clear(0); app.clear(); app.addPen(0xffffffff,%[width:4,alignment:1]); s.drawRectangle(app,4,4,20,20);");
+    assert_eq!(value("s.getMaskPixel(3,10)"),0);
+    assert_eq!(value("s.getMaskPixel(5,10)"),255);
+    run("s.clear(0); app.clear(); app.addPen(0xffffffff,%[width:6,compoundArray:[0,0.2,0.8,1]]); s.drawLine(app,4,16,24,16);");
+    assert_eq!(value("s.getMaskPixel(12,16)"),0);
+    run("global.rejected=0; try { s.saveRecord('unsupported.emf'); } catch(e) { rejected=1; }");
+    assert_eq!(value("rejected"),1);
     drop(engine);
     unsafe { sys::krkr_engine_shutdown() };
 }
