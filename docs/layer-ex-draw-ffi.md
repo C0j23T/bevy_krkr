@@ -29,6 +29,6 @@
 
 当前后端使用同一个 Bevy wgpu 30.0.1 设备和队列，路径覆盖由 Vello 生成。实色、sRGB 渐变与 stops、clip、仿射变换、外部 GPU 纹理和整数裁剪均有像素测试。线性渐变的五种 wrap 使用二维 tile 映射；PathGradient 用独立 polygon 边界、逐边周边颜色、center、focus scales 和 stops/blend 生成 GPU paint 纹理，再由 Vello 填充路径。Gamma 路径尚未对照 GDI+，procedural paint 当前使用 2.2 指数近似。
 
-Hatch 使用独立算法生成并缓存 8×8 小纹理，当前支持 style 0–5、24–29、48–50，其余明确拒绝；未复制 Wine 的图案表。Pen 支持居中描边、闭合路径 inset、flat/square/round 端帽、扩展形状端帽、可调箭头、flat/round/triangle dash cap 与对称 compound。MiterClipped join、非对称 compound 和开放路径 inset 明确拒绝，不能视为完整 GDI+ pen。
+Hatch 使用独立算法生成并缓存 8×8 小纹理，支持 style 0–52；未复制 Wine 的图案表，图案像素尚未与 GDI+ 对照。Pen 支持居中描边、闭合路径 inset、flat/square/round 端帽、扩展形状端帽、可调箭头、flat/round/triangle dash cap 与对称 compound。零宽 pen 在目标像素空间生成一像素描边。MiterClipped join、非对称 compound 和开放路径 inset 明确拒绝，不能视为完整 GDI+ pen。
 
-`cargo test -p krkr_plugin --test layer_ex_draw_pixels -- --nocapture` 在 RTX 4060 Vulkan 上验证三种 alpha、clip/变换、渐变、描边边界、外部纹理、自纹理绘制、整数裁剪、空 clip 与 target resize；扩展用例覆盖支持的 Hatch、polygon PathGradient、斜向二维 FlipX、inset、对称 compound 和自定义箭头。`cargo tree -p krkr_plugin -i wgpu --depth 1` 确认仅一份 wgpu 30.0.1。普通操作不读回像素。仍需 GDI+ 参考图、所有 Hatch/pen 组合、Android 和性能验收。
+`cargo test -p krkr_plugin --test layer_ex_draw_pixels -- --nocapture` 在 RTX 4060 Vulkan 上验证三种 alpha、clip/变换、渐变、描边边界、外部纹理、自纹理绘制、整数裁剪、空 clip 与 target resize；扩展用例覆盖 53 种 Hatch、polygon PathGradient、斜向二维 FlipX、inset、对称 compound、自定义箭头和非均匀缩放/旋转/clip 下的一像素 cosmetic pen 与虚线。`cargo tree -p krkr_plugin -i wgpu --depth 1` 确认仅一份 wgpu 30.0.1。普通操作不读回像素。仍需 GDI+ 参考图、完整 pen 组合、Android 和性能验收。
