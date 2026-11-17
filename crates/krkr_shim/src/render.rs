@@ -18,6 +18,9 @@ pub struct RenderCommand {
     pub points: [[f32; 8]; 4],
 }
 
+/// Copy `source_rects[0]` from `sources[0]` into `rect` of an existing target.
+pub const OP_COPY_TO_EXISTING_TEXTURE: u32 = 7;
+
 pub type RenderSink = unsafe fn(&mut RenderCommand) -> Result<(), String>;
 static SINK: RwLock<Option<RenderSink>> = RwLock::new(None);
 

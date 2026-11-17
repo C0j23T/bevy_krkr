@@ -34,7 +34,7 @@ use bevy::{
     shader::{Shader, ShaderCache, ShaderCacheSource},
 };
 use fearless_simd::{Level as SimdLevel, Simd, SimdBase, dispatch as simd_dispatch, u8x16};
-use krkr_shim::render::{GpuMethodRequest, RenderCommand};
+use krkr_shim::render::{GpuMethodRequest, OP_COPY_TO_EXISTING_TEXTURE, RenderCommand};
 
 use super::shader::PluginMethod;
 use crate::render::operations::Operation;
@@ -1284,6 +1284,65 @@ impl KrkrRenderer {
                         timeout: None,
                     })
                     .map_err(|e| e.to_string())?;
+            }
+            OP_COPY_TO_EXISTING_TEXTURE => {
+                if c.target == 0 || c.target == c.sources[0] {
+                    return Err("invalid in-place texture copy target".into());
+                }
+                let source = self.texture(c.sources[0])?;
+                let target = self.texture(c.target)?;
+                let source_rect = c.source_rects[0];
+                let [source_left, source_top, source_right, source_bottom] = source_rect;
+                let [left, top, right, bottom] = c.rect;
+                let width = right.checked_sub(left).unwrap_or_default();
+                let height = bottom.checked_sub(top).unwrap_or_default();
+                if source_rect.iter().any(|value| !value.is_finite())
+                    || source_rect.iter().any(|value| value.fract() != 0.0)
+                    || source_left < 0.0
+                    || source_top < 0.0
+                    || source_right > source.texture.width() as f32
+                    || source_bottom > source.texture.height() as f32
+                    || left < 0
+                    || top < 0
+                    || right > target.texture.width() as i32
+                    || bottom > target.texture.height() as i32
+                    || right <= left
+                    || bottom <= top
+                    || width <= 0
+                    || height <= 0
+                    || source_right - source_left != width as f32
+                    || source_bottom - source_top != height as f32
+                {
+                    return Err("invalid texture copy region".into());
+                }
+                self.encoder().copy_texture_to_texture(
+                    TexelCopyTextureInfo {
+                        texture: &source.texture,
+                        mip_level: 0,
+                        origin: Origin3d {
+                            x: source_left as u32,
+                            y: source_top as u32,
+                            z: 0,
+                        },
+                        aspect: TextureAspect::All,
+                    },
+                    TexelCopyTextureInfo {
+                        texture: &target.texture,
+                        mip_level: 0,
+                        origin: Origin3d {
+                            x: left as u32,
+                            y: top as u32,
+                            z: 0,
+                        },
+                        aspect: TextureAspect::All,
+                    },
+                    Extent3d {
+                        width: width as u32,
+                        height: height as u32,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                self.pending += 1;
             }
             _ => return Err(format!("invalid texture command {}", c.operation)),
         }
