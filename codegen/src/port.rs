@@ -78,7 +78,6 @@ pub const PLUGINS: &[Plugin] = &[
     Plugin { source: "src/plugins/getSample.cpp", module: "getSample.dll", internal: false, feature: None },
     Plugin { source: "src/plugins/saveStruct.cpp", module: "saveStruct.dll", internal: false, feature: None },
     Plugin { source: "src/plugins/varfile.cpp", module: "varfile.dll", internal: false, feature: None },
-    Plugin { source: "src/plugins/win32dialog.cpp", module: "win32dialog.dll", internal: false, feature: None },
     Plugin { source: "src/plugins/wutcwf.cpp", module: "wutcwf.dll", internal: false, feature: None },
     Plugin {
         source: "src/core/environ/bevy/plugins/ScriptsExt.cpp",

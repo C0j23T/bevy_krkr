@@ -40,7 +40,6 @@ fn every_plugin_attaches_on_link() {
         ("fftgraph.dll", "global.drawFFTGraph"),
         ("getabout.dll", "System.getAboutString"),
         ("saveStruct.dll", "(new Array()).toStructString"),
-        ("win32dialog.dll", "global.WIN32Dialog"),
         ("windowEx.dll", "Window.getWindowRect"),
         ("gfxFire.dll", "global.gfxFire"),
         ("layerExAreaAverage.dll", "Layer.stretchCopyAA"),

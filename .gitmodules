@@ -20,3 +20,6 @@
 [submodule "external_plugins/ExtKAGParser"]
 	path = external_plugins/ExtKAGParser
 	url = /home/hepta/Workspace/bevy_krkr/external_plugins/ExtKAGParser
+[submodule "external_plugins/win32dialog"]
+	path = external_plugins/win32dialog
+	url = /home/hepta/Workspace/bevy_krkr/external_plugins/win32dialog
