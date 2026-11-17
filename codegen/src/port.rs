@@ -57,11 +57,11 @@ pub struct Plugin {
 
 pub const PLUGINS: &[Plugin] = &[
     Plugin { source: "src/core/environ/bevy/plugins/LayerExDraw.cpp", module: "layerExDraw.dll", internal: false, feature: None },
-    Plugin { source: "src/core/environ/bevy/plugins/Extrans.cpp", module: "extrans.dll", internal: false, feature: None },
+    Plugin { source: "src/core/environ/bevy/plugins/extrans/Extrans.cpp", module: "extrans.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/ExtNagano.cpp", module: "extNagano.dll", internal: false, feature: None },
     Plugin { source: "src/plugins/layerExPerspective.cpp", module: "perspective.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/LayerExRaster.cpp", module: "layerExRaster.dll", internal: false, feature: None },
-    Plugin { source: "src/core/environ/bevy/plugins/LayerExSave.cpp", module: "layerExSave.dll", internal: false, feature: None },
+    Plugin { source: "src/core/environ/bevy/plugins/layerExSave/LayerExSave.cpp", module: "layerExSave.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/LayerExMovie.cpp", module: "layerExMovie.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/LayerExImage.cpp", module: "layerExImage.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/WindowEx.cpp", module: "windowEx.dll", internal: false, feature: None },
@@ -87,7 +87,7 @@ pub const PLUGINS: &[Plugin] = &[
         feature: None,
     },
     Plugin {
-        source: "src/plugins/xp3filter.cpp",
+        source: "src/plugins/xp3filter/xp3filter.cpp",
         module: "xp3filter.dll",
         internal: true,
         feature: Some("plugin-xp3filter"),

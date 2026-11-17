@@ -185,12 +185,12 @@ mod real {
         for header in ["ExternalPlugins.h", "ExternalTransitions.h"] {
             println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy").join(header).display());
         }
-        println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/ExtraTrans.h").display());
+        println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/extrans/ExtraTrans.h").display());
         for header in ["ExtransGeometry.h", "ExtransTurnTable.h"] {
-            println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins").join(header).display());
+            println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/extrans").join(header).display());
         }
         cpp.cpp(true).std("c++17").files(&sources.cpp).files(&plugins).file(&shim);
-        println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/LayerExSaveUtils.inc").display());
+        println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/layerExSave/LayerExSaveUtils.inc").display());
         cpp.compile("krkr_core");
         let mut c = cc::Build::new();
         configure(&mut c);
