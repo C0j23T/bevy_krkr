@@ -6,6 +6,7 @@ mod surface_sync;
 #[cfg(feature = "video-ffmpeg")]
 pub(crate) mod video;
 
+#[cfg(feature = "test-render-stats")]
 pub use renderer::{RenderStats, stats};
 
 use bevy::{

@@ -30,6 +30,7 @@ bevy = { workspace = true, features = ["raw_vulkan_init"] }
 ndk = { version = "0.9", features = ["api-level-26", "media"] }
 
 [features]
+test-render-stats = []
 video-ffmpeg = ["dep:ffmpeg-next"]
 video-bundled = ["video-ffmpeg", "dep:ffmpeg-sys-next", "ffmpeg-sys-next/build-videotoolbox", "ffmpeg-sys-next/build-mediacodec", "ffmpeg-sys-next/build-lib-d3d11va", "ffmpeg-sys-next/build-vaapi", "ffmpeg-sys-next/build-portable"]
 

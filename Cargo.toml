@@ -46,6 +46,7 @@ bevy = { workspace = true }
 
 [dev-dependencies]
 bevy-inspector-egui = { git = "https://github.com/jakobhellermann/bevy-inspector-egui.git" }
+krkr_plugin = { path = "crates/krkr_plugin", features = ["test-render-stats"] }
 
 [target.'cfg(target_os = "android")'.dev-dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }

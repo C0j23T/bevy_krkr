@@ -54,6 +54,7 @@ const TEXTURE_POOL_MAX_AVAILABLE_BYTES: u64 = 512 * 1024 * 1024;
 static GAUSSIAN_WEIGHTS: LazyLock<Mutex<GaussianWeightCache>> =
     LazyLock::new(|| Mutex::new(GaussianWeightCache::default()));
 
+#[cfg(feature = "test-render-stats")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RenderStats {
     pub scene_copies: u64,
@@ -65,6 +66,7 @@ pub struct RenderStats {
     pub texture_create_commands: u64,
 }
 
+#[cfg(feature = "test-render-stats")]
 pub fn stats() -> Option<RenderStats> {
     RENDERER_INSTANCE
         .lock()
@@ -201,6 +203,7 @@ struct KrkrRenderer {
     queue: RenderQueue,
     encoder: Option<CommandEncoder>,
     pending: usize,
+    #[cfg(feature = "test-render-stats")]
     stats: RenderStats,
 
     textures: HashMap<u64, PooledTexture>,
@@ -446,6 +449,7 @@ impl KrkrRenderer {
             queue,
             encoder: None,
             pending: 0,
+            #[cfg(feature = "test-render-stats")]
             stats: RenderStats::default(),
             textures: HashMap::new(),
             texture_pool: TexturePool::default(),
@@ -1268,7 +1272,10 @@ impl KrkrRenderer {
                 if let Some(previous) = self.textures.insert(c.target, texture) {
                     self.texture_pool.retire(previous);
                 }
-                self.stats.texture_create_commands += 1;
+                #[cfg(feature = "test-render-stats")]
+                {
+                    self.stats.texture_create_commands += 1;
+                }
             }
             // drop texture
             1 => {
@@ -1365,8 +1372,12 @@ impl KrkrRenderer {
                     },
                 );
                 self.pending += 1;
-                self.stats.scene_copies += 1;
-                self.stats.scene_copy_pixels += u64::from(width as u32) * u64::from(height as u32);
+                #[cfg(feature = "test-render-stats")]
+                {
+                    self.stats.scene_copies += 1;
+                    self.stats.scene_copy_pixels +=
+                        u64::from(width as u32) * u64::from(height as u32);
+                }
             }
             _ => return Err(format!("invalid texture command {}", c.operation)),
         }
@@ -1431,8 +1442,11 @@ impl KrkrRenderer {
         }
 
         self.draw(&c, None)?;
-        self.stats.composite_commands += 1;
-        self.stats.composite_pixels += u64::from(width as u32) * u64::from(height as u32);
+        #[cfg(feature = "test-render-stats")]
+        {
+            self.stats.composite_commands += 1;
+            self.stats.composite_pixels += u64::from(width as u32) * u64::from(height as u32);
+        }
         Ok(())
     }
 
@@ -1686,6 +1700,7 @@ impl KrkrRenderer {
             };
 
             let dispatch_size = [width as u32, height as u32];
+            #[cfg(feature = "test-render-stats")]
             if c.operation == 4 {
                 self.stats.draw_commands += 1;
                 self.stats.draw_pixels += u64::from(width as u32) * u64::from(height as u32);
