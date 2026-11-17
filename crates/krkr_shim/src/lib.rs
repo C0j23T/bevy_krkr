@@ -9,6 +9,7 @@ pub mod jpeg;
 pub mod png;
 mod save_image;
 pub mod render;
+pub mod mesh;
 pub mod video;
 pub mod xml;
 

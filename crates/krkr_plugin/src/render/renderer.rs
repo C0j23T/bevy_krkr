@@ -73,6 +73,10 @@ pub fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Option<Rend
         unsafe { renderer.execute(command) }
     }
     krkr_shim::render::set_render_sink(dispatch);
+    krkr_shim::mesh::set_mesh_sink(|request| {
+        let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
+        guard.as_mut().ok_or("Bevy renderer is not initialized")?.draw_mesh(request)
+    });
     krkr_shim::render::set_gpu_method_sink(|request| {
         let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
         let renderer = guard.as_mut().ok_or("Bevy renderer is not initialized")?;
@@ -120,12 +124,7 @@ pub(crate) fn color_video(
     command.method = c"VideoColor".as_ptr();
     command.target = target;
     command.geometry = u32::from(force_opaque);
-    command.rect = [
-        0,
-        0,
-        destination.texture.width() as i32,
-        destination.texture.height() as i32,
-    ];
+    command.rect = [0, 0, destination.texture.width() as i32, destination.texture.height() as i32];
     command.source_rects[0] = command.rect.map(|value| value as f32);
     command.parameters[4..8].copy_from_slice(&color.map(|value| value as f32));
     renderer.draw(&command, Some(image))
@@ -178,6 +177,7 @@ struct KrkrRenderer {
     sampler: Sampler,
 
     ext_nagano: Option<ExtNaganoExtension>,
+    mesh: super::mesh::MeshPipelines,
 }
 
 #[derive(Clone)]
@@ -393,6 +393,7 @@ impl KrkrRenderer {
             let _ = NAGANO_TABLES_DUMMY.set(placeholder(Some("Kirikiri placeholder tables")));
         }
 
+        let mesh = super::mesh::MeshPipelines::new(&device, &operations_shader, &layout);
         let sampler = device.create_sampler(&Default::default());
         Self {
             device,
@@ -409,6 +410,7 @@ impl KrkrRenderer {
             layout,
             sampler,
             ext_nagano,
+            mesh,
         }
     }
 
@@ -525,6 +527,39 @@ impl KrkrRenderer {
 
     fn update(&mut self) {
         self.texture_pool.update();
+    }
+
+    fn draw_mesh(&mut self, request: &krkr_shim::mesh::MeshRequest) -> Result<(), String> {
+        let target = self.texture(request.target)?;
+        let source = self.texture(request.source)?;
+        let mask = self.texture(request.mask)?;
+        let size = [target.texture.width(), target.texture.height()];
+        let params = super::mesh::parameters(request, size);
+        let buffer = self.device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("Kirikiri mesh parameters"), contents: bytemuck::cast_slice(&params),
+            usage: BufferUsages::STORAGE,
+        });
+        let views = [source.default_view.clone(), mask.default_view.clone(), target.default_view.clone()];
+        let entries = [
+            BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&views[0]) },
+            BindGroupEntry { binding: 1, resource: BindingResource::TextureView(&views[1]) },
+            BindGroupEntry { binding: 2, resource: BindingResource::TextureView(&views[2]) },
+            BindGroupEntry { binding: 3, resource: BindingResource::Sampler(&self.mesh.sampler) },
+            BindGroupEntry { binding: 4, resource: buffer.as_entire_binding() },
+        ];
+        let records = NAGANO_RECORDS_DUMMY.get().unwrap();
+        let tables = NAGANO_TABLES_DUMMY.get().unwrap();
+        let mut deform_entries = entries.to_vec();
+        deform_entries.push(BindGroupEntry { binding: 5, resource: buffer.as_entire_binding() });
+        deform_entries.push(BindGroupEntry { binding: 6, resource: records.as_entire_binding() });
+        deform_entries.push(BindGroupEntry { binding: 7, resource: tables.as_entire_binding() });
+        let group = self.device.create_bind_group(None, &self.layout, &deform_entries);
+        let vertex_count = (request.division_x + 1) * (request.division_y + 1);
+        let deform = self.mesh.deform.clone();
+        { let mut pass = self.encoder().begin_compute_pass(&ComputePassDescriptor::default());
+          pass.set_pipeline(&deform); pass.set_bind_group(0, &group, &[]); pass.dispatch_workgroups(vertex_count.div_ceil(64), 1, 1); }
+        self.pending += 1;
+        Ok(())
     }
 
     unsafe fn upload(&mut self, c: &RenderCommand) -> Result<(), String> {
@@ -1548,7 +1583,8 @@ fn descriptor(width: u32, height: u32) -> TextureDescriptor<'static> {
         usage: TextureUsages::TEXTURE_BINDING
             | TextureUsages::STORAGE_BINDING
             | TextureUsages::COPY_SRC
-            | TextureUsages::COPY_DST,
+            | TextureUsages::COPY_DST
+            | TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[TextureFormat::Rgba8UnormSrgb],
     }
 }
@@ -1657,4 +1693,38 @@ fn gaussian_weights(radius: f32) -> Result<Arc<[f32]>, String> {
         .map_err(|e| e.to_string())?
         .insert(key, weights.clone());
     Ok(weights)
+}
+
+
+#[cfg(feature = "video-ffmpeg")]
+pub(crate) fn color_video(
+    target: u64,
+    texture: &Texture,
+    color: [f64; 4],
+    force_opaque: bool,
+) -> Result<(), String> {
+    let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
+    let renderer = guard.as_mut().ok_or("Bevy renderer is not initialized")?;
+    let destination = renderer.texture(target)?;
+    if destination.texture.size() != texture.size() {
+        return Err("video texture dimensions do not match".into());
+    }
+    let image = PooledTexture {
+        texture: texture.clone(),
+        default_view: texture.create_view(&TextureViewDescriptor::default()),
+        srgb_view: Arc::new(OnceLock::new()),
+    };
+    let mut command: RenderCommand = unsafe { std::mem::zeroed() };
+    command.method = c"VideoColor".as_ptr();
+    command.target = target;
+    command.geometry = u32::from(force_opaque);
+    command.rect = [
+        0,
+        0,
+        destination.texture.width() as i32,
+        destination.texture.height() as i32,
+    ];
+    command.source_rects[0] = command.rect.map(|value| value as f32);
+    command.parameters[4..8].copy_from_slice(&color.map(|value| value as f32));
+    renderer.draw(&command, Some(image))
 }

@@ -59,11 +59,20 @@ impl Operation {
     pub const EXT_NAGANO: Self = Self(39);
     pub const BOX_BLUR_H: Self = Self(40);
     pub const BOX_BLUR_V: Self = Self(41);
+
     pub const CHANNEL_SWIZZLE: Self = Self(42);
+
+    // LayerExAreaAverage
     pub const AREA_AVERAGE: Self = Self(43);
+
+    // shrinkCopy
     pub const SHRINK_COPY: Self = Self(44);
     pub const SHRINK_COPY_FAST: Self = Self(45);
+
+    // LayerExBTOA
     pub const LAYER_EX_BTOA: Self = Self(46);
+
+    pub const MESH_RESOLVE: Self = Self(47);
 
     pub const fn to_opcode(method: &str) -> Self {
         let method = match method.as_bytes() {
