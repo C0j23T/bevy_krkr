@@ -8,11 +8,13 @@
 
 | 负责人 | 当前任务 | 主要范围 |
 | --- | --- | --- |
-| `linux_video` | Linux FFmpeg / wgpu 共享修复 | 视频 Rust、`vendor/video` |
-| `gpu_lead` | 三插件 GPU 加速，随后外部 WESL 注册与适用插件 | render operations/composer/renderer、shim/render、三插件 C++ |
-| `external_lead` | 非渲染插件独立 submodule、krkrz 加载对齐、插件目录整理 | 外部加载、构建、`external_plugins` |
+| `linux_video`（完成） | Linux FFmpeg / wgpu 修复：`e9dd3f4`；硬件4项通过 | 已释放槽位 |
+| `gpu_lead` | 三插件已提交 `8e7ef5f`；当前实现外部 WESL 注册与适用插件 | render operations/composer/renderer、shim/render、三插件 C++ |
+| `external_lead` | loader/json已验证待提交；组员 `logic_plugins` 做 sqlite3/ExtKAGParser | 外部加载、构建、`external_plugins` |
 | 主代理 | 清单、提交整合、通道转换接入、Vello 调查 | docs、BevyRender.cpp、ExternalTransitions.cpp |
 
-- 通道转换：已找到 ExternalTransitions.cpp 的 BGRA→RGBA CPU 循环；GPU 组添加 `ChannelSwizzle`，主代理接入。
+- 通道：GPU数组/原地/区域测试已过；C++接入随FFI编译通过。外部测试依赖loader首批完成。
+- 外部loader GPU owner hooks曾提前加入导致链接失败；external_lead先撤并提交loader/json，GPU接口完成后再接线。
+- 新外部子仓库提交、submodule登记统一由主代理做；尚未发布远程仓库。
 - GPU 组与外部组共享边界：tp_stub GPU 注册导出；插件目录移动须协调三插件路径。
-- 任务 8：有余力后安排；逻辑留 C++ / Kirikiroid2，禁止照旧文档重写 Rust。
+- 任务7待空槽分新上下文做Vello调查；任务8由external_lead排期，逻辑留C++/Kirikiroid2。Emote文档已按新约束精简提交 `cbc63e2`。
