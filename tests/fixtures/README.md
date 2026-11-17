@@ -55,3 +55,9 @@ ffmpeg -f lavfi -i color=c=red:s=64x64:r=10:d=0.4 \
 XP3 with compressed segments and index. The NVL acceptance test accepts either
 the source directory or this archive via `NVL_MAKER_DATA`, and copies its input
 to an isolated temporary project before writing any savedata.
+
+`emote-controls.psb` is original generated test content: a 64×64 Emote scene with
+an anchor shape, a parameterized shape, a pose variable, and main/difference
+timelines. Regenerate with `python3 tests/fixtures/generate_emote.py`.
+`tests/emote.rs` uses it for timing, transition restore, timeline deformation,
+hit testing, physics integration, resource reload, and engine restart.

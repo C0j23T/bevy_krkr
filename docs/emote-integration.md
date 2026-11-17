@@ -66,9 +66,13 @@ cargo test --test emote snbk_motion_resource_renders -- --ignored
 
 `mesh_pixels` 直接调用完整 FFI 操作并读回 Vulkan 目标，覆盖身份网格、
 normal / multiply / additive / mode 21、opacity / tint、alpha 蒙版、
-Bezier 镜像与非线性细分、source=target 像素。`emote` 覆盖模块别名与公开 Motion 类；
-真实 snbk 测试需要本地游戏包，未复制游戏资源到仓库。
-帧时间、物理、多层曲面继承、hit test 和完整游戏脚本仍需独立验收。
+Bezier 镜像与非线性细分、source=target 像素。`emote` 使用仓库自制样本覆盖
+60 Hz 时间单位、变量/位置/缩放/旋转插值、过渡与时间轴序列化恢复、
+主/差分时间轴引起的 shape 变形、label 与目标像素 hit test、平移和 affine、
+胸部/头发/部件外力的独立数值校验、固定步长一致性与风力停止后的衰减、Player 状态隔离、资源重载及两轮引擎重启。
+真实 snbk 测试需要本地游戏包，验证真实 Motion 纹理卸载重载及两轮引擎重启的
+首帧像素一致性，未复制游戏资源到仓库。
+多层曲面继承和完整游戏脚本仍需独立验收。
 
 ## snbk 资源调查
 
