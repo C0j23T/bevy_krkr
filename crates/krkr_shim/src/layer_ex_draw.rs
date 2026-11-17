@@ -18,6 +18,13 @@ pub struct ColorStop {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
+pub struct BrushPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
 pub struct DrawPaint {
     pub brush_type: u32,
     pub stroke: u32,
@@ -41,6 +48,22 @@ pub struct DrawPaint {
     pub dash_count: u32,
     pub reserved: u32,
     pub dashes: *const f64,
+    pub tile: [f64; 4],
+    pub center: [f64; 2],
+    pub focus: [f64; 2],
+    pub brush_point_count: u32,
+    pub surround_count: u32,
+    pub brush_points: *const BrushPoint,
+    pub surround_colors: *const u32,
+    pub blend_count: u32,
+    pub brush_flags: u32,
+    pub blend_positions: *const f64,
+    pub blend_factors: *const f64,
+    pub compound_count: u32,
+    pub reserved2: u32,
+    pub compound: *const f64,
+    pub start_arrow: [f64; 4],
+    pub end_arrow: [f64; 4],
 }
 
 #[repr(C)]
@@ -80,6 +103,17 @@ pub struct Paint {
     pub alignment: u32,
     pub stops: Vec<ColorStop>,
     pub dashes: Vec<f64>,
+    pub tile: [f64; 4],
+    pub center: [f64; 2],
+    pub focus: [f64; 2],
+    pub brush_points: Vec<BrushPoint>,
+    pub surround_colors: Vec<u32>,
+    pub brush_flags: u32,
+    pub blend_positions: Vec<f64>,
+    pub blend_factors: Vec<f64>,
+    pub compound: Vec<f64>,
+    pub start_arrow: [f64; 4],
+    pub end_arrow: [f64; 4],
 }
 
 #[derive(Clone, Debug)]
@@ -187,6 +221,41 @@ impl DrawRequest {
             {
                 return Err("invalid LayerExDraw stops or dashes".into());
             }
+            let brush_points =
+                unsafe { copy_slice(paint.brush_points, paint.brush_point_count, 65536) }?;
+            let surround_colors =
+                unsafe { copy_slice(paint.surround_colors, paint.surround_count, 65536) }?;
+            let blend_positions =
+                unsafe { copy_slice(paint.blend_positions, paint.blend_count, 4096) }?;
+            let blend_factors =
+                unsafe { copy_slice(paint.blend_factors, paint.blend_count, 4096) }?;
+            let compound = unsafe { copy_slice(paint.compound, paint.compound_count, 4096) }?;
+            if !finite(
+                paint
+                    .tile
+                    .into_iter()
+                    .chain(paint.center)
+                    .chain(paint.focus)
+                    .chain(paint.start_arrow)
+                    .chain(paint.end_arrow),
+            ) || paint.focus.iter().any(|value| !(0.0..=1.0).contains(value))
+                || brush_points.iter().any(|point| !finite([point.x, point.y]))
+                || paint.brush_flags & !1 != 0
+                || blend_positions
+                    .iter()
+                    .chain(&blend_factors)
+                    .chain(&compound)
+                    .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+                || blend_positions.windows(2).any(|pair| pair[0] > pair[1])
+                || compound.len() % 2 != 0
+                || compound.windows(2).any(|pair| pair[0] > pair[1])
+                || (!blend_positions.is_empty()
+                    && (blend_positions.len() < 2
+                        || blend_positions[0] != 0.0
+                        || *blend_positions.last().unwrap() != 1.0))
+            {
+                return Err("invalid LayerExDraw brush geometry or factors".into());
+            }
             paints.push(Paint {
                 brush_type: paint.brush_type,
                 stroke: paint.stroke == 1,
@@ -207,6 +276,17 @@ impl DrawRequest {
                 alignment: paint.alignment,
                 stops,
                 dashes,
+                tile: paint.tile,
+                center: paint.center,
+                focus: paint.focus,
+                brush_points,
+                surround_colors,
+                brush_flags: paint.brush_flags,
+                blend_positions,
+                blend_factors,
+                compound,
+                start_arrow: paint.start_arrow,
+                end_arrow: paint.end_arrow,
             });
         }
         Ok(Self {
@@ -254,7 +334,7 @@ pub unsafe extern "C" fn krkr_layer_ex_draw(operation: *mut DrawOperation) -> i3
 const _: () = {
     assert!(std::mem::size_of::<PathElement>() == 56);
     assert!(std::mem::size_of::<ColorStop>() == 16);
-    assert!(std::mem::size_of::<DrawPaint>() == 200);
+    assert!(std::mem::size_of::<DrawPaint>() == 392);
     assert!(std::mem::size_of::<DrawOperation>() == 144);
 };
 

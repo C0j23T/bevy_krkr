@@ -1,8 +1,14 @@
+#[path = "layer_ex_draw_hatch.rs"]
+mod hatch;
+#[path = "layer_ex_draw_pen.rs"]
+mod pen;
+
 use super::{KrkrRenderer, PooledTexture};
 use krkr_shim::layer_ex_draw::{DrawRequest, Paint};
+use std::collections::HashMap;
 use vello_gpu::{
     Scene,
-    kurbo::{self, Affine, BezPath, Cap, Join, Rect, Shape, Stroke},
+    kurbo::{self, Affine, BezPath, Rect, Shape},
     peniko::{Color, Extend, Fill, Gradient, ImageSampler, color::ColorSpaceTag},
 };
 
@@ -11,6 +17,9 @@ pub(super) struct Backend {
     resources: vello_gpu::Resources,
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
+    paint_pipeline: wgpu::ComputePipeline,
+    paint_layout: wgpu::BindGroupLayout,
+    hatches: HashMap<(u32, [u32; 2]), PooledTexture>,
 }
 
 const CONVERT: &str = r#"
@@ -66,11 +75,27 @@ impl Backend {
             cache: None,
         });
         let layout = pipeline.get_bind_group_layout(0);
+        let paint_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("LayerExDraw procedural brushes"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("layer_ex_draw_paint.wgsl").into()),
+        });
+        let paint_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("LayerExDraw procedural brushes"),
+            layout: None,
+            module: &paint_module,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let paint_layout = paint_pipeline.get_bind_group_layout(0);
         Self {
             renderer,
             resources,
             pipeline,
             layout,
+            paint_pipeline,
+            paint_layout,
+            hatches: HashMap::new(),
         }
     }
 }
@@ -84,40 +109,166 @@ fn color(argb: u32) -> Color {
     )
 }
 
-fn cap(value: u32) -> Result<Cap, String> {
-    match value {
-        0 => Ok(Cap::Butt),
-        1 => Ok(Cap::Square),
-        2 => Ok(Cap::Round),
-        _ => Err(format!("unsupported LayerExDraw cap {value}")),
-    }
+fn rgba(argb: u32) -> [f32; 4] {
+    [
+        (argb >> 16) as u8,
+        (argb >> 8) as u8,
+        argb as u8,
+        (argb >> 24) as u8,
+    ]
+    .map(|v| f32::from(v) / 255.0)
 }
 
-fn stroke(paint: &Paint) -> Result<Stroke, String> {
-    if paint.alignment != 0 {
-        return Err("inset pen alignment is not supported".into());
-    }
-    if !paint.dashes.is_empty() && paint.dash_cap != 0 {
-        return Err("non-flat dash caps are not supported".into());
-    }
-    let mut stroke = Stroke::new(paint.width);
-    stroke.start_cap = cap(paint.start_cap)?;
-    stroke.end_cap = cap(paint.end_cap)?;
-    stroke.join = match paint.join {
-        0 | 3 => Join::Miter,
-        1 => Join::Bevel,
-        2 => Join::Round,
-        _ => return Err("unsupported LayerExDraw line join".into()),
-    };
-    stroke.miter_limit = paint.miter_limit;
-    stroke.dash_offset = paint.dash_offset * paint.width;
-    stroke
-        .dash_pattern
-        .extend(paint.dashes.iter().map(|value| value * paint.width));
-    Ok(stroke)
+fn mix_color(a: u32, b: u32, factor: f64) -> Color {
+    let a = rgba(a);
+    let b = rgba(b);
+    Color::new(std::array::from_fn(|i| {
+        a[i] + (b[i] - a[i]) * factor as f32
+    }))
 }
 
 impl KrkrRenderer {
+    fn prepare_draw_paint(
+        &mut self,
+        backend: &Backend,
+        request: &DrawRequest,
+        paint: &Paint,
+        width: u32,
+        height: u32,
+    ) -> Result<PooledTexture, String> {
+        use bevy::render::render_resource::{BufferInitDescriptor, BufferUsages};
+        let transform = Affine::new(request.transform)
+            * Affine::translate((paint.offset[0], paint.offset[1]))
+            * Affine::new(paint.transform);
+        if transform.determinant().abs() < 1e-12 {
+            return Err("singular brush transform".into());
+        }
+        let inv = transform.inverse().as_coeffs();
+        let mut tile = paint.tile;
+        if paint.brush_type == 3 {
+            let (mut left, mut top, mut right, mut bottom) = (
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            );
+            for p in &paint.brush_points {
+                left = left.min(p.x);
+                top = top.min(p.y);
+                right = right.max(p.x);
+                bottom = bottom.max(p.y);
+            }
+            tile = [left, top, right - left, bottom - top];
+        }
+        if paint.wrap < 4 && (tile[2] <= 0.0 || tile[3] <= 0.0) {
+            return Err("gradient tile has no area".into());
+        }
+        let mut ramps: Vec<(f32, [f32; 4])> = Vec::new();
+        if !paint.stops.is_empty() {
+            ramps.extend(
+                paint
+                    .stops
+                    .iter()
+                    .map(|stop| (stop.position as f32, rgba(stop.color))),
+            );
+        } else if !paint.blend_positions.is_empty() {
+            ramps.extend(
+                paint
+                    .blend_positions
+                    .iter()
+                    .zip(&paint.blend_factors)
+                    .map(|(&p, &f)| {
+                        (
+                            p as f32,
+                            if paint.brush_type == 3 {
+                                [f as f32, f as f32, f as f32, 1.0]
+                            } else {
+                                mix_color(paint.colors[0], paint.colors[1], f).components
+                            },
+                        )
+                    }),
+            );
+        } else if paint.brush_type == 3 {
+            ramps = vec![(0.0, [0.0, 0.0, 0.0, 1.0]), (1.0, [1.0; 4])];
+        } else {
+            ramps = vec![(0.0, rgba(paint.colors[0])), (1.0, rgba(paint.colors[1]))];
+        }
+        let mut data = vec![[0.0; 4]; 8];
+        data[0] = [
+            width as f32,
+            paint.brush_type as f32,
+            paint.wrap as f32,
+            ramps.len() as f32,
+        ];
+        data[1] = [inv[0] as f32, inv[2] as f32, inv[4] as f32, 0.0];
+        data[2] = [inv[1] as f32, inv[3] as f32, inv[5] as f32, 0.0];
+        data[3] = tile.map(|v| v as f32);
+        data[4] = if paint.brush_type == 3 {
+            [paint.center[0] as f32, paint.center[1] as f32, 0.0, 0.0]
+        } else {
+            paint.coordinates.map(|v| v as f32)
+        };
+        data[5] = [
+            paint.focus[0] as f32,
+            paint.focus[1] as f32,
+            paint.brush_points.len() as f32,
+            0.0,
+        ];
+        data[6] = rgba(paint.colors[0]);
+        data[7] = [
+            0.0,
+            0.0,
+            f32::from(!paint.stops.is_empty()),
+            (paint.brush_flags & 1) as f32,
+        ];
+        for (position, color) in ramps {
+            data.push(color);
+            data.push([position, 0.0, 0.0, 0.0]);
+        }
+        for (i, point) in paint.brush_points.iter().enumerate() {
+            data.push([point.x as f32, point.y as f32, 0.0, 0.0]);
+            data.push(rgba(
+                paint
+                    .surround_colors
+                    .get(i)
+                    .or_else(|| paint.surround_colors.first())
+                    .copied()
+                    .unwrap_or(paint.colors[1]),
+            ));
+        }
+        let data = self.device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("LayerExDraw procedural paint data"),
+            contents: bytemuck::cast_slice(&data),
+            usage: BufferUsages::STORAGE,
+        });
+        let texture = self.texture_pool.acquire(&self.device, width, height);
+        let group = self
+            .device
+            .wgpu_device()
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &backend.paint_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: data.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&texture.default_view),
+                    },
+                ],
+            });
+        let mut pass = self
+            .encoder()
+            .begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+        pass.set_pipeline(&backend.paint_pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+        drop(pass);
+        Ok(texture)
+    }
+
     fn convert_draw_texture(
         &mut self,
         backend: &Backend,
@@ -214,8 +365,8 @@ impl KrkrRenderer {
         ));
         let transform = Affine::new(request.transform);
         let mut bounds: Option<Rect> = None;
-        for paint in &request.paints {
-            if ![0, 2, 4].contains(&paint.brush_type) {
+        for (paint_index, paint) in request.paints.iter().enumerate() {
+            if paint.brush_type > 4 {
                 return Err(format!(
                     "unsupported LayerExDraw brush {}",
                     paint.brush_type
@@ -226,12 +377,62 @@ impl KrkrRenderer {
             scene.set_paint_transform(Affine::new(paint.transform));
             match paint.brush_type {
                 0 => scene.set_paint(color(paint.colors[0])),
+                1 => {
+                    if !hatch::supported(paint.hatch) {
+                        return Err("invalid hatch style".into());
+                    }
+                    scene.set_paint(vello_gpu::Image {
+                        image: vello_gpu::ImageSource::external_texture(
+                            vello_gpu::TextureId(paint_index as u64 + 1),
+                            vello_gpu::TextureRegion::Full,
+                            true,
+                        ),
+                        sampler: ImageSampler::new()
+                            .with_extend(Extend::Repeat)
+                            .with_quality(vello_gpu::peniko::ImageQuality::Low),
+                    });
+                }
+                3 => {
+                    if paint.brush_points.len() < 3
+                        || paint.brush_points.len() > 4096
+                        || (!paint.surround_colors.is_empty()
+                            && paint.surround_colors.len() != 1
+                            && paint.surround_colors.len() != paint.brush_points.len())
+                    {
+                        return Err("invalid path gradient boundary or surround colors".into());
+                    }
+                    scene.set_paint_transform(transform.inverse());
+                    scene.set_paint(vello_gpu::Image {
+                        image: vello_gpu::ImageSource::external_texture(
+                            vello_gpu::TextureId(paint_index as u64 + 1),
+                            vello_gpu::TextureRegion::Full,
+                            true,
+                        ),
+                        sampler: ImageSampler::new()
+                            .with_quality(vello_gpu::peniko::ImageQuality::Low),
+                    });
+                }
                 4 => {
                     let p = paint.coordinates;
                     if p[0] == p[2] && p[1] == p[3] {
                         return Err("zero length gradient".into());
                     }
-                    let extend = match paint.wrap {
+                    if paint.wrap < 4 {
+                        if paint.tile[2] <= 0.0 || paint.tile[3] <= 0.0 {
+                            return Err("linear gradient tile must have positive size".into());
+                        }
+                        scene.set_paint_transform(transform.inverse());
+                        scene.set_paint(vello_gpu::Image {
+                            image: vello_gpu::ImageSource::external_texture(
+                                vello_gpu::TextureId(paint_index as u64 + 1),
+                                vello_gpu::TextureRegion::Full,
+                                true,
+                            ),
+                            sampler: ImageSampler::new()
+                                .with_quality(vello_gpu::peniko::ImageQuality::Low),
+                        });
+                    } else {
+                        let extend = match paint.wrap {
                         0 => Extend::Repeat,
                         3 => Extend::Reflect,
                         4 => Extend::Pad,
@@ -240,20 +441,39 @@ impl KrkrRenderer {
                                 .into(),
                         ),
                     };
-                    let mut gradient = Gradient::new_linear((p[0], p[1]), (p[2], p[3]))
-                        .with_extend(extend)
-                        .with_interpolation_cs(ColorSpaceTag::Srgb);
-                    if paint.stops.is_empty() {
-                        gradient = gradient.with_stops(paint.colors.map(color));
-                    } else {
-                        let stops: Vec<vello_gpu::peniko::ColorStop> = paint
-                            .stops
-                            .iter()
-                            .map(|s| (s.position as f32, color(s.color)).into())
-                            .collect();
-                        gradient = gradient.with_stops(stops.as_slice());
+                        let mut gradient = Gradient::new_linear((p[0], p[1]), (p[2], p[3]))
+                            .with_extend(extend)
+                            .with_interpolation_cs(if paint.brush_flags & 1 == 0 {
+                                ColorSpaceTag::Srgb
+                            } else {
+                                ColorSpaceTag::LinearSrgb
+                            });
+                        if paint.stops.is_empty() && !paint.blend_positions.is_empty() {
+                            let stops: Vec<vello_gpu::peniko::ColorStop> = paint
+                                .blend_positions
+                                .iter()
+                                .zip(&paint.blend_factors)
+                                .map(|(&position, &factor)| {
+                                    (
+                                        position as f32,
+                                        mix_color(paint.colors[0], paint.colors[1], factor),
+                                    )
+                                        .into()
+                                })
+                                .collect();
+                            gradient = gradient.with_stops(stops.as_slice());
+                        } else if paint.stops.is_empty() {
+                            gradient = gradient.with_stops(paint.colors.map(color));
+                        } else {
+                            let stops: Vec<vello_gpu::peniko::ColorStop> = paint
+                                .stops
+                                .iter()
+                                .map(|s| (s.position as f32, color(s.color)).into())
+                                .collect();
+                            gradient = gradient.with_stops(stops.as_slice());
+                        }
+                        scene.set_paint(gradient);
                     }
-                    scene.set_paint(gradient);
                 }
                 2 => {
                     let source = self.texture(paint.image)?;
@@ -303,7 +523,7 @@ impl KrkrRenderer {
                     };
                     scene.set_paint(vello_gpu::Image {
                         image: vello_gpu::ImageSource::external_texture(
-                            vello_gpu::TextureId(paint.image),
+                            vello_gpu::TextureId(paint_index as u64 + 1),
                             region,
                             true,
                         ),
@@ -313,12 +533,34 @@ impl KrkrRenderer {
                 _ => unreachable!(),
             }
             let geometry = if paint.stroke {
-                let stroke = stroke(paint)?;
-                let outline =
-                    kurbo::stroke(path.iter(), &stroke, &kurbo::StrokeOpts::default(), 0.05);
-                scene.set_stroke(stroke);
-                scene.stroke_path(&path);
-                outline
+                if paint.alignment == 1 {
+                    if path
+                        .iter()
+                        .filter(|element| matches!(element, kurbo::PathEl::MoveTo(_)))
+                        .count()
+                        != path
+                            .iter()
+                            .filter(|element| matches!(element, kurbo::PathEl::ClosePath))
+                            .count()
+                    {
+                        return Err("inset pen requires closed subpaths".into());
+                    }
+                    scene.push_clip_path(&path);
+                }
+                let outline = pen::outline(&path, paint)?;
+                scene.set_fill_rule(Fill::NonZero);
+                scene.fill_path(&outline);
+                scene.set_fill_rule(if request.fill_rule == 0 {
+                    Fill::EvenOdd
+                } else {
+                    Fill::NonZero
+                });
+                if paint.alignment == 1 {
+                    scene.pop_clip();
+                    path.clone()
+                } else {
+                    outline
+                }
             } else {
                 scene.fill_path(&path);
                 path.clone()
@@ -343,14 +585,71 @@ impl KrkrRenderer {
         let result = (|| {
             let mut bindings = vello_gpu::TextureBindings::new();
             let mut sources = Vec::new();
-            for paint in request.paints.iter().filter(|paint| paint.brush_type == 2) {
-                let source = self.texture(paint.image)?;
-                let prepared = self.convert_draw_texture(&backend, &source, &source, 3);
+            for (paint_index, paint) in request.paints.iter().enumerate() {
+                let prepared = match paint.brush_type {
+                    1 => {
+                        let key = (paint.hatch, paint.colors);
+                        if !backend.hatches.contains_key(&key) {
+                            if backend.hatches.len() >= 64 {
+                                backend.hatches.clear();
+                            }
+                            let texture = self.texture_pool.acquire(&self.device, 8, 8);
+                            let mut pixels = Vec::with_capacity(256);
+                            for y in 0..8 {
+                                for x in 0..8 {
+                                    let argb = paint.colors
+                                        [usize::from(!hatch::foreground(paint.hatch, x, y))];
+                                    let alpha = (argb >> 24) as u8;
+                                    for channel in
+                                        [(argb >> 16) as u8, (argb >> 8) as u8, argb as u8]
+                                    {
+                                        pixels.push(
+                                            ((u16::from(channel) * u16::from(alpha) + 127) / 255)
+                                                as u8,
+                                        );
+                                    }
+                                    pixels.push(alpha);
+                                }
+                            }
+                            self.queue.write_texture(
+                                texture.texture.as_image_copy(),
+                                &pixels,
+                                wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(32),
+                                    rows_per_image: None,
+                                },
+                                texture.texture.size(),
+                            );
+                            backend.hatches.insert(key, texture);
+                        }
+                        backend.hatches[&key].clone()
+                    }
+                    3 | 4 => {
+                        if paint.brush_type == 4 && paint.wrap == 4 {
+                            continue;
+                        }
+                        self.prepare_draw_paint(
+                            &backend,
+                            request,
+                            paint,
+                            width.into(),
+                            height.into(),
+                        )?
+                    }
+                    2 => {
+                        let source = self.texture(paint.image)?;
+                        self.convert_draw_texture(&backend, &source, &source, 3)
+                    }
+                    _ => continue,
+                };
                 bindings.insert(
-                    vello_gpu::TextureId(paint.image),
+                    vello_gpu::TextureId(paint_index as u64 + 1),
                     (*prepared.default_view).clone(),
                 );
-                sources.push(prepared);
+                if paint.brush_type != 1 {
+                    sources.push(prepared);
+                }
             }
             self.flush();
             let rendered = self

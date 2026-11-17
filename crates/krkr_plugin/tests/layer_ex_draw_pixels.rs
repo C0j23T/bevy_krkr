@@ -5,7 +5,7 @@ use bevy::{
     window::ExitCondition,
 };
 use krkr_shim::{
-    layer_ex_draw::{DrawOperation, DrawPaint, PathElement, krkr_layer_ex_draw},
+    layer_ex_draw::{BrushPoint, DrawOperation, DrawPaint, PathElement, krkr_layer_ex_draw},
     render::{RenderCommand, krkr_render_dispatch},
 };
 
@@ -252,6 +252,94 @@ fn vello_paths_alpha_clip_transform_gradient_stroke_and_external_gpu_image() {
     for p in read(1).chunks_exact(4) {
         near(p, [0, 255, 0, 255]);
     }
+    for style in (0..=5).chain(24..=29).chain(48..=50) {
+        upload(1, [0; 4]);
+        let hatch = DrawPaint {
+            brush_type: 1,
+            hatch: style,
+            colors: [0xffff0000, 0xff0000ff],
+            ..paint(0)
+        };
+        draw(&path, &[hatch], IDENTITY, [0, 0, 8, 8], 0);
+        let pixels = read(1);
+        assert!(
+            pixels
+                .chunks_exact(4)
+                .all(|p| p == [255, 0, 0, 255] || p == [0, 0, 255, 255]),
+            "style {style}"
+        );
+        assert!(pixels.chunks_exact(4).any(|p| p == [255, 0, 0, 255]));
+        assert!(pixels.chunks_exact(4).any(|p| p == [0, 0, 255, 255]));
+    }
+    upload(1, [0; 4]);
+    let points = [
+        BrushPoint { x: 0., y: 0. },
+        BrushPoint { x: 8., y: 0. },
+        BrushPoint { x: 8., y: 8. },
+        BrushPoint { x: 0., y: 8. },
+    ];
+    let radial = DrawPaint {
+        brush_type: 3,
+        colors: [0xffff0000, 0xff0000ff],
+        center: [4., 4.],
+        wrap: 4,
+        brush_point_count: 4,
+        brush_points: points.as_ptr(),
+        ..paint(0)
+    };
+    draw(&path, &[radial], IDENTITY, [0, 0, 8, 8], 0);
+    let pixels = read(1);
+    near(&pixels[(4 * 8 + 4) * 4..][..4], [223, 0, 32, 255]);
+    near(&pixels[(4 * 8 + 7) * 4..][..4], [32, 0, 223, 255]);
+    upload(1, [0; 4]);
+    let tiled = DrawPaint {
+        brush_type: 4,
+        colors: [0xffff0000, 0xff0000ff],
+        coordinates: [0., 0., 4., 4.],
+        tile: [0., 0., 4., 4.],
+        wrap: 1,
+        ..paint(0)
+    };
+    draw(&path, &[tiled], IDENTITY, [0, 0, 8, 8], 0);
+    let pixels = read(1);
+    near(&pixels[(1 * 8 + 1) * 4..][..4], [159, 0, 96, 255]);
+    near(&pixels[(1 * 8 + 5) * 4..][..4], [127, 0, 128, 255]);
+    upload(1, [0; 4]);
+    let inset = DrawPaint {
+        stroke: 1,
+        width: 1.,
+        alignment: 1,
+        ..paint(0xffffffff)
+    };
+    draw(&path, &[inset], IDENTITY, [0, 0, 8, 8], 0);
+    let pixels = read(1);
+    near(&pixels[..4], [255; 4]);
+    near(&pixels[(4 * 8 + 4) * 4..][..4], [0; 4]);
+    upload(1, [0; 4]);
+    let compound = [0., 0.25, 0.75, 1.];
+    let bands = DrawPaint {
+        stroke: 1,
+        width: 4.,
+        compound_count: 4,
+        compound: compound.as_ptr(),
+        ..paint(0xffffffff)
+    };
+    draw(&line, &[bands], IDENTITY, [0, 0, 8, 8], 0);
+    let pixels = read(1);
+    near(&pixels[(2 * 8 + 4) * 4..][..4], [255; 4]);
+    near(&pixels[(3 * 8 + 4) * 4..][..4], [0; 4]);
+    upload(1, [0; 4]);
+    let arrow = DrawPaint {
+        stroke: 1,
+        width: 1.,
+        end_cap: 255,
+        end_arrow: [4., 3., 0., 1.],
+        ..paint(0xffffffff)
+    };
+    draw(&line, &[arrow], IDENTITY, [0, 0, 8, 8], 0);
+    let pixels = read(1);
+    assert!(pixels[(3 * 8 + 5) * 4 + 3] > 128);
+    near(&pixels[(1 * 8 + 5) * 4..][..4], [0; 4]);
     let mut resize = command(0, 1);
     resize.rect = [0, 0, 4, 4];
     dispatch(resize);
