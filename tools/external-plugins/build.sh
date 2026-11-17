@@ -57,7 +57,7 @@ if [[ $plugin == all || $plugin == psbfile ]]; then
   cmake --build "$build_dir/psbfile" --parallel 4
 fi
 
-for logic_plugin in sqlite3 ExtKAGParser; do
+for logic_plugin in sqlite3 ExtKAGParser win32dialog; do
   if [[ $plugin == all || $plugin == "$logic_plugin" ]]; then
     cmake -S "$repo_dir/external_plugins/$logic_plugin" -B "$build_dir/$logic_plugin" \
       -DTPSTUB_DIR="$stub_dir" -DNCBIND_DIR="$ncbind_dir" -DCMAKE_BUILD_TYPE=Release

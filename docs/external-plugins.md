@@ -63,3 +63,15 @@ cargo test --test external_sqlite --test external_kag -- --ignored --test-thread
 加载时替换全局 `KAGParser`，卸载时恢复原值；覆盖宏、循环、局部变量、参数宏、
 跨行标签、状态保存恢复和赋值。两个独立仓库均只依赖标准 tp_stub 与 ncbind，
 有活实例时拒绝卸载，已验证卸载重载和宿主关闭。
+
+## 对话框模型
+
+```sh
+tools/external-plugins/build.sh win32dialog
+cargo test --test external_dialog -- --ignored
+```
+
+`win32dialog.dll` 已替代内置 stub，提供模板、控件状态与消息处理，通过公开
+`System.inform` / `System.inputString` 调用宿主。模型与调用协议已测试；当前
+宿主仅记录请求并返回取消，没有交互 UI。原生资源模板、GDI、property sheet
+及 modeless 窗口仍不支持，不能作为 Win32 完整对话框实现。

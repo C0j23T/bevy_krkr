@@ -17,6 +17,7 @@
 
 | 插件 | 范围 |
 | --- | --- |
+
 | `windowEx.dll` | 窗口矩形取宿主画面纹理；显示器为单一假显示器；光标、系统度量、环境变量接宿主；Win32 专属接口为空实现 |
 | `PackinOne.dll` | 批量加载 `layerExBTOA`/`layerExImage`/`layerExRaster`/`shrinkCopy`/`addFont`/`yz_scripts_ext`/`fstat`/`saveStruct` |
 | `layerExBTOA.dll` | 6 个 Layer 函数走 GPU；蓝色/alpha 通道、province 阈值与填色、区域 alpha；真实 Vulkan 像素验证 |
@@ -34,6 +35,7 @@
 
 | 插件 | 范围 |
 | --- | --- |
+| `win32dialog.dll` | 独立 tp_stub 外部 submodule；控件模型、Unicode、公开 System 消息/输入协议、卸载已测试；宿主实际 UI、GDI、原生资源模板等未实现 |
 
 ### 调查
 
@@ -52,7 +54,6 @@
 
 | 插件 | 难度 | 作用 | 迁移要点 |
 | --- | --- | --- | --- |
-| `win32dialog.dll`（完整版） | 低 | 自绘 Win32 对话框控件模型 | 替换现有 15 行 stub，接入宿主消息框与输入框 |
 | `textrender.dll` | 中 | `TextRenderBase` 文本排版、链接与滚动度量 | 纯布局不绘制；需补 `Layer_FetchImageSize`，与 KAG 文本行为对照 |
 | `wuffmpeg.dll` | 中 | FFmpeg 音频解码 creator | 接入现有 ffmpeg-next，处理与 `video-ffmpeg` 的依赖共享 |
 | `drawdeviceD3D.dll` | 高 | `iTVPDrawDevice` 与合成器（前后平面、转场、软件 DrawBuffer 上传） | 需宿主 LayerManager、窗口呈现与网格契约；WESL 像素接口可承载混合核，不能独立实现整个插件 |

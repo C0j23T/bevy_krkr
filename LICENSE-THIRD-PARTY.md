@@ -71,6 +71,11 @@ plugins adapt the corresponding directories at that same krkrsdl3 revision.
 Their complete terms are retained in each repository's `LICENSE`; SQLite's
 public-domain notices remain in the bundled amalgamation sources.
 
+The independent `external_plugins/win32dialog` control model adapts
+`plugins/win32dialog.cpp` from the same krkrsdl3 revision. Its complete
+redistribution terms are retained in
+[external_plugins/win32dialog/LICENSE](external_plugins/win32dialog/LICENSE).
+
 External plugins use the independently supplied Kirikiri Z `tp_stub` ABI
 (validated at revision `7d91ba56bcfe241df349b01badd915a156bc47cf`) and
 [wamsoft/ncbind](https://github.com/wamsoft/ncbind), revision
