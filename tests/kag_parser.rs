@@ -87,6 +87,10 @@ fn extended_parser_and_restart() {
             r#"(function(){ var p=parse("@tag style"); p.paramMacros.style=["style","true"]; try { p.getNextTag(); } catch(e) { return "error"; } return "accepted"; })()"#,
             "error",
         );
+        check(
+            r#"(function(){ var re = /@([a-zA-Z0-9_\x0100-\xFFFF]*)(\.[a-zA-Z0-9_]+)?/; return re.test("@ラベル"); })()"#,
+            "1",
+        );
         drop(engine);
         unsafe { sys::krkr_engine_shutdown() };
     }
