@@ -39,3 +39,9 @@ if [[ $plugin == all || $plugin == psdfile ]]; then
   cmake --build "$build_dir/psdfile" --parallel 8
   cp "$build_dir/psdfile/libpsdfile.so" "$source_dir/psdfile.so"
 fi
+
+if [[ $plugin == all || $plugin == json ]]; then
+  cmake -S "$repo_dir/external_plugins/json" -B "$build_dir/json" \
+    -DTPSTUB_DIR="$stub_dir" -DNCBIND_DIR="$ncbind_dir" -DCMAKE_BUILD_TYPE=Release
+  cmake --build "$build_dir/json" --parallel 4
+fi

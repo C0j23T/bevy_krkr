@@ -16,7 +16,10 @@ fn external_classes_register_and_unload() {
             ("ALPHA_MOVIE_PLUGIN", "AlphaMovie"),
             ("PSD_FILE_PLUGIN", "PSD"),
         ] {
-            let plugin = std::env::var(variable).expect(variable);
+            let source = std::env::var(variable).expect(variable);
+            let name = if class == "PSD" { "psdfile" } else { "AlphaMovie" };
+            std::fs::copy(source, project.join(format!("lib{name}.so"))).unwrap();
+            let plugin = format!("{name}.dll");
             assert_eq!(
                 unsafe { sys::krkr_engine_init(path.as_ptr()) },
                 sys::KRKR_OK

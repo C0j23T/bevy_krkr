@@ -35,11 +35,13 @@ fn reference_pixel(x: i32, y: i32, second: bool) -> [i32; 3] {
 fn external_plugin_pixels_and_lifecycle() {
     let plugin = std::env::var("EXTRANS_PLUGIN").expect("EXTRANS_PLUGIN=/absolute/path/extrans.so");
     let plugin = std::fs::canonicalize(plugin).unwrap();
-    let load = format!("Plugins.link({:?});", plugin.to_str().unwrap());
+    let module = "external_extrans.dll";
+    let load = format!("Plugins.link({module:?});");
     common::initialize_renderer();
     let project =
         std::env::temp_dir().join(format!("krkr-external-extrans-{}", std::process::id()));
     std::fs::create_dir_all(&project).unwrap();
+    std::fs::copy(&plugin, project.join("libexternal_extrans.so")).unwrap();
     let path = CString::new(project.to_str().unwrap()).unwrap();
     assert_eq!(
         unsafe { sys::krkr_engine_init(path.as_ptr()) },
@@ -139,7 +141,7 @@ fn external_plugin_pixels_and_lifecycle() {
         let initial = frame();
         assert_eq!(
             engine
-                .eval(&format!("Plugins.unlink({:?})", plugin.to_str().unwrap()))
+                .eval(&format!("Plugins.unlink({:?})", module))
                 .unwrap(),
             "0"
         );
@@ -242,7 +244,7 @@ fn external_plugin_pixels_and_lifecycle() {
     run("w.visible=false;");
     assert_eq!(
         engine
-            .eval(&format!("Plugins.unlink({:?})", plugin.to_str().unwrap()))
+            .eval(&format!("Plugins.unlink({:?})", module))
             .unwrap(),
         "1"
     );
@@ -263,7 +265,7 @@ fn external_plugin_pixels_and_lifecycle() {
     engine.exec_script(&load, "reload after shutdown").unwrap();
     assert_eq!(
         engine
-            .eval(&format!("Plugins.unlink({:?})", plugin.to_str().unwrap()))
+            .eval(&format!("Plugins.unlink({:?})", module))
             .unwrap(),
         "1"
     );

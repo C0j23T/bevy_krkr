@@ -47,10 +47,24 @@ The extNagano transition implementations follow the recovered sources in
 Kirikiri's license. The GPU implementations are covered by per-frame pixel
 comparisons with outputs generated from the recovered sources.
 The windowEx adapter in `Kirikiroid2/src/core/environ/bevy/plugins/WindowEx.cpp`
-follows [krkrsdl3](https://github.com/krkrsdl3/krkrsdl3) `plugins/windowEx.cpp`
+follows [krkrsdl3](https://github.com/C0j23T/krkrsdl3) `plugins/windowEx.cpp`
 and the API of [wamsoft/windowEx](https://github.com/wamsoft/windowEx).
 Copyright (c) W.Dee and contributors; license follows Kirikiri.
 Kirikiri's full notices and redistribution conditions are reproduced below.
+
+## External plugins
+
+The independent `external_plugins/json` plugin adapts Go Watanabe's
+`plugins/json.cpp` from [krkrsdl3](https://github.com/C0j23T/krkrsdl3), revision
+`88d12cef068a1c8e1b90be3f4f948f567d6dc4bc`. Its upstream copyright and complete
+redistribution terms, including krkrsdl3's supplementary condition, are retained in
+[external_plugins/json/LICENSE](external_plugins/json/LICENSE).
+
+External plugins use the independently supplied Kirikiri Z `tp_stub` ABI
+(validated at revision `7d91ba56bcfe241df349b01badd915a156bc47cf`) and
+[wamsoft/ncbind](https://github.com/wamsoft/ncbind), revision
+`256502b817e6627c1491b916938448470df395fd`. Those sources are build dependencies
+and are not vendored in the plugin repositories.
 
 ## Kirikiroid2
 

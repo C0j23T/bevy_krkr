@@ -20,6 +20,7 @@
 | `layerExBTOA.dll` | 6 个 Layer 函数走 GPU；蓝色/alpha 通道、province 阈值与填色、区域 alpha；真实 Vulkan 像素验证 |
 | `shrinkCopy.dll` | GPU compute 面积平均；`shrinkCopyFast` 保留分轴截断、尾部采样与不透明输出；真实 Vulkan 像素验证 |
 | `layerExAreaAverage.dll` | `Layer.stretchCopyAA` 走 GPU compute；保留透明色权重与边界语义；真实 Vulkan 像素验证 |
+| `json.dll` | 独立外部 submodule；标准 `tp_stub.h`；JSON 解析、序列化、Storage 文本流、Unicode、卸载重载已验证；见 [外部插件](external-plugins.md) |
 
 ## 已实现（未测试）
 
@@ -46,7 +47,6 @@
 
 | 插件 | 难度 | 作用 | 迁移要点 |
 | --- | --- | --- | --- |
-| `json.dll` | 低 | JSON 解析与序列化 TJS 类 | 纯逻辑，走 Storage 文本流，补独立样例 |
 | `win32dialog.dll`（完整版） | 低 | 自绘 Win32 对话框控件模型 | 替换现有 15 行 stub，接入宿主消息框与输入框 |
 | `textrender.dll` | 中 | `TextRenderBase` 文本排版、链接与滚动度量 | 纯布局不绘制；需补 `Layer_FetchImageSize`，与 KAG 文本行为对照 |
 | `sqlite3.dll` | 中 | SQLite TJS 绑定与 XP3 VFS | 用 `cc` 编译 vendored `sqlite3.c`，VFS 接 Storage |

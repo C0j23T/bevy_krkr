@@ -8,6 +8,8 @@ fn all_nagano_transitions_match_reference() {
     common::initialize_renderer();
     let project = std::env::temp_dir().join(format!("krkr-external-nagano-{}", std::process::id()));
     std::fs::create_dir_all(&project).unwrap();
+    std::fs::copy(&plugin, project.join("libexternal_nagano.so")).unwrap();
+    let plugin = "external_nagano.dll";
     std::fs::copy(
         format!("{}/assets/game/nagano_rule.bmp", env!("CARGO_MANIFEST_DIR")),
         project.join("nagano_rule.bmp"),
