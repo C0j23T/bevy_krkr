@@ -1694,37 +1694,3 @@ fn gaussian_weights(radius: f32) -> Result<Arc<[f32]>, String> {
         .insert(key, weights.clone());
     Ok(weights)
 }
-
-
-#[cfg(feature = "video-ffmpeg")]
-pub(crate) fn color_video(
-    target: u64,
-    texture: &Texture,
-    color: [f64; 4],
-    force_opaque: bool,
-) -> Result<(), String> {
-    let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
-    let renderer = guard.as_mut().ok_or("Bevy renderer is not initialized")?;
-    let destination = renderer.texture(target)?;
-    if destination.texture.size() != texture.size() {
-        return Err("video texture dimensions do not match".into());
-    }
-    let image = PooledTexture {
-        texture: texture.clone(),
-        default_view: texture.create_view(&TextureViewDescriptor::default()),
-        srgb_view: Arc::new(OnceLock::new()),
-    };
-    let mut command: RenderCommand = unsafe { std::mem::zeroed() };
-    command.method = c"VideoColor".as_ptr();
-    command.target = target;
-    command.geometry = u32::from(force_opaque);
-    command.rect = [
-        0,
-        0,
-        destination.texture.width() as i32,
-        destination.texture.height() as i32,
-    ];
-    command.source_rects[0] = command.rect.map(|value| value as f32);
-    command.parameters[4..8].copy_from_slice(&color.map(|value| value as f32));
-    renderer.draw(&command, Some(image))
-}
