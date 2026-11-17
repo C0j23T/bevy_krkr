@@ -6,6 +6,8 @@ mod surface_sync;
 #[cfg(feature = "video-ffmpeg")]
 pub(crate) mod video;
 
+pub use renderer::{RenderStats, stats};
+
 use bevy::{
     asset::RenderAssetUsages,
     camera::{ScalingMode, visibility::RenderLayers},

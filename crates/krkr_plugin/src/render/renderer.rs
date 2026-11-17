@@ -54,6 +54,25 @@ const TEXTURE_POOL_MAX_AVAILABLE_BYTES: u64 = 512 * 1024 * 1024;
 static GAUSSIAN_WEIGHTS: LazyLock<Mutex<GaussianWeightCache>> =
     LazyLock::new(|| Mutex::new(GaussianWeightCache::default()));
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderStats {
+    pub scene_copies: u64,
+    pub scene_copy_pixels: u64,
+    pub composite_commands: u64,
+    pub composite_pixels: u64,
+    pub draw_commands: u64,
+    pub draw_pixels: u64,
+    pub texture_create_commands: u64,
+}
+
+pub fn stats() -> Option<RenderStats> {
+    RENDERER_INSTANCE
+        .lock()
+        .ok()?
+        .as_ref()
+        .map(|renderer| renderer.stats)
+}
+
 pub fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Option<RenderAdapter>) {
     #[cfg(feature = "video-ffmpeg")]
     if let Some(adapter) = &adapter {
@@ -182,6 +201,7 @@ struct KrkrRenderer {
     queue: RenderQueue,
     encoder: Option<CommandEncoder>,
     pending: usize,
+    stats: RenderStats,
 
     textures: HashMap<u64, PooledTexture>,
     texture_pool: TexturePool,
@@ -426,6 +446,7 @@ impl KrkrRenderer {
             queue,
             encoder: None,
             pending: 0,
+            stats: RenderStats::default(),
             textures: HashMap::new(),
             texture_pool: TexturePool::default(),
             upload_buffer: Vec::new(),
@@ -1247,6 +1268,7 @@ impl KrkrRenderer {
                 if let Some(previous) = self.textures.insert(c.target, texture) {
                     self.texture_pool.retire(previous);
                 }
+                self.stats.texture_create_commands += 1;
             }
             // drop texture
             1 => {
@@ -1343,6 +1365,8 @@ impl KrkrRenderer {
                     },
                 );
                 self.pending += 1;
+                self.stats.scene_copies += 1;
+                self.stats.scene_copy_pixels += u64::from(width as u32) * u64::from(height as u32);
             }
             _ => return Err(format!("invalid texture command {}", c.operation)),
         }
@@ -1385,16 +1409,31 @@ impl KrkrRenderer {
 
         let mut c = *input;
         let source = self.texture(c.sources[0])?.texture;
+        let source_rect = c.source_rects[0];
+        if source_rect[2] > source_rect[0] && source_rect[3] > source_rect[1] {
+            c.source_rects[0] = source_rect;
+        } else {
+            c.source_rects[0] = [0.0, 0.0, source.width() as f32, source.height() as f32];
+        }
         let layer_type = c.parameters[1] as u32;
         c.method = NAMES
             .get(layer_type as usize)
             .ok_or("invalid layer type")?
             .as_ptr();
         c.sources[1] = c.target;
-        c.source_rects[0] = [0.0, 0.0, source.width() as f32, source.height() as f32];
         c.source_rects[1] = c.rect.map(|v| v as f32);
+        let target = self.texture(c.target)?;
+        let [left, top, right, bottom] = c.rect;
+        let width = right.min(target.texture.width() as i32) - left.max(0);
+        let height = bottom.min(target.texture.height() as i32) - top.max(0);
+        if width <= 0 || height <= 0 {
+            return Ok(());
+        }
 
-        self.draw(&c, None)
+        self.draw(&c, None)?;
+        self.stats.composite_commands += 1;
+        self.stats.composite_pixels += u64::from(width as u32) * u64::from(height as u32);
+        Ok(())
     }
 
     fn dispatch_compute(
@@ -1647,6 +1686,10 @@ impl KrkrRenderer {
             };
 
             let dispatch_size = [width as u32, height as u32];
+            if c.operation == 4 {
+                self.stats.draw_commands += 1;
+                self.stats.draw_pixels += u64::from(width as u32) * u64::from(height as u32);
+            }
             let output = if nagano_tables_only {
                 let mut ext_nagano = self.ext_nagano.take().unwrap();
                 let tables = unsafe {

@@ -72,6 +72,19 @@ fn copy_to_existing_texture_copies_region_and_preserves_other_pixels() {
     let background = [11, 22, 33, 44].repeat(4);
     upload(2, 2, 2, &background);
 
+    let mut composite = command(5, 2, 2, 2);
+    composite.sources[0] = 1;
+    composite.source_rects[0] = [1.0, 0.0, 2.0, 1.0];
+    composite.rect = [0, 1, 1, 2];
+    composite.parameters[0] = 255.0;
+    dispatch(composite);
+    assert_eq!(
+        read(2, 2, 2),
+        [
+            11, 22, 33, 44, 11, 22, 33, 44, 0, 255, 0, 255, 11, 22, 33, 44,
+        ]
+    );
+
     let mut copy = command(OP_COPY_TO_EXISTING_TEXTURE, 2, 2, 2);
     copy.sources[0] = 1;
     copy.source_rects[0] = [1.0, 0.0, 2.0, 1.0];

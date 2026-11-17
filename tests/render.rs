@@ -66,19 +66,43 @@ fn gpu_layer_operations() {
     let first_id = unsafe {
         sys::krkr_scene_build(std::ptr::null_mut(), &mut width, &mut height)
     };
+    let before_static = bevy_krkr::plugin::render::stats().unwrap();
     let second_id = unsafe {
         sys::krkr_scene_build(std::ptr::null_mut(), &mut width, &mut height)
     };
+    let after_static = bevy_krkr::plugin::render::stats().unwrap();
     assert_eq!(first_id, second_id, "static scenes should reuse their texture");
+    assert_eq!(after_static.scene_copies, before_static.scene_copies);
+    assert_eq!(after_static.scene_copy_pixels, before_static.scene_copy_pixels);
+    assert_eq!(
+        after_static.composite_commands,
+        before_static.composite_commands
+    );
     script(&engine, "child.setPos(20,20);");
+    let before_move = bevy_krkr::plugin::render::stats().unwrap();
     near(pixel(26, 26), [0, 128, 127, 255]);
     near(pixel(12, 12), [128, 0, 127, 255]);
     assert_eq!(pixel(29, 29), [0, 0, 255, 255]);
+    let after_move = bevy_krkr::plugin::render::stats().unwrap();
+    let move_copy_pixels = after_move.scene_copy_pixels - before_move.scene_copy_pixels;
+    let move_composite_pixels = after_move.composite_pixels - before_move.composite_pixels;
+    assert!(move_copy_pixels > 0 && move_copy_pixels < 64 * 48);
+    assert!(move_composite_pixels > 0 && move_composite_pixels < 64 * 48);
     assert_eq!(
         unsafe { sys::krkr_scene_build(std::ptr::null_mut(), &mut width, &mut height) },
         first_id,
         "dynamic scenes should preserve their target texture"
     );
+    script(&engine, "group.fillRect(1,1,2,2,0xff00ff00);");
+    let before_fill = bevy_krkr::plugin::render::stats().unwrap();
+    near(pixel(5, 5), [0, 128, 127, 255]);
+    let after_fill = bevy_krkr::plugin::render::stats().unwrap();
+    let fill_copy_pixels = after_fill.scene_copy_pixels - before_fill.scene_copy_pixels;
+    let fill_composite_pixels = after_fill.composite_pixels - before_fill.composite_pixels;
+    assert!(fill_copy_pixels > 0 && fill_copy_pixels < 64 * 48);
+    assert!(fill_composite_pixels > 0 && fill_composite_pixels < 64 * 48);
+    script(&engine, "group.fillRect(1,1,2,2,0xffff0000);");
+    near(pixel(5, 5), [128, 0, 127, 255]);
     script(
         &engine,
         r#"
