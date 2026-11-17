@@ -79,6 +79,16 @@ pub fn flush() {
     }
 }
 
+pub fn read_pixels(id: u64) -> Result<Vec<u8>, String> {
+    let mut guard = RENDERER_INSTANCE.lock().map_err(|error| error.to_string())?;
+    let renderer = guard.as_mut().ok_or("Bevy renderer is not initialized")?;
+    let texture = renderer.texture(id)?.texture;
+    let pitch = texture.width() as usize * 4;
+    let mut pixels = vec![0; pitch * texture.height() as usize];
+    unsafe { renderer.read(id, 4, pitch, pixels.as_mut_ptr())? };
+    Ok(pixels)
+}
+
 #[cfg(feature = "video-ffmpeg")]
 pub(crate) fn color_video(
     target: u64,

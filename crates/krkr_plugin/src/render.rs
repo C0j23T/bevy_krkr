@@ -1,4 +1,3 @@
-// pub(crate) mod gpu;
 mod operations;
 mod renderer;
 mod shader;
@@ -108,17 +107,13 @@ fn initialize_with_adapter(device: RenderDevice, queue: RenderQueue, adapter: Re
     renderer::initialize(device, queue, Some(adapter));
 }
 
-/* pub fn texture_usage() -> (usize, u64) {
-    gpu::texture_usage()
-} */
-
 pub fn flush() {
     renderer::flush();
 }
 
-/* pub fn read_pixels(texture: u64) -> Result<Vec<u8>, String> {
-    gpu::read_pixels(texture)
-} */
+pub fn read_pixels(texture: u64) -> Result<Vec<u8>, String> {
+    renderer::read_pixels(texture)
+}
 
 fn setup_camera(
     mut commands: Commands,
