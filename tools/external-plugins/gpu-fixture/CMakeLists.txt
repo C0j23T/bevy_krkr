@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(gpu_fixture LANGUAGES CXX)
+set(TPSTUB_DIR "" CACHE PATH "Directory containing tp_stub.h and tp_stub.cpp")
+add_library(gpu_fixture SHARED plugin.cpp "${TPSTUB_DIR}/tp_stub.cpp")
+target_compile_features(gpu_fixture PRIVATE cxx_std_17)
+target_compile_definitions(gpu_fixture PRIVATE __GENERIC__)
+target_include_directories(gpu_fixture PRIVATE "${TPSTUB_DIR}")
+set_target_properties(gpu_fixture PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)

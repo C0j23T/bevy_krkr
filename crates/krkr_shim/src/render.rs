@@ -1,4 +1,4 @@
-use std::ffi::{c_char, c_void};
+use std::ffi::{CStr, c_char, c_void};
 use std::sync::RwLock;
 
 #[repr(C)]
@@ -48,6 +48,100 @@ pub unsafe extern "C" fn krkr_render_dispatch(command: *mut RenderCommand) -> i3
             .map_err(|_| "render sink poisoned")?
             .ok_or("Bevy renderer is not initialized")?;
         unsafe { sink(command) }
+    });
+    match result {
+        Ok(Ok(())) => 0,
+        Ok(Err(error)) => {
+            eprintln!("bevy_krkr: {error}");
+            -1
+        }
+        Err(_) => -1,
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum GpuMethodRequest<'a> {
+    Register {
+        owner: &'a str,
+        method: &'a str,
+        wesl: &'a str,
+    },
+    Unregister {
+        owner: &'a str,
+    },
+}
+
+pub type GpuMethodSink = fn(GpuMethodRequest<'_>) -> Result<u32, String>;
+static GPU_METHOD_SINK: RwLock<Option<GpuMethodSink>> = RwLock::new(None);
+
+pub fn set_gpu_method_sink(sink: GpuMethodSink) {
+    *GPU_METHOD_SINK.write().unwrap() = Some(sink);
+}
+
+fn gpu_method(request: GpuMethodRequest<'_>) -> Result<u32, String> {
+    let sink = GPU_METHOD_SINK
+        .read()
+        .map_err(|_| "GPU method sink poisoned")?
+        .ok_or("Bevy renderer is not initialized")?;
+    sink(request)
+}
+
+/// Register a WESL pixel operation for an external plugin.
+///
+/// # Safety
+/// Strings must be non-null, NUL-terminated UTF-8. `opcode` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn krkr_render_register_method(
+    owner: *const c_char,
+    method: *const c_char,
+    wesl: *const c_char,
+    opcode: *mut u32,
+) -> i32 {
+    let result = std::panic::catch_unwind(|| -> Result<(), String> {
+        if owner.is_null() || method.is_null() || wesl.is_null() || opcode.is_null() {
+            return Err("null GPU method argument".into());
+        }
+        let owner = unsafe { CStr::from_ptr(owner) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let method = unsafe { CStr::from_ptr(method) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let wesl = unsafe { CStr::from_ptr(wesl) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let value = gpu_method(GpuMethodRequest::Register {
+            owner,
+            method,
+            wesl,
+        })?;
+        unsafe { opcode.write(value) };
+        Ok(())
+    });
+    match result {
+        Ok(Ok(())) => 0,
+        Ok(Err(error)) => {
+            eprintln!("bevy_krkr: {error}");
+            -1
+        }
+        Err(_) => -1,
+    }
+}
+
+/// Remove all pixel operations belonging to a plugin.
+///
+/// # Safety
+/// `owner` must be a non-null NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn krkr_render_unregister_owner(owner: *const c_char) -> i32 {
+    let result = std::panic::catch_unwind(|| -> Result<(), String> {
+        if owner.is_null() {
+            return Err("null GPU method owner".into());
+        }
+        let owner = unsafe { CStr::from_ptr(owner) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        gpu_method(GpuMethodRequest::Unregister { owner }).map(|_| ())
     });
     match result {
         Ok(Ok(())) => 0,

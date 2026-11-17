@@ -8,7 +8,7 @@ repo_dir=$(cd -- "$script_dir/../.." && pwd)
 build_dir=$repo_dir/target/external-plugins
 ncbind_dir=${4:-$build_dir/ncbind}
 mkdir -p "$build_dir"
-if [[ $plugin != extNagano && ! -f $ncbind_dir/ncbind.cpp ]]; then
+if [[ $plugin != extNagano && $plugin != gpu_fixture && ! -f $ncbind_dir/ncbind.cpp ]]; then
   git clone https://github.com/wamsoft/ncbind.git "$ncbind_dir"
   git -C "$ncbind_dir" checkout --detach 256502b817e6627c1491b916938448470df395fd
 fi
@@ -43,4 +43,10 @@ if [[ $plugin == all || $plugin == json ]]; then
   cmake -S "$repo_dir/external_plugins/json" -B "$build_dir/json" \
     -DTPSTUB_DIR="$stub_dir" -DNCBIND_DIR="$ncbind_dir" -DCMAKE_BUILD_TYPE=Release
   cmake --build "$build_dir/json" --parallel 4
+fi
+
+if [[ $plugin == all || $plugin == gpu_fixture ]]; then
+  cmake -S "$script_dir/gpu-fixture" -B "$build_dir/gpu_fixture" \
+    -DTPSTUB_DIR="$stub_dir" -DCMAKE_BUILD_TYPE=Release
+  cmake --build "$build_dir/gpu_fixture" --parallel 4
 fi

@@ -3,6 +3,7 @@
 use std::{
     collections::{HashMap as StdHashMap, VecDeque},
     ffi::CStr,
+    hash::{BuildHasher, RandomState},
     sync::{Arc, LazyLock, Mutex, OnceLock},
 };
 
@@ -28,8 +29,9 @@ use bevy::{
     shader::{Shader, ShaderCache, ShaderCacheSource},
 };
 use fearless_simd::{Level as SimdLevel, Simd, SimdBase, dispatch as simd_dispatch, u8x16};
-use krkr_shim::render::RenderCommand;
+use krkr_shim::render::{GpuMethodRequest, RenderCommand};
 
+use super::shader::PluginMethod;
 use crate::render::operations::Operation;
 
 static SIMD_LEVEL: LazyLock<SimdLevel> = LazyLock::new(|| SimdLevel::new());
@@ -71,6 +73,11 @@ pub fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Option<Rend
         unsafe { renderer.execute(command) }
     }
     krkr_shim::render::set_render_sink(dispatch);
+    krkr_shim::render::set_gpu_method_sink(|request| {
+        let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
+        let renderer = guard.as_mut().ok_or("Bevy renderer is not initialized")?;
+        renderer.register_method(request)
+    });
 }
 
 pub fn flush() {
@@ -80,7 +87,9 @@ pub fn flush() {
 }
 
 pub fn read_pixels(id: u64) -> Result<Vec<u8>, String> {
-    let mut guard = RENDERER_INSTANCE.lock().map_err(|error| error.to_string())?;
+    let mut guard = RENDERER_INSTANCE
+        .lock()
+        .map_err(|error| error.to_string())?;
     let renderer = guard.as_mut().ok_or("Bevy renderer is not initialized")?;
     let texture = renderer.texture(id)?.texture;
     let pitch = texture.width() as usize * 4;
@@ -163,6 +172,8 @@ struct KrkrRenderer {
     parameter_scratch: Vec<[f32; 4]>,
 
     pipeline: ComputePipeline,
+    plugin_methods: Vec<PluginMethod>,
+    used_plugin_opcodes: std::collections::HashSet<u32>,
     layout: BindGroupLayout,
     sampler: Sampler,
 
@@ -228,35 +239,53 @@ struct ExtNaganoExtension {
     nagano_tables: Option<(Vec<[f32; 4]>, Buffer)>,
 }
 
+fn operation_shaders(
+    device: &RenderDevice,
+    methods: &[PluginMethod],
+) -> (
+    ShaderCache<wgpu::ShaderModule, RenderDevice>,
+    AssetId<Shader>,
+    AssetId<Shader>,
+) {
+    let mut shaders = ShaderCache::new(device.clone(), |device, source, _| {
+        let ShaderCacheSource::Wgsl(source) = source else {
+            unreachable!()
+        };
+        Ok(device
+            .wgpu_device()
+            .create_shader_module(ShaderModuleDescriptor {
+                label: Some("Kirikiri texture operations"),
+                source: ShaderSource::Wgsl(source.into()),
+            }))
+    });
+    let operations_id = AssetId::<Shader>::Uuid {
+        uuid: uuid!("b321f2eb-6264-4520-afe6-1ee741255770"),
+    };
+    let nagano_id = AssetId::<Shader>::Uuid {
+        uuid: uuid!("469f2285-95a9-4659-be73-d7d5bacf54e3"),
+    };
+    shaders.set_shader(
+        operations_id,
+        Shader::from_wesl(super::shader::compose(methods), "krkr/operations.wesl"),
+    );
+    shaders.set_shader(
+        nagano_id,
+        Shader::from_wesl(include_str!("nagano.wesl"), "krkr/extNagano.wesl"),
+    );
+    for method in methods {
+        shaders.set_shader(
+            AssetId::<Shader>::Uuid {
+                uuid: bevy::asset::uuid::Uuid::from_u128(u128::from(method.opcode)),
+            },
+            Shader::from_wesl(method.wesl.clone(), method.path()),
+        );
+    }
+    (shaders, operations_id, nagano_id)
+}
+
 impl KrkrRenderer {
     fn new(device: RenderDevice, queue: RenderQueue) -> Self {
-        let mut shaders = ShaderCache::new(device.clone(), |device, source, _| {
-            let ShaderCacheSource::Wgsl(source) = source else {
-                unreachable!()
-            };
-            Ok(device
-                .wgpu_device()
-                .create_shader_module(ShaderModuleDescriptor {
-                    label: Some("Kirikiri texture operations"),
-                    source: ShaderSource::Wgsl(source.into()),
-                }))
-        });
-
-        let operations_id = AssetId::<Shader>::Uuid {
-            uuid: uuid!("b321f2eb-6264-4520-afe6-1ee741255770"),
-        };
-        shaders.set_shader(
-            operations_id,
-            Shader::from_wesl(super::shader::compose(), "krkr/operations.wesl"),
-        );
-
-        let nagano_id = AssetId::<Shader>::Uuid {
-            uuid: uuid!("469f2285-95a9-4659-be73-d7d5bacf54e3"),
-        };
-        shaders.set_shader(
-            nagano_id,
-            Shader::from_wesl(include_str!("nagano.wesl"), "krkr/extNagano.wesl"),
-        );
+        let (mut shaders, operations_id, nagano_id) = operation_shaders(&device, &[]);
 
         let operations_shader = shaders
             .get(0, operations_id, &[])
@@ -375,10 +404,94 @@ impl KrkrRenderer {
             upload_buffer: Vec::new(),
             parameter_scratch: Vec::new(),
             pipeline,
+            plugin_methods: Vec::new(),
+            used_plugin_opcodes: Default::default(),
             layout,
             sampler,
             ext_nagano,
         }
+    }
+
+    fn register_method(&mut self, request: GpuMethodRequest<'_>) -> Result<u32, String> {
+        let mut methods = self.plugin_methods.clone();
+        let opcode = match request {
+            GpuMethodRequest::Register {
+                owner,
+                method,
+                wesl,
+            } => {
+                if owner.is_empty() || method.is_empty() || wesl.is_empty() {
+                    return Err("GPU method owner, name and WESL must not be empty".into());
+                }
+                if method == "LayerExImageGaussian"
+                    || Operation::to_operation(method).is_ok()
+                    || methods.iter().any(|m| m.name == method)
+                {
+                    return Err(format!(
+                        "GPU method {method} is already registered or reserved"
+                    ));
+                }
+                let mut salt = 0u64;
+                let random = RandomState::new();
+                let opcode = loop {
+                    let value = random.hash_one((owner, method, salt)) as u32;
+                    if value > 100 && !self.used_plugin_opcodes.contains(&value) {
+                        break value;
+                    }
+                    salt = salt.wrapping_add(1);
+                };
+                methods.push(PluginMethod {
+                    owner: owner.into(),
+                    name: method.into(),
+                    wesl: wesl.into(),
+                    opcode,
+                });
+                opcode
+            }
+            GpuMethodRequest::Unregister { owner } => {
+                methods.retain(|m| m.owner != owner);
+                if methods.len() == self.plugin_methods.len() {
+                    return Ok(0);
+                }
+                0
+            }
+        };
+        let (mut shaders, operations_id, _) = operation_shaders(&self.device, &methods);
+        let errors = self
+            .device
+            .wgpu_device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let module = shaders
+            .get(0, operations_id, &[])
+            .map_err(|e| e.to_string());
+        let pipeline = module.map(|module| {
+            let layout = self
+                .device
+                .create_pipeline_layout(&PipelineLayoutDescriptor {
+                    label: Some("Kirikiri plugin operations"),
+                    bind_group_layouts: &[Some(&self.layout)],
+                    immediate_size: 0,
+                });
+            self.device
+                .create_compute_pipeline(&RawComputePipelineDescriptor {
+                    label: Some("Kirikiri plugin operations"),
+                    layout: Some(&layout),
+                    module: &module,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+        });
+        let validation = bevy::tasks::block_on(errors.pop());
+        if let Some(error) = validation {
+            return Err(error.to_string());
+        }
+        self.pipeline = pipeline?;
+        self.plugin_methods = methods;
+        if opcode > 100 {
+            self.used_plugin_opcodes.insert(opcode);
+        }
+        Ok(opcode)
     }
 
     fn texture(&self, id: u64) -> Result<PooledTexture, String> {
@@ -937,8 +1050,7 @@ impl KrkrRenderer {
                 .acquire(&self.device, old.texture.width(), old.texture.height())
         });
 
-        // not box blur
-        if data[1][0] != 40.0 && data[1][0] != 41.0 {
+        if !matches!(data[1][0].to_bits(), 40 | 41) {
             self.encoder().copy_texture_to_texture(
                 old.texture.as_image_copy(),
                 output.texture.as_image_copy(),
@@ -1030,7 +1142,11 @@ impl KrkrRenderer {
         }
 
         let (operation, kind, blend) =
-            Operation::to_operation(method).map_err(|s| s.to_string())?;
+            if let Some(plugin) = self.plugin_methods.iter().find(|m| m.name == method) {
+                (Operation(plugin.opcode), 0, 0)
+            } else {
+                Operation::to_operation(method).map_err(|s| s.to_string())?
+            };
 
         let old = self.texture(c.target)?;
         let inputs = [
@@ -1050,7 +1166,7 @@ impl KrkrRenderer {
         let mut data = [[0f32; 4]; 26];
         data[0] = c.rect.map(|v| v as f32);
         data[1] = [
-            operation.0 as f32,
+            f32::from_bits(operation.0),
             kind as f32,
             c.parameters[11],
             c.geometry as f32,
@@ -1060,7 +1176,7 @@ impl KrkrRenderer {
         }
         if operation == Operation::LAYER_EX_TEXT_PAINT {
             data[1][2] = 0.0;
-        } else if operation != Operation::CHANNEL_SWIZZLE {
+        } else if operation != Operation::CHANNEL_SWIZZLE && operation.0 <= 100 {
             data[2][1] = blend as f32;
         }
         data[6..9].copy_from_slice(&c.source_rects);
@@ -1103,8 +1219,9 @@ impl KrkrRenderer {
                 gaussian_data.extend(shifts.iter().map(|s| [*s, 0.0, 0.0, 0.0]));
                 &gaussian_data
             } else if operation == Operation::SHRINK_COPY {
-                let expected = 2i64 * (i64::from(c.rect[2]) - i64::from(c.rect[0])
-                    + i64::from(c.rect[3]) - i64::from(c.rect[1]));
+                let expected = 2i64
+                    * (i64::from(c.rect[2]) - i64::from(c.rect[0]) + i64::from(c.rect[3])
+                        - i64::from(c.rect[1]));
                 if c.data.is_null() || i64::from(c.pitch) != expected || expected <= 0 {
                     return Err("invalid shrink copy area tables".into());
                 }
@@ -1268,7 +1385,7 @@ impl ExtNaganoExtension {
             input.texture.width() as f32,
             input.texture.height() as f32,
         ];
-        data[1][0] = if horizontal { 40.0 } else { 41.0 };
+        data[1][0] = f32::from_bits(if horizontal { 40 } else { 41 });
         data[3][if horizontal { 0 } else { 1 }] = radius;
 
         let output = renderer.texture_pool.acquire(

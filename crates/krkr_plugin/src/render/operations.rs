@@ -152,6 +152,9 @@ impl Operation {
             [base @ .., b'_', b'a'] => (base, 2),
             base => (base, 0),
         };
+        if matches!(opcode, Self::COPY) && !matches!(method, b"Copy") {
+            return Err("unsupported Bevy texture operation");
+        }
         let mut blend = 0;
 
         if matches!(method, b"AdditiveAlphaBlend") {

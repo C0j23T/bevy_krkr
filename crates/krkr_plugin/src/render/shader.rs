@@ -14,10 +14,39 @@ static COMPOSER: LazyLock<ShaderComposer> = LazyLock::new(|| {
     composer
 });
 
-pub fn compose() -> String {
-    COMPOSER.compose()
+#[derive(Clone)]
+pub(crate) struct PluginMethod {
+    pub owner: String,
+    pub name: String,
+    pub wesl: String,
+    pub opcode: u32,
 }
 
+impl PluginMethod {
+    pub fn path(&self) -> String {
+        format!("krkr/plugins/method_{}.wesl", self.opcode)
+    }
+}
+
+pub fn compose(methods: &[PluginMethod]) -> String {
+    let mut composer = COMPOSER.clone();
+    for method in methods {
+        composer.imports.push(format!(
+            "import package::krkr::plugins::method_{}::render as plugin_{};",
+            method.opcode, method.opcode,
+        ));
+        composer.add_operation(
+            Operation(method.opcode),
+            format!(
+                "textureStore(output, xy, plugin_{}(at, xy));",
+                method.opcode,
+            ),
+        );
+    }
+    composer.compose()
+}
+
+#[derive(Clone)]
 struct Function<'a> {
     name: &'a str,
     params: Vec<(&'a str, &'a str)>,
@@ -28,7 +57,7 @@ struct Function<'a> {
 impl<'a> Function<'a> {
     fn compose(&self) -> String {
         format!(
-            "fn {}({})->{}{{{}}}",
+            "public fn {}({})->{}{{{}}}",
             self.name,
             self.params
                 .iter()
@@ -40,7 +69,9 @@ impl<'a> Function<'a> {
     }
 }
 
+#[derive(Clone)]
 struct ShaderComposer<'a> {
+    imports: Vec<String>,
     bindings: HashMap<u32, (&'a str, Option<&'a str>, &'a str)>,
     funcs: Vec<Function<'a>>,
     operations: HashMap<u32, String>,
@@ -309,6 +340,7 @@ fn builtin_funcs() -> Vec<Function<'static>> {
 impl<'a> ShaderComposer<'a> {
     fn new() -> Self {
         let mut output = Self {
+            imports: Vec::new(),
             bindings: HashMap::new(),
             funcs: Vec::new(),
             operations: HashMap::new(),
@@ -356,7 +388,12 @@ impl<'a> ShaderComposer<'a> {
         let mut output = String::new();
 
         output.push_str(IMPORT);
-        output.push_str("\n\n");
+        output.push('\n');
+        for import in &self.imports {
+            output.push_str(import);
+            output.push('\n');
+        }
+        output.push('\n');
         self.bindings
             .iter()
             .sorted_by_key(|(binding, _)| **binding)
@@ -398,7 +435,7 @@ impl<'a> ShaderComposer<'a> {
                     return;
                 }
 
-                let operation = u32(p[1].x);
+                let operation = bitcast<u32>(p[1].x);
                 switch operation {
         "});
         output.push_str(&cases);
@@ -1317,12 +1354,17 @@ fn nagano_operations(composer: &mut ShaderComposer) {
 }
 
 fn pixel_operations(composer: &mut ShaderComposer) {
-    composer.add_operation(Operation::CHANNEL_SWIZZLE, indoc! {"
+    composer.add_operation(
+        Operation::CHANNEL_SWIZZLE,
+        indoc! {"
         let s = sample(source, coordinate(0u, at));
         let channels = vec4<u32>(p[2]);
         textureStore(output, xy, vec4(s[channels.x], s[channels.y], s[channels.z], s[channels.w]));
-    "});
-    composer.add_operation(Operation::AREA_AVERAGE, indoc! {"
+    "},
+    );
+    composer.add_operation(
+        Operation::AREA_AVERAGE,
+        indoc! {"
         let step = vec2<i32>(p[3].xy);
         let first = vec2<i32>(p[6].xy) * 4096 + (xy - vec2<i32>(p[0].xy)) * step;
         let last = first + step;
@@ -1361,8 +1403,11 @@ fn pixel_operations(composer: &mut ShaderComposer) {
             result = vec4(floor(color / max(color_total, 1.0)), floor(alpha / area_total)) / 255.0;
         }
         textureStore(output, xy, result);
-    "});
-    composer.add_operation(Operation::SHRINK_COPY, indoc! {"
+    "},
+    );
+    composer.add_operation(
+        Operation::SHRINK_COPY,
+        indoc! {"
         let position = xy - vec2<i32>(p[0].xy);
         let horizontal = 26 + position.x * 2;
         let vertical = 26 + (i32(p[0].z - p[0].x) + position.y) * 2;
@@ -1388,8 +1433,11 @@ fn pixel_operations(composer: &mut ShaderComposer) {
             }
         }
         textureStore(output, xy, floor(sum / max(ht.z * vt.z, 1.0)) / 255.0);
-    "});
-    composer.add_operation(Operation::SHRINK_COPY_FAST, indoc! {"
+    "},
+    );
+    composer.add_operation(
+        Operation::SHRINK_COPY_FAST,
+        indoc! {"
         let step = vec2<i32>(p[3].xy);
         let first = xy * step;
         let last = min(first + step, vec2<i32>(textureDimensions(source)));
@@ -1402,8 +1450,11 @@ fn pixel_operations(composer: &mut ShaderComposer) {
             sum += floor(line / f32(last.x - first.x));
         }
         textureStore(output, xy, vec4(floor(sum / f32(last.y - first.y)) / 255.0, 1.0));
-    "});
-    composer.add_operation(Operation::LAYER_EX_BTOA, indoc! {"
+    "},
+    );
+    composer.add_operation(
+        Operation::LAYER_EX_BTOA,
+        indoc! {"
         let mode = u32(p[3].x);
         var d = fetch(previous, xy);
         if (mode <= 1u) {
@@ -1428,5 +1479,6 @@ fn pixel_operations(composer: &mut ShaderComposer) {
             d = p[5];
         }
         textureStore(output, xy, d);
-    "});
+    "},
+    );
 }

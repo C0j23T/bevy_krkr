@@ -3,6 +3,8 @@
 ## 实现参考
 参考 `~/Workspace/krkrsdl3` 中的插件实现
 
+- [外部插件 GPU 初始化与 WESL 接口](gpu-plugin-interface.md)：随机唯一 `u32 > 100`；独立 tp_stub 插件真实 Vulkan 注册、执行、卸载与重载已验证。
+
 ## 编写规范
 
 - 只写列表，不添加说明性文字。
@@ -53,7 +55,7 @@
 | `sqlite3.dll` | 中 | SQLite TJS 绑定与 XP3 VFS | 用 `cc` 编译 vendored `sqlite3.c`，VFS 接 Storage |
 | `wuffmpeg.dll` | 中 | FFmpeg 音频解码 creator | 接入现有 ffmpeg-next，处理与 `video-ffmpeg` 的依赖共享 |
 | `ExtKAGParser.dll` | 中 | 替代全局 `KAGParser` 的扩展解析器与 `TJSAry`/`TJSDic` | 纯解析；需与核心 KAGParserEx 做特性差异确认 |
-| `drawdeviceD3D.dll` | 高 | `iTVPDrawDevice` 与合成器（前后平面、转场、软件 DrawBuffer 上传） | 重做合成路径为 GPU 命令，避免逐帧 CPU 读回与上传 |
+| `drawdeviceD3D.dll` | 高 | `iTVPDrawDevice` 与合成器（前后平面、转场、软件 DrawBuffer 上传） | 需宿主 LayerManager、窗口呈现与网格契约；WESL 像素接口可承载混合核，不能独立实现整个插件 |
 | `layerExDraw.dll`（完整 API） | 高 | GDI+ 兼容的矢量、文字与图像绘制 | 补齐路径、渐变、矩阵、图像与记录接口；当前仅文字子集 |
 | `autotest.dll` | 高 | 离屏自动化（帧推进、抓帧、输入注入） | 需要 Bevy 侧 headless 测试宿主与抓帧/输入注入 |
 | `kirikiroid2.dll` 的 BPG/JXR/PVR 分支 | 高 | 图像加载器 | 新增解码库或格式实现；7z/ZIP/TAR/PNG/JPEG/WEBP 已完成 |
