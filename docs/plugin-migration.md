@@ -37,7 +37,7 @@
 | 插件 | 范围 |
 | --- | --- |
 | `win32dialog.dll` | 独立 tp_stub 外部 submodule；控件模型、Unicode、公开 System 消息/输入协议、卸载已测试；宿主实际 UI、GDI、原生资源模板等未实现 |
-| `layerExDraw.dll` | 文字、字体度量、简化 Appearance 与 GPU `clear(argb)`；清除像素测试通过；路径、图像、变换与记录未完成 |
+| `layerExDraw.dll` | 文字、字体度量、简化 Appearance、GPU clear 与矩形/椭圆的不透明实色整数子集；专项像素测试通过；描边、半透明形状、路径、图像、变换与记录未完成 |
 
 ### 调查
 

@@ -16,7 +16,7 @@
 
 ## 与现有接口的对应
 
-当前 [C++ 插件](../Kirikiroid2/src/core/environ/bevy/plugins/LayerExDraw.cpp) 注册 `clear`、文字绘制/度量和简化 Appearance。`clear` 通过现有 GPU `FillARGB` 命令写 Layer 主纹理；文字先生成 FreeType 遮罩，再用 `LayerExTextPaint` 合成。完整需求以 [上游注册表](../layerExDraw/main.cpp) 和 [实现](../layerExDraw/LayerExDraw.cpp) 为准。
+当前 [C++ 插件](../Kirikiroid2/src/core/environ/bevy/plugins/LayerExDraw.cpp) 注册 `clear`、`drawRectangle` / `drawEllipse`、文字绘制/度量和简化 Appearance。形状使用 `(appearance,x,y,width,height)`，只支持不透明实色笔刷与整数坐标/偏移；拒绝 pen、渐变、半透明和小数，不支持变换或抗锯齿；返回范围为字典。形状和 `clear` 复用 GPU `FillARGB`，椭圆按裁剪后的扫描线派发；文字先生成 FreeType 遮罩，再用 `LayerExTextPaint` 合成。完整需求以 [上游注册表](../layerExDraw/main.cpp) 和 [实现](../layerExDraw/LayerExDraw.cpp) 为准。
 
 | LayerExDraw 能力 | Vello GPU 对应及额外工作 |
 | --- | --- |

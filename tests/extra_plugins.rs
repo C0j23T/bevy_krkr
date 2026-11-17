@@ -19,8 +19,11 @@ fn rgba(x: usize, y: usize, second: bool) -> [u8; 4] {
     }
 }
 
+static LAYER_EX_DRAW_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn layer_ex_draw_clear_argb_gpu() {
+    let _guard = LAYER_EX_DRAW_TEST_LOCK.lock().unwrap();
     common::initialize_renderer();
     let path = CString::new(format!("{}/assets/game", env!("CARGO_MANIFEST_DIR"))).unwrap();
     assert_eq!(
@@ -47,7 +50,74 @@ fn layer_ex_draw_clear_argb_gpu() {
 }
 
 #[test]
+fn layer_ex_draw_primitives_gpu() {
+    let _guard = LAYER_EX_DRAW_TEST_LOCK.lock().unwrap();
+    common::initialize_renderer();
+    let path = CString::new(format!("{}/assets/game", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    assert_eq!(
+        unsafe { sys::krkr_engine_init(path.as_ptr()) },
+        sys::KRKR_OK
+    );
+    let engine = Tjs2Engine::new().unwrap();
+    let run = |s: &str| engine.exec_script(s, "LayerExDraw primitives").unwrap();
+    let value = |s: &str| engine.eval(s).unwrap().parse::<i64>().unwrap();
+    run(r#"
+        Plugins.link("layerExDraw.dll");
+        global.w=new Window(); w.setInnerSize(8,8);
+        global.s=new Layer(w,null); s.setImageSize(8,8); s.type=ltAlpha; s.clear(0);
+        global.app=new GdiPlus.Appearance(); app.addBrush(0xff402010);
+        global.bounds=s.drawRectangle(app,1,1,4,3);
+    "#);
+    assert_eq!(value("s.getMainPixel(1,1)"), 0x102040);
+    assert_eq!(value("s.getMaskPixel(4,3)"), 255);
+    assert_eq!(value("s.getMaskPixel(5,3)"), 0);
+    assert_eq!(value("s.getMaskPixel(1,4)"), 0);
+    assert_eq!(value("int(bounds.x*1000+bounds.y*100+bounds.width*10+bounds.height)"), 1143);
+
+    run("s.setClip(2,2,2,2); app.clear(); app.addBrush(0xff00ff00); s.drawRectangle(app,1,1,5,5);");
+    assert_eq!(value("s.getMainPixel(2,2)"), 0x00ff00);
+    assert_eq!(value("s.getMainPixel(3,3)"), 0x00ff00);
+    assert_eq!(value("s.getMainPixel(1,2)"), 0x102040);
+    assert_eq!(value("s.getMainPixel(4,2)"), 0x102040);
+
+    run("s.setClip(0,0,8,8); s.clear(0); app.clear(); app.addBrush(0xffff0000); app.addBrush(0xff0000ff,2,1); bounds=s.drawRectangle(app,1,1,3,3);");
+    assert_eq!(value("s.getMainPixel(1,1)"), 0xff);
+    assert_eq!(value("s.getMainPixel(3,2)"), 0xff0000);
+    assert_eq!(value("s.getMaskPixel(5,4)"), 255);
+    assert_eq!(value("s.getMaskPixel(6,4)"), 0);
+    assert_eq!(value("int(bounds.x*1000+bounds.y*100+bounds.width*10+bounds.height)"), 1154);
+
+    run("s.clear(0); app.clear(); app.addBrush(0xff0000ff); bounds=s.drawEllipse(app,1,1,6,4);");
+    assert_eq!(value("s.getMainPixel(3,2)"), 0xff0000);
+    assert_eq!(value("s.getMaskPixel(2,1)"), 255);
+    assert_eq!(value("s.getMaskPixel(1,2)"), 255);
+    assert_eq!(value("s.getMaskPixel(1,1)"), 0);
+    assert_eq!(value("s.getMaskPixel(0,2)"), 0);
+    assert_eq!(value("int(bounds.width*10+bounds.height)"), 64);
+    run("s.clear(0); s.setClip(3,2,2,1); s.drawEllipse(app,1,1,6,4);");
+    assert_eq!(value("s.getMaskPixel(3,2)"), 255);
+    assert_eq!(value("s.getMaskPixel(2,2)"), 0);
+    assert_eq!(value("s.getMaskPixel(3,3)"), 0);
+
+    run(r#"
+        s.setClip(0,0,8,8); s.clear(0); app.clear(); app.addBrush(0xffff0000); app.addPen(0xff0000ff,2);
+        global.rejected=0; try { s.drawRectangle(app,1,1,4,3); } catch(e) { rejected=1; }
+    "#);
+    assert_eq!(value("rejected"), 1);
+    assert_eq!(value("s.getMaskPixel(2,2)"), 0);
+    run("app.clear(); app.addBrush(0x80402010); rejected=0; try { s.drawEllipse(app,1,1,4,3); } catch(e) { rejected=1; }");
+    assert_eq!(value("rejected"), 1);
+    run("app.clear(); app.addBrush(0xff402010); rejected=0; try { s.drawRectangle(app,1.5,1,4,3); } catch(e) { rejected=1; }");
+    assert_eq!(value("rejected"), 1);
+    run("app.clear(); bounds=s.drawRectangle(app,1,1,4,3);");
+    assert_eq!(value("int(bounds.width+bounds.height)"), 0);
+    drop(engine);
+    unsafe { sys::krkr_engine_shutdown() };
+}
+
+#[test]
 fn text_and_gpu_transitions_restart() {
+    let _guard = LAYER_EX_DRAW_TEST_LOCK.lock().unwrap();
     common::initialize_renderer();
     let path = CString::new(format!("{}/assets/game", env!("CARGO_MANIFEST_DIR"))).unwrap();
     for restart in 0..2 {
