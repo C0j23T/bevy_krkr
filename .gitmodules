@@ -23,3 +23,6 @@
 [submodule "external_plugins/win32dialog"]
 	path = external_plugins/win32dialog
 	url = /home/hepta/Workspace/bevy_krkr/external_plugins/win32dialog
+[submodule "external_plugins/textrender"]
+	path = external_plugins/textrender
+	url = /home/hepta/Workspace/bevy_krkr/external_plugins/textrender

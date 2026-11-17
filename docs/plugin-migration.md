@@ -28,6 +28,7 @@
 | `psbfile.dll` | 独立 tp_stub 外部 submodule；PSB v1–v3、MDF、路径/octet、`psb://` 资源、重载与损坏输入；真实 snbk `window.pimg` 已验证 |
 | `sqlite3.dll` | 独立 tp_stub 外部 submodule；SQL 绑定、事务、Unicode/blob、Storage/XP3 只读 VFS、卸载重载与关闭已验证 |
 | `ExtKAGParser.dll` | 独立 tp_stub 外部 submodule；扩展宏/循环/局部变量、Unicode、状态恢复与赋值；卸载恢复原 KAGParser、重载与关闭已验证 |
+| `textrender.dll` | 独立 tp_stub 外部 submodule；TextRenderBase 布局、Unicode、回调、链接、滚动与公开图像尺寸协议已验证；不绘制文字 |
 
 ## 已实现（未测试）
 
@@ -54,7 +55,6 @@
 
 | 插件 | 难度 | 作用 | 迁移要点 |
 | --- | --- | --- | --- |
-| `textrender.dll` | 中 | `TextRenderBase` 文本排版、链接与滚动度量 | 纯布局不绘制；需补 `Layer_FetchImageSize`，与 KAG 文本行为对照 |
 | `wuffmpeg.dll` | 中 | FFmpeg 音频解码 creator | 接入现有 ffmpeg-next，处理与 `video-ffmpeg` 的依赖共享 |
 | `drawdeviceD3D.dll` | 高 | `iTVPDrawDevice` 与合成器（前后平面、转场、软件 DrawBuffer 上传） | 需宿主 LayerManager、窗口呈现与网格契约；WESL 像素接口可承载混合核，不能独立实现整个插件 |
 | `layerExDraw.dll`（完整 API） | 高 | GDI+ 兼容的矢量、文字与图像绘制 | 当前仅文字子集；Vello GPU 可共用 wgpu 30，仍需 alpha/颜色适配、GDI+ 对象与 EMF+ 兼容验证 |

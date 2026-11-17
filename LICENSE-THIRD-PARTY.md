@@ -52,6 +52,18 @@ and the API of [wamsoft/windowEx](https://github.com/wamsoft/windowEx).
 Copyright (c) W.Dee and contributors; license follows Kirikiri.
 Kirikiri's full notices and redistribution conditions are reproduced below.
 
+## Emote animation
+
+The native Emote container, timeline, physics and TJS bindings in
+`Kirikiroid2/src/plugins/emoteplayer` adapt `plugins/emoteplayer` and the
+PSB data primitives from [krkrsdl3](https://github.com/C0j23T/krkrsdl3), revision
+`88d12cef068a1c8e1b90be3f4f948f567d6dc4bc`.
+Copyright (c) W.Dee and contributors. The full redistribution conditions,
+including krkrsdl3's supplementary condition, are retained in
+`Kirikiroid2/src/plugins/emoteplayer/LICENSE.krkrsdl3` and apply to this adaptation.
+The Bevy adapter replaces the SDL/window renderer with shared host GPU textures
+and a native GPU surface operation.
+
 ## External plugins
 
 The independent `external_plugins/json` plugin adapts Go Watanabe's
