@@ -547,6 +547,9 @@ impl KrkrRenderer {
     }
 
     fn draw_mesh(&mut self, request: &krkr_shim::mesh::MeshRequest) -> Result<(), String> {
+        if request.blend == 6 {
+            return Ok(());
+        }
         let target = self.texture(request.target)?;
         let source = self.texture(request.source)?;
         let mask = self.texture(request.mask)?;
