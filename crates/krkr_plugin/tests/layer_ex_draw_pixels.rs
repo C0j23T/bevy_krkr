@@ -252,7 +252,7 @@ fn vello_paths_alpha_clip_transform_gradient_stroke_and_external_gpu_image() {
     for p in read(1).chunks_exact(4) {
         near(p, [0, 255, 0, 255]);
     }
-    for style in (0..=5).chain(24..=29).chain(48..=50) {
+    for style in 0..53 {
         upload(1, [0; 4]);
         let hatch = DrawPaint {
             brush_type: 1,
@@ -348,6 +348,38 @@ fn vello_paths_alpha_clip_transform_gradient_stroke_and_external_gpu_image() {
     assert_eq!(pixels.len(), 64);
     for p in pixels.chunks_exact(4) {
         near(p, [255, 255, 0, 255]);
+    }
+    let mut resize = command(0, 1);
+    resize.rect = [0, 0, 64, 64];
+    dispatch(resize);
+    let clear = || {
+        let pixels = vec![0u8; 64 * 64 * 4];
+        let mut c = command(2, 1);
+        c.rect = [0, 0, 64, 64];
+        c.pitch = 256;
+        c.data = pixels.as_ptr().cast_mut().cast();
+        dispatch(c);
+    };
+    let transformed_line = [
+        PathElement { verb: 0, reserved: 0, points: [0.; 6] },
+        PathElement { verb: 1, reserved: 0, points: [16., 0., 0., 0., 0., 0.] },
+    ];
+    clear();
+    draw(&transformed_line, &[DrawPaint { stroke: 1, width: 0., ..paint(0xffffffff) }],
+        [0., 2., -0.5, 0., 20.5, 5.], [19, 10, 22, 28], 0);
+    let pixels = krkr_plugin::render::read_pixels(1).unwrap();
+    for y in 0..64 { for x in 0..64 {
+        near(&pixels[(y * 64 + x) * 4..][..4],
+            if x == 20 && (10..28).contains(&y) { [255; 4] } else { [0; 4] });
+    } }
+    clear();
+    let dashes = [2., 2.];
+    draw(&transformed_line, &[DrawPaint { stroke: 1, width: 2., dash_count: 2,
+        dashes: dashes.as_ptr(), ..paint(0xffffffff) }],
+        [0., 2., -0.5, 0., 20.5, 5.], [19, 10, 22, 28], 0);
+    let pixels = krkr_plugin::render::read_pixels(1).unwrap();
+    for (x,y,expected) in [(20,11,[255;4]),(20,17,[0;4]),(20,25,[255;4]),(19,11,[0;4]),(20,29,[0;4])] {
+        near(&pixels[(y * 64 + x) * 4..][..4],expected);
     }
     for id in [1, 2] {
         dispatch(command(1, id));

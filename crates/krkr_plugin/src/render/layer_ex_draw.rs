@@ -372,9 +372,25 @@ impl KrkrRenderer {
                     paint.brush_type
                 ));
             }
-            let transform = transform * Affine::translate((paint.offset[0], paint.offset[1]));
+            let shape_transform = transform * Affine::translate((paint.offset[0], paint.offset[1]));
+            let cosmetic = paint.stroke && paint.width == 0.0;
+            let transform = if cosmetic {
+                Affine::IDENTITY
+            } else {
+                shape_transform
+            };
+            let paint_transform = if cosmetic {
+                shape_transform * Affine::new(paint.transform)
+            } else {
+                Affine::new(paint.transform)
+            };
+            let draw_path = if cosmetic {
+                shape_transform * &path
+            } else {
+                path.clone()
+            };
             scene.set_transform(transform);
-            scene.set_paint_transform(Affine::new(paint.transform));
+            scene.set_paint_transform(paint_transform);
             match paint.brush_type {
                 0 => scene.set_paint(color(paint.colors[0])),
                 1 => {
@@ -504,9 +520,8 @@ impl KrkrRenderer {
                         ] {
                         vello_gpu::TextureRegion::Full
                     } else {
-                        scene.set_paint_transform(
-                            Affine::new(paint.transform) * Affine::translate((p[0], p[1])),
-                        );
+                        scene
+                            .set_paint_transform(paint_transform * Affine::translate((p[0], p[1])));
                         vello_gpu::TextureRegion::Rect(vello_gpu::RectU16::new(
                             p[0] as u16,
                             p[1] as u16,
@@ -534,20 +549,24 @@ impl KrkrRenderer {
             }
             let geometry = if paint.stroke {
                 if paint.alignment == 1 {
-                    if path
+                    if draw_path
                         .iter()
                         .filter(|element| matches!(element, kurbo::PathEl::MoveTo(_)))
                         .count()
-                        != path
+                        != draw_path
                             .iter()
                             .filter(|element| matches!(element, kurbo::PathEl::ClosePath))
                             .count()
                     {
                         return Err("inset pen requires closed subpaths".into());
                     }
-                    scene.push_clip_path(&path);
+                    scene.push_clip_path(&draw_path);
                 }
-                let outline = pen::outline(&path, paint)?;
+                let mut pen = paint.clone();
+                if cosmetic {
+                    pen.width = 1.0;
+                }
+                let outline = pen::outline(&draw_path, &pen)?;
                 scene.set_fill_rule(Fill::NonZero);
                 scene.fill_path(&outline);
                 scene.set_fill_rule(if request.fill_rule == 0 {
@@ -557,13 +576,13 @@ impl KrkrRenderer {
                 });
                 if paint.alignment == 1 {
                     scene.pop_clip();
-                    path.clone()
+                    draw_path.clone()
                 } else {
                     outline
                 }
             } else {
-                scene.fill_path(&path);
-                path.clone()
+                scene.fill_path(&draw_path);
+                draw_path.clone()
             };
             let rect = (transform * geometry).bounding_box();
             bounds = Some(bounds.map_or(rect, |bounds| bounds.union(rect)));

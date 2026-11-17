@@ -163,6 +163,9 @@ fn add_caps(
 }
 
 pub(super) fn outline(path: &BezPath, paint: &Paint) -> Result<BezPath, String> {
+    if paint.width <= 0.0 {
+        return Err("zero-width cosmetic pen is not supported".into());
+    }
     let mut stroke = Stroke::new(paint.width);
     stroke.start_cap = cap(paint.start_cap)?;
     stroke.end_cap = cap(paint.end_cap)?;
@@ -178,6 +181,7 @@ pub(super) fn outline(path: &BezPath, paint: &Paint) -> Result<BezPath, String> 
     stroke
         .dash_pattern
         .extend(paint.dashes.iter().map(|v| v * paint.width));
+    let original_path = path;
     let path = if !paint.dashes.is_empty() && paint.dash_cap != 0 {
         let dashes = stroke.dash_pattern.clone();
         let dashed =
@@ -236,6 +240,12 @@ pub(super) fn outline(path: &BezPath, paint: &Paint) -> Result<BezPath, String> 
     if !paint.dashes.is_empty() && paint.dash_cap == 3 {
         add_caps(&mut result, &path, 3, 3, paint)?;
     }
-    add_caps(&mut result, &path, paint.start_cap, paint.end_cap, paint)?;
+    add_caps(
+        &mut result,
+        original_path,
+        paint.start_cap,
+        paint.end_cap,
+        paint,
+    )?;
     Ok(result)
 }
