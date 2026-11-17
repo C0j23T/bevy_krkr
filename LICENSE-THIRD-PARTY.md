@@ -53,6 +53,15 @@ The windowEx adapter in `Kirikiroid2/src/core/environ/bevy/plugins/WindowEx.cpp`
 follows [krkrsdl3](https://github.com/C0j23T/krkrsdl3) `plugins/windowEx.cpp`
 and the API of [wamsoft/windowEx](https://github.com/wamsoft/windowEx).
 Copyright (c) W.Dee and contributors; license follows Kirikiri.
+
+The `Scripts.*` extensions in
+`Kirikiroid2/src/core/environ/bevy/plugins/ScriptsExt.cpp` adapt
+`plugins/scriptsEx.cpp` from [krkrsdl3](https://github.com/C0j23T/krkrsdl3),
+revision `88d12cef068a1c8e1b90be3f4f948f567d6dc4bc`.
+Copyright (c) W.Dee and contributors; license follows Kirikiri. Its MD5 usage
+is covered by the Aladdin Enterprises `md5.c`/`md5.h` already carried by
+Kirikiroid2.
+
 Kirikiri's full notices and redistribution conditions are reproduced below.
 
 ## Emote animation

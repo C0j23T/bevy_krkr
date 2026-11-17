@@ -1,5 +1,5 @@
-//! `Scripts.foreach` / `Scripts.getObjectKeys`, which the engine has to
-//! provide for the supported KAGeX scripts.
+//! The `Scripts.*` extensions from scriptsEx.dll that the supported KAGeX
+//! scripts expect.
 //!
 //! KAG's system scripts pass extra arguments including `void`, and pass the result
 //! of `getObjectKeys` straight into an argument list with `*`, so both the
@@ -127,6 +127,124 @@ fn scripts_foreach_and_get_object_keys() {
         )
         .unwrap();
     check("Scripts.clone(cloneFallback)===cloneFallback", "1");
+
+    engine
+        .exec_script(
+            r#"Plugins.link("scriptsEx.dll");
+               Plugins.link("yz_scripts_ext.dll");
+               Plugins.link("scriptsExt.dll");"#,
+            "link scriptsEx",
+        )
+        .expect("Plugins.link(scriptsEx.dll)");
+    engine
+        .exec_script(r#"Plugins.link("PackinOne.dll");"#, "link PackinOne")
+        .expect("PackinOne loads scriptsEx.dll");
+    check("typeof Layer.fillAlpha", "Object");
+    for member in [
+        "getObjectKeys",
+        "getObjectCount",
+        "getObjectContext",
+        "isNullContext",
+        "equalStruct",
+        "equalStructNumericLoose",
+        "foreach",
+        "getMD5HashString",
+        "clone",
+        "propSet",
+        "propGet",
+        "safeEvalStorage",
+        "stringFuzzySearch",
+        "rehash",
+    ] {
+        check(&format!("typeof Scripts.{member}"), "Object");
+    }
+
+    // Keys come back sorted, and a member dictionary counts as its members.
+    check(
+        r#"(function(){ return Scripts.getObjectKeys(%['b'=>1,'a'=>2,'c'=>3]).join(','); })()"#,
+        "a,b,c",
+    );
+    check("Scripts.getObjectCount(%['a'=>1,'b'=>2])", "2");
+    check("Scripts.getObjectCount([1,2,3])", "3");
+    check("Scripts.getObjectCount(%[])", "0");
+
+    engine
+        .exec_script(
+            "global.ctx=%['n'=>1]; ctx.f=function(){ return this.n; };",
+            "context",
+        )
+        .unwrap();
+    check("Scripts.isNullContext(function(){})", "1");
+    check("Scripts.isNullContext(ctx.f)", "1");
+    check("Scripts.isNullContext(ctx.f incontextof ctx)", "0");
+    check("Scripts.getObjectContext(ctx.f incontextof ctx)===ctx", "1");
+
+    check("Scripts.equalStruct([1,2,%['a'=>3]],[1,2,%['a'=>3]])", "1");
+    check("Scripts.equalStruct(%['a'=>[1,2]],%['a'=>[1,2]])", "1");
+    check("Scripts.equalStruct(%['a'=>1],%['b'=>1])", "0");
+    check("Scripts.equalStruct([1,2],[1,2,3])", "0");
+    check("Scripts.equalStruct(1,1.0)", "0");
+    check("Scripts.equalStruct(ctx.f,ctx.f)", "1");
+    check("Scripts.equalStructNumericLoose(1,1.0)", "1");
+    check("Scripts.equalStructNumericLoose([1,2],[1.0,2.0])", "1");
+    check(
+        "Scripts.equalStructNumericLoose(%['a'=>1],%['a'=>1.0])",
+        "1",
+    );
+    check("Scripts.equalStructNumericLoose(%['a'=>1],%['b'=>1])", "0");
+
+    check(
+        "Scripts.getMD5HashString(<% 61 62 63 %>)",
+        "900150983cd24fb0d6963f7d28e17f72",
+    );
+    assert!(engine.eval("Scripts.getMD5HashString('abc')").is_err());
+
+    check("Scripts.pfMemberEnsure", "512");
+    check("Scripts.pfMemberMustExist", "1024");
+    check("Scripts.pfIgnoreProp", "2048");
+    check("Scripts.pfHiddenMember", "4096");
+    check("Scripts.pfStaticMember", "65536");
+    check(
+        r#"(function(){ var o=%[]; Scripts.propSet(o,'x',5); return Scripts.propGet(o,'x'); })()"#,
+        "5",
+    );
+    check(
+        r#"(function(){ var a=[1,2]; Scripts.propSet(a,0,9); return a[0]+':'+Scripts.propGet(a,0); })()"#,
+        "9:9",
+    );
+
+    check("Scripts.stringFuzzySearch('hello world','hello',0)", "0");
+    check("Scripts.stringFuzzySearch('hello world','world',0)", "6");
+    check("Scripts.stringFuzzySearch('hello world','zzz',0)", "-1");
+    check("Scripts.stringFuzzySearch('hello world','hxllo',1)", "0");
+    check("Scripts.stringFuzzySearch('hello world','hxllo',0)", "-1");
+    check("Scripts.stringFuzzySearch('hello world','hallo',1)", "0");
+    assert!(
+        engine
+            .eval(&format!(
+                "Scripts.stringFuzzySearch('x','{}',0)",
+                "a".repeat(64)
+            ))
+            .is_err()
+    );
+
+    let storage = std::env::temp_dir().join(format!("krkr-scripts-ext-{}", std::process::id()));
+    std::fs::create_dir_all(&storage).unwrap();
+    std::fs::write(storage.join("safe.tjs"), "(const)%['a'=>7], 'tail'").unwrap();
+    engine
+        .exec_script(
+            &format!(
+                "Storages.addAutoPath({:?});",
+                format!("{}/", storage.display())
+            ),
+            "storage path",
+        )
+        .unwrap();
+    check("Scripts.safeEvalStorage('safe.tjs').a", "7");
+    std::fs::remove_dir_all(&storage).unwrap();
+
+    engine.exec_script("Scripts.rehash();", "rehash").unwrap();
+
     engine
         .exec_script("Scripts.dump();", "dump output")
         .unwrap();

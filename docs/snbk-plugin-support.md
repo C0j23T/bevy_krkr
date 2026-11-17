@@ -8,7 +8,7 @@
 
 | 对象 | 检查版本与验证范围 |
 | --- | --- |
-| bevy_krkr | 根仓库 `93c46792a606c559581121d227fc02d0b0bc6b94`；Kirikiroid2 检查点 `4f40b589c6291d56547f466c66bd6b8b9ac857c1`；源码、既有专项证据、本次解包/场景解析/能力探针和启动专项 |
+| bevy_krkr | 根仓库 `fb2d14d` 及工作区 scriptsEx 补齐；Kirikiroid2 `50d0ff3` 及工作区 scriptsEx 补齐；源码、既有专项证据、本次解包/场景解析/能力探针和启动专项 |
 | krkrsdl3 | 本地 `~/Workspace/krkrsdl3`，`88d12cef068a1c8e1b90be3f4f948f567d6dc4bc`；只检查源码和插件注册，未构建、未运行 snbk |
 | 游戏样本 | 本地 `~/Workspace/bevy_krkr/test_games/snbk`；资源和官方 DLL 不入仓 |
 
@@ -16,11 +16,9 @@
 
 - bevy_krkr 已能读取全部游戏归档和 patch 场景，但实际启动仍在 `override.tjs → callAfterInit` 失败，尚未到标题和交互。
 - EmotePlayer 和 LayerExDraw 均为部分支持。绘图或动画专项通过不能替代完整游戏调用链验收。
-- krkrsdl3 的 `scriptsEx` 接口较完整，音频原插件名称有正式注册，对话框有实际 SDL 交互；这些可作为迁移参考。
+- krkrsdl3 的音频原插件名称有正式注册，对话框有实际 SDL 交互，这些仍可作为迁移参考。
 - krkrsdl3 的 Emote 同样存在 `assign/setColor/pass/skipToSync` 缺口，音频增益回调也未找到实现。它的 LayerExDraw 记录保存实际写 PNG，不是完整 EMF+ 参考实现。
 - 下文按游戏引用功能分类，不能据此推导插件所有公开功能均兼容。明确缺失与“尚未验收”分别注明；条件分支不会自动计为默认流程必需项。
-
-本次动态探针编译后，主 checkout 中 `ScriptsExt.cpp` 出现其他来源的模块名修改：`yz_scripts_ext.dll` 改为 `ScriptsExt.dll`。本次没有覆盖或重新编译该改动，下面的链接结果对应已编译的审计快照。
 
 ## 解包与 Patch
 
@@ -153,6 +151,8 @@ snbk 的主要引用为图像绘制、流程图的线/Bezier/矩阵/箭头，以
 | `extrans.dll` | 本次发现的 mosaic、turn、ripple 已实现并有相关专项证据 |
 | `extNagano.dll` | 配置启用且加载路径存在，已有多种转场实现；本次未确认场景使用其专属方法。morphing 已知末帧误差仍在，但未在此次场景统计中发现 |
 | `krmovie.dll` 对应常规视频路径 | Movie.tjs 基于 VideoOverlay，FFmpeg 宿主提供播放；包内 7 个 WMV，未做这 7 个视频的逐项播放验收，也不代表完整 Windows mixer/MFEVR 兼容 |
+| `scriptsEx.dll` | 已按 krkrsdl3 补齐 clone/foreach/getObjectKeys/getObjectCount/getObjectContext/isNullContext/equalStruct/equalStructNumericLoose/getMD5HashString/propGet/propSet/safeEvalStorage/stringFuzzySearch/rehash；专项回归通过；`scriptsEx.dll`、`yz_scripts_ext.dll`、`scriptsExt.dll` 均可链接 |
+| `PackinOne.dll` | 图像、字体、文件、结构保存子模块可装载；已改为组合 `scriptsEx.dll` |
 
 ### 用到的功能部分实现
 
@@ -160,8 +160,6 @@ snbk 的主要引用为图像绘制、流程图的线/Bezier/矩阵/箭头，以
 | --- | --- |
 | `motionplayer.dll` / `emoteplayer.dll` | 动画/GPU 绘制已有专项验证；setColor、pass、skipToSync 等游戏引用接口仍为空操作或不完整，assign 也存在空实现 |
 | `layerExDraw.dll` | 主要绘图接口已有实现；字体、文字度量、实际流程图/片尾画面尚未验收，属于保守分类 |
-| `scriptsEx.dll` | 内建 clone/foreach/getObjectKeys；动态探针确认 Scripts.equalStruct 缺失；clone/foreach 检查点仍缺完成的回归结论 |
-| `PackinOne.dll` | 图像、字体、文件、结构保存子模块可装载，脚本扩展覆盖不完整 |
 | `wuvorbis.dll` | Vorbis 解码内建，DLL 链接被兼容忽略；游戏启用 SOUNDGAIN，所查询的 setGainQueryCallback 缺失 |
 | `wuopus.dll` | 默认构建有 Opus 解码器；原 DLL 名称链接失败，Opus 增益回调也未找到实现；能解码不等于完整原插件兼容 |
 | `windowEx.dll` | 窗口/屏幕信息、系统度量和光标等已有宿主接入；单显示器近似及部分 Win32 空操作，窗口选项/事件未完整验收 |
@@ -188,18 +186,6 @@ snbk 的主要引用为图像绘制、流程图的线/Bezier/矩阵/箭头，以
 ## krkrsdl3 对照
 
 以下均为 `88d12ce` 的源码事实，不是运行验收。该 checkout 的构建入口在外部构建仓库，本次未核对最终产物实际包含哪些可选模块。
-
-### scriptsEx 与 PackinOne
-
-`plugins/scriptsEx.cpp:1081` 正式以 `scriptsEx.dll` 注册，比本项目当前子集更完整：
-
-- getObjectKeys/getObjectCount/getObjectContext/isNullContext。
-- equalStruct/equalStructNumericLoose，递归比较数组和字典。
-- foreach：回调参数为 key、value 和额外参数，非 void 结果终止遍历。
-- clone：递归复制 Array/Dictionary，其他对象尝试调用 clone 后回退。
-- getMD5HashString、propSet/propGet、safeEvalStorage、stringFuzzySearch、rehash。
-
-`plugins/PackinOne.cpp:17` 组合 layerExBTOA、layerExImage、layerExRaster、shrinkCopy、addFont、scriptsEx、fstat、saveStruct。它可以作为补齐本项目 scriptsEx 注册名及接口的主要参考；没有据源码存在就宣称全部边界行为已测试通过。
 
 ### EmotePlayer / MotionPlayer
 
@@ -273,7 +259,6 @@ snbk 的主要引用为图像绘制、流程图的线/Bezier/矩阵/箭头，以
 
 | 工作 | 参考价值 |
 | --- | --- |
-| scriptsEx 注册、结构比较、克隆与遍历 | 最高；有较完整 C++ 实现可核对和迁移，仍须本项目专项验证 |
 | Vorbis/Opus DLL 名称加载 | 有正式注册与加载参考；增益扩展需要另行实现 |
 | Win32Dialog 的实际交互 | 有 SDL 输入/消息框流程参考；Bevy 宿主仍需实现自己的 UI 能力 |
 | Emote 的空操作 | 参考仓库也缺，不能直接搬运解决 |
@@ -288,7 +273,7 @@ snbk 的主要引用为图像绘制、流程图的线/Bezier/矩阵/箭头，以
 | --- | --- |
 | 引擎归档读取专项 | 48,200/48,200 成员成功 |
 | patch PSB/MDF 解析专项 | 93/93 场景成功 |
-| 能力探针 | clone/foreach 存在；equalStruct 与增益回调缺失；scriptsEx.dll、wuopus.dll 链接失败 |
+| 能力探针 | wuopus.dll 链接失败 |
 | snbk startup_and_scene | 失败，override.tjs 匿名回调经 callAfterInit 报 Not a function or invalid method/property type，尚未到标题/交互；未确认单一插件根因 |
 | krkrsdl3 | 只做源码检查，未构建和运行 |
 
@@ -298,17 +283,15 @@ snbk 的主要引用为图像绘制、流程图的线/Bezier/矩阵/箭头，以
 {
   "clone": "Object",
   "foreach": "Object",
-  "equalStruct": "undefined",
+  "equalStruct": "Object",
   "gainCallback": "undefined",
   "OPUS": "undefined",
-  "scriptsEx": "Cannot load Plugin scriptsEx.dll",
+  "scriptsEx": "linked",
   "wuopus": "Cannot load Plugin wuopus.dll"
 }
 ```
 
 该探针没有覆盖每个可能的 Opus 专属回调名称；“OPUS undefined”也不能单独证明没有 Opus 解码器。增益扩展缺失的判断结合了游戏回调查询代码和源码搜索。
-
-没有运行全量测试或 example，没有补实现或提交修改。用于导出的临时 Rust 测试入口已移出仓库。
 
 ### 本地产物
 
@@ -330,11 +313,9 @@ snbk 的主要引用为图像绘制、流程图的线/Bezier/矩阵/箭头，以
 日志分别为 `/tmp/snbk-plugin-extraction.log`、`/tmp/snbk-plugin-scenes.log`、`/tmp/snbk-current/startup.log`。独立解包/解析测试没有初始化图形宿主，退出时的 `Bevy renderer is not initialized` 提示不应被解读为绘图验收；这两项只验证 Storage 和容器读取。
 
 ### 后续验证优先级
-
-1. 补齐并验证 scriptsEx 的注册名、equalStruct、clone/foreach 语义，再定位首次启动异常。
-2. 对游戏实际调用补齐 Emote 颜色、跳过/同步和 pass 等行为，按动画子系统验证。
-3. 补齐音频插件名称兼容与增益回调，并检查真实 Vorbis/Opus 和口型同步。
-4. 验收 LayerExDraw 的流程图箭头、字体/度量与片尾文字，以及记录纹理生命周期回归。
-5. 接入宿主对话交互，再分批验收标题、正文、选择、存读档、回想、流程图和视频。
+1. 对游戏实际调用补齐 Emote 颜色、跳过/同步和 pass 等行为，按动画子系统验证。
+2. 补齐音频插件名称兼容与增益回调，并检查真实 Vorbis/Opus 和口型同步。
+3. 验收 LayerExDraw 的流程图箭头、字体/度量与片尾文字，以及记录纹理生命周期回归。
+4. 接入宿主对话交互，再分批验收标题、正文、选择、存读档、回想、流程图和视频。
 
 相关说明：[snbk 实机验收](snbk-acceptance.md)、[插件迁移清单](plugin-migration.md)、[外部插件部署](external-plugins.md)。
