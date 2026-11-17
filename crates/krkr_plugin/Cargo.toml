@@ -20,6 +20,7 @@ ffmpeg-sys-next = { version = "9", default-features = false, optional = true }
 indoc = "2.0.8"
 itertools = "0.15.0"
 fearless_simd = "1.2.0"
+vello_gpu = { version = "=0.4.0", default-features = false, features = ["wgpu", "std", "full_image_support"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "android", target_os = "ios"))'.dependencies]
 wgpu-external-frame = "0.4"

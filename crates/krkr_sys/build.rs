@@ -191,6 +191,9 @@ mod real {
         }
         cpp.cpp(true).std("c++17").files(&sources.cpp).files(&plugins).file(&shim);
         println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/layerExSave/LayerExSaveUtils.inc").display());
+        for name in ["LayerExDrawGeometry.h", "LayerExDrawObjects.inc", "LayerExDrawState.inc", "LayerExDrawImage.inc", "LayerExDrawText.inc"] {
+            println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins").join(name).display());
+        }
         cpp.compile("krkr_core");
         let mut c = cc::Build::new();
         configure(&mut c);

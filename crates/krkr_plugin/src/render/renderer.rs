@@ -1,3 +1,6 @@
+#[path = "layer_ex_draw.rs"]
+mod layer_ex_draw;
+
 // krkr renderer
 
 use std::{
@@ -73,6 +76,10 @@ pub fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Option<Rend
         unsafe { renderer.execute(command) }
     }
     krkr_shim::render::set_render_sink(dispatch);
+    krkr_shim::layer_ex_draw::set_draw_sink(|request| {
+        let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
+        guard.as_mut().ok_or("Bevy renderer is not initialized")?.draw_layer_ex(request)
+    });
     krkr_shim::mesh::set_mesh_sink(|request| {
         let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
         guard
@@ -186,6 +193,7 @@ struct KrkrRenderer {
 
     ext_nagano: Option<ExtNaganoExtension>,
     mesh: super::mesh::MeshPipelines,
+    layer_ex_draw: Option<layer_ex_draw::Backend>,
 }
 
 #[derive(Clone)]
@@ -419,6 +427,7 @@ impl KrkrRenderer {
             sampler,
             ext_nagano,
             mesh,
+            layer_ex_draw: None,
         }
     }
 

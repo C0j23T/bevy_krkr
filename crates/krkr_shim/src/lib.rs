@@ -10,6 +10,7 @@ pub mod png;
 mod save_image;
 pub mod render;
 pub mod mesh;
+pub mod layer_ex_draw;
 pub mod video;
 pub mod xml;
 

@@ -31,7 +31,10 @@ LayerExSave adapts the image utilities and encoders by the same author in
 The portable Text/Draw subset follows the interface by Go Watanabe (わたなべごう)
 in [wamsoft/layerExDraw](https://github.com/wamsoft/layerExDraw), commit
 `f665a153fa774e47069f53e303329be15975d1e0`. Its license follows Kirikiri.
-The implementation uses FreeType coverage and Bevy GPU composition rather than GDI+.
+The implementation uses FreeType outlines and Vello on the shared Bevy GPU device.
+Vello GPU, Vello Common and Vello GPU Shaders 0.4.0 are copyright 2020 the Vello
+Authors and used under the MIT license; distributions include
+[licenses/vello-mit.txt](licenses/vello-mit.txt).
 
 Wave, mosaic, turn and the rotate transitions adapt the algorithms by W.Dee and contributors in
 [wamsoft/extrans](https://github.com/wamsoft/extrans), commit
