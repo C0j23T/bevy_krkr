@@ -50,3 +50,9 @@ if [[ $plugin == all || $plugin == gpu_fixture ]]; then
     -DTPSTUB_DIR="$stub_dir" -DCMAKE_BUILD_TYPE=Release
   cmake --build "$build_dir/gpu_fixture" --parallel 4
 fi
+
+if [[ $plugin == all || $plugin == psbfile ]]; then
+  cmake -S "$repo_dir/external_plugins/psbfile" -B "$build_dir/psbfile" \
+    -DTPSTUB_DIR="$stub_dir" -DNCBIND_DIR="$ncbind_dir" -DCMAKE_BUILD_TYPE=Release
+  cmake --build "$build_dir/psbfile" --parallel 4
+fi

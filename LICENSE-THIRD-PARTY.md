@@ -60,6 +60,12 @@ The independent `external_plugins/json` plugin adapts Go Watanabe's
 redistribution terms, including krkrsdl3's supplementary condition, are retained in
 [external_plugins/json/LICENSE](external_plugins/json/LICENSE).
 
+The independent `external_plugins/psbfile` plugin adapts `plugins/psbfile` from
+that same krkrsdl3 revision. Its full upstream terms are retained in
+[external_plugins/psbfile/LICENSE](external_plugins/psbfile/LICENSE). It links
+the system zlib library; zlib's notices are reproduced below with Kirikiroid2's
+third-party notices.
+
 External plugins use the independently supplied Kirikiri Z `tp_stub` ABI
 (validated at revision `7d91ba56bcfe241df349b01badd915a156bc47cf`) and
 [wamsoft/ncbind](https://github.com/wamsoft/ncbind), revision

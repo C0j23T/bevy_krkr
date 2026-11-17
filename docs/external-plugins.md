@@ -35,3 +35,15 @@ ALPHA_MOVIE_PLUGIN=$HOME/Workspace/AlphaMovie/AlphaMovie.so \
 PSD 构建产物为 `target/external-plugins/psdfile/libpsdfile.so`，测试默认使用该路径；
 `PSD_FILE_PLUGIN` 可指定其他插件二进制。测试覆盖 PSD 图层像素、Storage BMP
 读取以及 AlphaMovie 的 JPEG/zlib 帧与透明度。
+
+## PSB
+
+```sh
+tools/external-plugins/build.sh psbfile
+cargo test --test external_psb -- --ignored
+```
+
+`PSBFile` 支持 PSB v1–v3、普通 zlib MDF、Storage 路径与 octet 输入，以及
+`psb://容器/资源键` 只读媒体。MDF 资源从解压后的容器读取；重复加载替换旧状态。
+不支持加密 PSB、v4、MFL、写入或媒体目录枚举。标准测试使用合成容器，
+设置 `PSB_SAMPLE` 可额外验证一个本地真实容器，不运行游戏。

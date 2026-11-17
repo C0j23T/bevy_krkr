@@ -11,3 +11,6 @@
 [submodule "external_plugins/psdfile"]
 	path = external_plugins/psdfile
 	url = https://github.com/wamsoft/psdfile
+[submodule "external_plugins/psbfile"]
+	path = external_plugins/psbfile
+	url = /home/hepta/Workspace/bevy_krkr/external_plugins/psbfile
