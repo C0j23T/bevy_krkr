@@ -12,7 +12,8 @@ struct Vertex {
 @vertex
 fn mesh_vertex(@location(0) point: vec4<f32>) -> Vertex {
     var result: Vertex;
-    result.position = vec4(point.x, point.y, 0.0, 1.0);
+    // Emote uses -1 at the target's top; WebGPU clip space uses +1.
+    result.position = vec4(point.x, -point.y, 0.0, 1.0);
     result.uv = point.zw;
     return result;
 }

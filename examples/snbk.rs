@@ -5,7 +5,7 @@
 //! ```
 //!
 //! Defaults to `test_games/snbk/data.xp3`. Every sibling `.xp3` archive is
-//! mounted through Storage, which handles XP3 and the game's 7z archives.
+//! mounted recursively through Storage, which handles XP3 and the game's 7z archives.
 //! The game's startup scripts create its Kirikiri Window and layer tree;
 //! Bevy presents the scene and forwards keyboard and mouse input.
 //!
@@ -162,7 +162,7 @@ fn start_game(
         // archive": that is what a script's `storage="fgimage720.xp3>x.png"`
         // (or a bare `x.png` found through the search path) resolves against.
         let arg = format!("file://{}>", path.display());
-        match engine.exec_script(&format!("Storages.addAutoPath({arg:?});"), "snbk") {
+        match engine.exec_script(&format!("Storages.addAutoPathRecursive({arg:?});"), "snbk") {
             Ok(()) => {
                 mounted += 1;
                 debug!("mounted {}", path.display());
@@ -174,6 +174,26 @@ fn start_game(
 
     let plugins = load_plugins(&engine, dir);
     info!("snbk: attached {} native plugin(s)", plugins.len());
+
+    let project_dir = match fs::canonicalize(dir) {
+        Ok(path) => format!("file://{}/", path.display()),
+        Err(error) => {
+            warn!(
+                "snbk: cannot resolve game directory {}: {error}",
+                dir.display()
+            );
+            game.startup_failed = true;
+            return;
+        }
+    };
+    if let Err(error) = engine.exec_script(
+        &format!("Storages.setCurrentDirectory({project_dir:?});"),
+        "snbk project directory",
+    ) {
+        warn!("snbk: cannot set game directory: {error}");
+        game.startup_failed = true;
+        return;
+    }
 
     // `exec_startup` is the engine's own start-up sequence: `patch.tjs` next
     // to the data file first (games fix up the engine there -- Fal hollow

@@ -1165,7 +1165,7 @@ impl KrkrRenderer {
                 #[inline(always)]
                 fn rgba_to_gray<S: Simd>(simd: S, src: &[u8], dst: &mut [u8]) {
                     let mut src_chunks = src.chunks_exact(64);
-                    let mut dst_chunks = dst.chunks_exact_mut(48);
+                    let mut dst_chunks = dst.chunks_exact_mut(16);
 
                     for (s, ds) in src_chunks.by_ref().zip(dst_chunks.by_ref()) {
                         let a = u8x16::from_slice(simd, &s[0..16]);
