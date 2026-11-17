@@ -6,6 +6,14 @@
 
 方案 B 的目标是保持现有 Layer 的绘制语义、透明度和转场结果不变，同时避免每次更新都重新生成整张 primary layer 纹理。场景切换、全屏更新、视频帧和转场可以退化为接近全屏合成，不要求所有帧都获得局部化收益。
 
+## 方案边界
+
+- **方案 A：按 dirty 决定是否重建。** 每帧仍可调用 `krkr_scene_build`，但静态场景直接返回持久目标；普通层更新、转场和视频等 dirty 信号到达时才重建整棵可见层树。它利用 `tTVPLayerManager::UpdateRegion` 判断是否需要更新，并补充纹理失效、视频状态和场景切换信号。
+- **方案 B：按 dirty 区域重建和合成。** 在 A 的缓存生命周期上读取 `UpdateRegion` 包围盒，只处理与区域相交的层内容，并把该区域写回同一个目标纹理。全屏变化和不可靠区域继续退化为全屏。
+- **方案 C：恢复原版逐层 `CacheBitmap`/复杂区域绘制链。** 本计划不采用 C。端口已删除约 6000 行原版绘制代码；恢复它会带回逐层缓存、失效和资源管理成本，原版 GPU 路径本身也没有按 `CacheRecalcRegion` 局部重绘。
+
+A 是静态帧避免重建的基础，B 是减少更新帧 GPU 工作量的后续优化；两者解决不同的成本。本文只实现和验收 B，不把 A 已有行为算作 B 的区域收益。
+
 ## 范围与约束
 
 - C++ 继续负责 Layer/TJS 状态、更新区域和坐标适配；Rust 只负责 GPU 纹理、命令编码和目标纹理生命周期。
@@ -16,12 +24,20 @@
 
 ## 当前基线
 
-当前 `TVPBevyBuildScene` 在需要更新时调用 `TVPBevyScene::Build`，为每个需要合成的层创建临时纹理，再通过 `operation = 5` 合成到场景目标。Rust `KrkrRenderer::draw` 对绘制命令采用写时复制，会为目标生成新的 GPU 纹理并替换纹理表中的旧值。
+当前 `TVPBevyBuildScene` 在需要更新时调用 `TVPBevyScene::Build`，为需要合成的层创建临时纹理，再通过 `operation = 5` 合成。Rust `KrkrRenderer::draw` 对绘制命令采用写时复制，会为目标生成新的 GPU 纹理并替换纹理表中的旧值。
 
 因此，局部合成不能只给 C++ 增加区域参数：必须同时解决以下两个问题：
 
 1. 目标纹理需要跨帧保持，才能保留未受影响区域。
 2. Rust 合成命令必须只写目标脏区，并保留目标其余区域。
+
+## 当前实现进度
+
+- Rust `operation = 7` 按 source rect 到 destination rect 执行原地 GPU copy；命令与绘制在同一个 command encoder 中编码，目标纹理表项不变。
+- `TVPBevyScene::Target` 在场景身份和尺寸不变时持久复用。`TVPBevyBuildScene` 将 `UpdateRegion` 包围盒裁剪到 primary layer 范围，只构建并复制目标脏区。
+- 局部更新会跳过与 primary dirty bbox 完全不相交的子树及其合成命令。相交层在完整尺寸中间纹理上只填充、复制和合成 local dirty；活动转场、场景 dirty、目标变化和缺少 manager 走全屏路径。
+- `RenderStats` 累积记录场景 copy、composite、draw 的像素面积及 texture create 命令。渲染集成测试已检查静态帧无 copy/composite，移动层与局部填充的 copy/composite 面积小于全屏。
+- Rust 区域 copy 和 composite 子矩形 GPU 像素测试、端到端 layer 像素测试通过。C++ 子模块通过本机 Linux C++ 编译；尚未完成视频、transition 和跨平台构建验证。
 
 ## 设计
 
@@ -47,43 +63,40 @@
 
 ### 2. C++ 层树构建
 
-给 `TVPBevyScene::Build` 增加目标区域参数，并把它沿层坐标向下传递：
+给 `TVPBevyScene::Build` 增加 primary dirty bbox 和各层在 primary 坐标中的原点：
 
-- 每层把 primary layer 的脏区转换到自身坐标系；
-- 与层边界相交后才继续构建子树；
-- 子层位置、裁剪区和 `ImageLeft/ImageTop` 均参与转换；
-- 不在脏区相交的叶层直接跳过；
+- 以子层位置和尺寸判断它是否与 primary dirty bbox 相交；
+- 不相交时跳过该子树的递归构建和合成；
+- 相交层仍使用完整尺寸中间纹理，但只填充 local dirty，只复制 `ImageLeft/ImageTop` 覆盖区域，并按 source/destination 子矩形合成子层；
 - 透明层和 binder 层保留现有背景与合成语义。
 
-第一版不尝试复用每层的中间结果。若某个父层的变换、透明度或显示状态改变，继续把受影响的父层区域交给 GPU 合成；只有明确不相交的分支才跳过。
+第一版不尝试复用每层的中间结果或缩小中间纹理。若某个父层的变换、透明度或显示状态改变，继续重建该脏区内内容；只有明确不相交的分支才跳过。
 
 ### 3. 持久目标纹理
 
 `TVPBevyScene::Target` 在尺寸不变时必须保持同一个 `iTVPTexture2D` 和 texture ID。每次局部更新前：
 
 1. 确认目标纹理已经存在且尺寸匹配；尺寸变化时丢弃并重新创建。
-2. 只清除目标脏区，避免透明层删除后残留旧像素。
-3. 将本次构建结果写回目标纹理的对应区域。
+2. 将本次构建结果写回目标纹理的对应区域。该结果包含脏区内的透明背景重建，覆盖即可清除透明层删除后的旧像素。
 
-不能使用现有 `Assign` 或完整 `CopyRect` 作为目标复用协议，因为它们可能替换底层纹理对象。需要为 Rust 增加明确的原地操作，例如 `copy_texture_to_texture` 或专用 `operation = 7`：源纹理内容复制到既有目标纹理，目标纹理不从 renderer texture map 中替换。
+不能使用现有 `Assign` 或完整 `CopyRect` 作为目标复用协议，因为它们可能替换底层纹理对象。Rust 的专用 `operation = 7` 把源纹理区域复制到既有目标纹理的指定区域，目标纹理不从 renderer texture map 中替换。
 
 ### 4. Rust 合成接口
 
-新增接口应按一次完整操作设计，而不是逐项暴露 wgpu API。建议包含：
+当前 `operation = 7` 是原地纹理区域 copy，按一次 copy 操作传递：
 
 - source texture ID；
 - persistent target texture ID；
 - source rectangle；
-- destination rectangle；
-- blend/layer type 和 opacity；
-- 是否清除目标脏区。
+- destination rectangle。
 
-`renderer.rs` 需要区分两类操作：
+Layer blend 继续由 `operation = 5` 完成，随后 copy 到持久目标。`renderer.rs` 中：
 
-- 局部绘制：输出写入既有 target，target 其他区域保持不变；
-- 临时结果：转场或需要多阶段计算时使用池化纹理，最后通过 GPU copy 写回 persistent target。
+- operation 5 在提供 source rectangle 时按该区域采样，未提供时沿用全 source 默认行为；
+- GPU copy 和 draw 按同一 `CommandEncoder` 顺序编码；
+- 临时源纹理由 renderer 的延迟回收池持有，避免编码后立即复用。
 
-所有 copy 和 draw 命令必须在同一 `CommandEncoder` 顺序中提交。源临时纹理要保持存活到命令提交完成，不能在编码后立即归还到会复用的纹理池。
+后续若引入需要多阶段计算的持久目标写入，应继续采用完整操作接口，不逐项暴露 wgpu API。
 
 ### 5. 转场与视频
 
@@ -104,20 +117,26 @@
 
 ### 阶段 1：持久目标与原地 copy
 
-- 新增 Rust 原地 GPU copy 操作。
-- 让 C++ 目标纹理在尺寸不变时保持稳定 ID。
-- 先实现全屏脏区写回，验证目标纹理生命周期、纹理池和材质绑定稳定。
+基础实现已完成，阶段验收尚未完成。
+
+- [x] 新增 Rust 原地 GPU copy 操作。
+- [x] 让 C++ 目标纹理在尺寸不变时保持稳定 ID。
+- [x] 实现全屏 fallback 和局部区域写回。
+- [ ] 验证连续帧场景像素、材质绑定和尺寸变化。
 
 验收：动态更新不再因目标纹理替换而强制重绑材质；连续帧像素与方案 A 一致；尺寸变化正确重建目标。
 
 ### 阶段 2：包围盒脏区
 
-- 接入 `UpdateRegion` 包围盒和裁剪。
-- 为层树递归增加区域相交判断。
-- 清理目标脏区后只写回局部区域。
-- 对移动、删除、隐藏层保守扩大脏区，优先保证没有残留像素。
+已接入基础区域路径；像素回归和工作量验收尚未完成。
 
-验收：局部填充、文本、移动层、透明度变化、子层变化和多次连续更新均通过像素测试；统计数据证明局部更新减少了合成面积或命令量。
+- [x] 接入 `UpdateRegion` 包围盒和裁剪。
+- [x] 为层树递归增加区域相交判断，跳过不相交子树。
+- [x] 将相交层的填充、主图复制、子层合成限制到 local dirty，并只写回目标脏区。
+- [x] 验证局部填充、移动层旧位置清除和隐藏组旧区域清除的像素结果。
+- [ ] 验证透明度、连续更新、视频和 transition 像素结果。
+
+验收：代表性的移动与填充更新已通过像素和面积断言；透明度、文本、视频、transition、多次连续更新仍需补充验证。
 
 ### 阶段 3：扩展与优化
 
