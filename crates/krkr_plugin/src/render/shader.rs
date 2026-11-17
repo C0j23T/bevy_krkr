@@ -467,13 +467,16 @@ fn add_operations(composer: &mut ShaderComposer) {
     krkr_operations(composer);
     layerex_operations(composer);
     pixel_operations(composer);
-    composer.add_operation(Operation::MESH_RESOLVE, indoc! {"
+    composer.add_operation(
+        Operation::MESH_RESOLVE,
+        indoc! {"
         var color = fetch(source, xy);
         if (p[2].w == 0.0 || p[2].w == 21.0) {
             color = vec4(color.rgb / max(color.a, 0.000001), color.a);
         }
         textureStore(output, xy, color);
-    "});
+    "},
+    );
     extrans_operations(composer);
     nagano_operations(composer);
 }

@@ -12,7 +12,7 @@ struct Vertex {
 @vertex
 fn mesh_vertex(@location(0) point: vec4<f32>) -> Vertex {
     var result: Vertex;
-    result.position = vec4(point.x, -point.y, 0.0, 1.0);
+    result.position = vec4(point.x, point.y, 0.0, 1.0);
     result.uv = point.zw;
     return result;
 }
@@ -46,6 +46,8 @@ fn mesh_fragment(vertex: Vertex) -> @location(0) vec4<f32> {
     color *= settings[1];
     color.a *= settings[0].x;
     color = clamp(color, vec4(0.0), vec4(1.0));
-    if (settings[0].y == 0.0 || settings[0].y == 21.0) { color = vec4(color.rgb * color.a, color.a); }
+    if (settings[0].y == 0.0 || settings[0].y == 1.0 || settings[0].y == 3.0 || settings[0].y == 4.0 || settings[0].y == 21.0) {
+        color = vec4(color.rgb * color.a, color.a);
+    }
     return color;
 }

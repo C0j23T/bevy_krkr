@@ -75,7 +75,10 @@ pub fn initialize(device: RenderDevice, queue: RenderQueue, adapter: Option<Rend
     krkr_shim::render::set_render_sink(dispatch);
     krkr_shim::mesh::set_mesh_sink(|request| {
         let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
-        guard.as_mut().ok_or("Bevy renderer is not initialized")?.draw_mesh(request)
+        guard
+            .as_mut()
+            .ok_or("Bevy renderer is not initialized")?
+            .draw_mesh(request)
     });
     krkr_shim::render::set_gpu_method_sink(|request| {
         let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
@@ -124,7 +127,12 @@ pub(crate) fn color_video(
     command.method = c"VideoColor".as_ptr();
     command.target = target;
     command.geometry = u32::from(force_opaque);
-    command.rect = [0, 0, destination.texture.width() as i32, destination.texture.height() as i32];
+    command.rect = [
+        0,
+        0,
+        destination.texture.width() as i32,
+        destination.texture.height() as i32,
+    ];
     command.source_rects[0] = command.rect.map(|value| value as f32);
     command.parameters[4..8].copy_from_slice(&color.map(|value| value as f32));
     renderer.draw(&command, Some(image))
@@ -536,28 +544,264 @@ impl KrkrRenderer {
         let size = [target.texture.width(), target.texture.height()];
         let params = super::mesh::parameters(request, size);
         let buffer = self.device.create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("Kirikiri mesh parameters"), contents: bytemuck::cast_slice(&params),
+            label: Some("Kirikiri mesh parameters"),
+            contents: bytemuck::cast_slice(&params),
             usage: BufferUsages::STORAGE,
         });
-        let views = [source.default_view.clone(), mask.default_view.clone(), target.default_view.clone()];
-        let entries = [
-            BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&views[0]) },
-            BindGroupEntry { binding: 1, resource: BindingResource::TextureView(&views[1]) },
-            BindGroupEntry { binding: 2, resource: BindingResource::TextureView(&views[2]) },
-            BindGroupEntry { binding: 3, resource: BindingResource::TextureView(&views[2]) },
-            BindGroupEntry { binding: 4, resource: BindingResource::TextureView(&views[2]) },
+        let empty = EMPTY_TEXTURE
+            .get()
+            .ok_or("mesh fallback texture is unavailable")?;
+        let mask = if request.mask == 0 { empty } else { &mask };
+        let record_size = (request.division_x + 1) as u64 * (request.division_y + 1) as u64 * 16;
+        let records = self.device.create_buffer(&BufferDescriptor {
+            label: Some("Kirikiri deformed mesh vertices"),
+            size: record_size,
+            usage: BufferUsages::STORAGE | BufferUsages::VERTEX,
+            mapped_at_creation: false,
+        });
+        let deform_entries = [
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&empty.default_view),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::TextureView(&empty.default_view),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: BindingResource::TextureView(&empty.default_view),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: BindingResource::TextureView(&empty.default_view),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: BindingResource::TextureView(&target.default_view),
+            },
+            BindGroupEntry {
+                binding: 5,
+                resource: buffer.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 6,
+                resource: records.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 7,
+                resource: NAGANO_TABLES_DUMMY
+                    .get()
+                    .ok_or("mesh fallback table is unavailable")?
+                    .as_entire_binding(),
+            },
         ];
-        let records = NAGANO_RECORDS_DUMMY.get().unwrap();
-        let tables = NAGANO_TABLES_DUMMY.get().unwrap();
-        let mut deform_entries = entries.to_vec();
-        deform_entries.push(BindGroupEntry { binding: 5, resource: buffer.as_entire_binding() });
-        deform_entries.push(BindGroupEntry { binding: 6, resource: records.as_entire_binding() });
-        deform_entries.push(BindGroupEntry { binding: 7, resource: tables.as_entire_binding() });
-        let group = self.device.create_bind_group(None, &self.layout, &deform_entries);
+        let deform_group = self
+            .device
+            .create_bind_group(None, &self.layout, &deform_entries);
         let vertex_count = (request.division_x + 1) * (request.division_y + 1);
         let deform = self.mesh.deform.clone();
-        { let mut pass = self.encoder().begin_compute_pass(&ComputePassDescriptor::default());
-          pass.set_pipeline(&deform); pass.set_bind_group(0, &group, &[]); pass.dispatch_workgroups(vertex_count.div_ceil(64), 1, 1); }
+        {
+            let mut pass = self
+                .encoder()
+                .begin_compute_pass(&ComputePassDescriptor::default());
+            pass.set_pipeline(&deform);
+            pass.set_bind_group(0, &deform_group, &[]);
+            pass.dispatch_workgroups(vertex_count.div_ceil(64), 1, 1);
+        }
+
+        let settings = [
+            [
+                request.opacity,
+                request.blend as f32,
+                f32::from(request.mask != 0),
+                0.0,
+            ],
+            request.tint,
+            request.color,
+            [size[0] as f32, size[1] as f32, 0.0, 0.0],
+        ];
+        let settings = self.device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("Kirikiri mesh raster settings"),
+            contents: bytemuck::cast_slice(&settings),
+            usage: BufferUsages::UNIFORM,
+        });
+        let prepared = self.texture_pool.acquire(&self.device, size[0], size[1]);
+        let raster_group = self.device.create_bind_group(
+            None,
+            &self.mesh.layout,
+            &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&source.default_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&mask.default_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&empty.default_view),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Sampler(&self.mesh.sampler),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: settings.as_entire_binding(),
+                },
+            ],
+        );
+        let prepare_pipeline = self.mesh.prepare.clone();
+        let prepare_group = self.device.create_bind_group(
+            None,
+            &self.mesh.layout,
+            &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&source.default_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&mask.default_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&target.default_view),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Sampler(&self.mesh.sampler),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: settings.as_entire_binding(),
+                },
+            ],
+        );
+        {
+            let mut pass = self
+                .encoder()
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Kirikiri mesh target prepare"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &prepared.default_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            pass.set_pipeline(&prepare_pipeline);
+            pass.set_bind_group(0, &prepare_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        let indices = super::mesh::indices(request.division_x, request.division_y);
+        let index_buffer = self.device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("Kirikiri mesh indices"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: BufferUsages::INDEX,
+        });
+        let raster_pipeline = match request.blend {
+            1 | 4 => self.mesh.multiply.clone(),
+            3 => self.mesh.additive.clone(),
+            _ => self.mesh.normal.clone(),
+        };
+        {
+            let mut pass = self
+                .encoder()
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Kirikiri emote mesh"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &prepared.default_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            pass.set_pipeline(&raster_pipeline);
+            pass.set_bind_group(0, &raster_group, &[]);
+            pass.set_vertex_buffer(0, Some(*records.slice(..)));
+            pass.set_index_buffer(*index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+        }
+        let resolve_params = self.device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("Kirikiri mesh resolve parameters"),
+            contents: bytemuck::cast_slice(&[
+                [0.0, 0.0, size[0] as f32, size[1] as f32],
+                [f32::from_bits(Operation::MESH_RESOLVE.0), 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, request.blend as f32],
+            ]),
+            usage: BufferUsages::STORAGE,
+        });
+        let resolve_group = self.device.create_bind_group(
+            None,
+            &self.layout,
+            &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&prepared.default_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&empty.default_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&empty.default_view),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::TextureView(&empty.default_view),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: BindingResource::TextureView(&target.default_view),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: resolve_params.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: NAGANO_RECORDS_DUMMY
+                        .get()
+                        .ok_or("mesh fallback records are unavailable")?
+                        .as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: NAGANO_TABLES_DUMMY
+                        .get()
+                        .ok_or("mesh fallback table is unavailable")?
+                        .as_entire_binding(),
+                },
+            ],
+        );
+        let resolve_pipeline = self.pipeline.clone();
+        {
+            let mut pass = self
+                .encoder()
+                .begin_compute_pass(&ComputePassDescriptor::default());
+            pass.set_pipeline(&resolve_pipeline);
+            pass.set_bind_group(0, &resolve_group, &[]);
+            pass.dispatch_workgroups(size[0].div_ceil(8), size[1].div_ceil(8), 1);
+        }
+        self.texture_pool.retire(prepared);
         self.pending += 1;
         Ok(())
     }

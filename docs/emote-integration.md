@@ -13,8 +13,10 @@
 ## C++ 迁移工作区状态
 
 `Kirikiroid2/src/plugins/emoteplayer/` 已迁入参考容器、时间轴、物理、几何与
-TJS 绑定；上述 C++ 翻译单元已分别通过 C++17 语法检查并加入
-`codegen/src/port.rs` 构建清单。真实容器、TJS 播放和 GPU 像素验收仍待完成。
+TJS 绑定，并已加入 `codegen/src/port.rs` 构建清单。
+`motionplayer.dll` 映射到同一模块。真实 snbk `data720.xp3>sd001.mtn`
+已通过 Storage / xp3filter、ResourceManager、Player、Layer 的绘制链路验证：
+`SD001/SD001AA` 可绘制非零图像，Player 平移会改变目标像素。
 
 `BevyEmoteRenderer.cpp` 的 target、texture、清空及 Layer GPU copy 使用现有
 `iTVPTexture2D`，无独立窗口或 present。常规图标绘制提交曲面链；CPU 图标网格仅在
@@ -25,7 +27,8 @@ hit test 查询时计算，物理锚点与 shape 查询仍由 C++ 几何计算�
 
 `Kirikiroid2/src/core/environ/bevy/BevyMesh.h` 定义完整操作
 `krkr_render_mesh(const TVPBevyMeshCommand*)`。调用时复制所有指针指向的数据，
-异常不得跨越 C ABI；返回 0 表示成功。宿主尚需实现此函数与对应 Composer 操作。
+异常不得跨越 C ABI；返回 0 表示成功。宿主实现包含 Composer 曲面变形、
+GPU 顶点与索引缓冲、目标预乘准备、mesh raster 和 resolve；常规绘制不读回像素。
 
 - `target/source/mask` 为现有 Bevy 纹理 ID；mask=0 关闭 alpha 蒙版。
 - `surfaces` 顺序为 player root 到 icon；`surface_count` 描述整条曲面链。
@@ -50,9 +53,22 @@ ABI 使用 C++ `static_assert` 固定：surface 为 2240 字节，command 为 88
 可由宿主另行打包，不能直接假定 C 布局满足 WGSL 的 vec4 对齐。
 
 构建接入已在 `EXTRA_SOURCES` 添加 `emotefile.cpp/PSBData.cpp/emoterunner.cpp/
-emoteplayerclass.cpp`，并在 `PLUGINS` 添加 `emoteplayer.cpp`；仍需实现
-`motionplayer.dll` 模块别名。`BevyEmoteRenderer.cpp` 已在 environ/bevy 的源码扫描目录，
-因此加入任何构建验证前需先提供 `krkr_render_mesh` 符号。
+emoteplayerclass.cpp`，并在 `PLUGINS` 添加 `emoteplayer.cpp`。
+`BevyEmoteRenderer.cpp` 位于 environ/bevy 的源码扫描目录。
+
+### 当前测试
+
+```sh
+cargo test -p krkr_plugin --test mesh_pixels
+cargo test --test emote
+cargo test --test emote snbk_motion_resource_renders -- --ignored
+```
+
+`mesh_pixels` 直接调用完整 FFI 操作并读回 Vulkan 目标，覆盖身份网格、
+normal / multiply / additive / mode 21、opacity / tint、alpha 蒙版、
+Bezier 镜像与非线性细分、source=target 像素。`emote` 覆盖模块别名与公开 Motion 类；
+真实 snbk 测试需要本地游戏包，未复制游戏资源到仓库。
+帧时间、物理、多层曲面继承、hit test 和完整游戏脚本仍需独立验收。
 
 ## snbk 资源调查
 
