@@ -14,3 +14,6 @@
 [submodule "external_plugins/psbfile"]
 	path = external_plugins/psbfile
 	url = /home/hepta/Workspace/bevy_krkr/external_plugins/psbfile
+[submodule "external_plugins/sqlite3"]
+	path = external_plugins/sqlite3
+	url = /home/hepta/Workspace/bevy_krkr/external_plugins/sqlite3
