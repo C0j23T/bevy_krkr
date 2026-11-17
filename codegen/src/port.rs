@@ -45,6 +45,10 @@ const EXTRA_SOURCES: &[&str] = &[
     "msg/win32/OptionsDesc.cpp",
     "../plugins/ncbind/ncbind.cpp",
     "../plugins/InternalPlugins.cpp",
+    "../plugins/emoteplayer/PSBData.cpp",
+    "../plugins/emoteplayer/emotefile.cpp",
+    "../plugins/emoteplayer/emoterunner.cpp",
+    "../plugins/emoteplayer/emoteplayerclass.cpp",
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -56,6 +60,7 @@ pub struct Plugin {
 }
 
 pub const PLUGINS: &[Plugin] = &[
+    Plugin { source: "src/plugins/emoteplayer/emoteplayer.cpp", module: "emoteplayer.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/LayerExDraw.cpp", module: "layerExDraw.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/extrans/Extrans.cpp", module: "extrans.dll", internal: false, feature: None },
     Plugin { source: "src/core/environ/bevy/plugins/ExtNagano.cpp", module: "extNagano.dll", internal: false, feature: None },

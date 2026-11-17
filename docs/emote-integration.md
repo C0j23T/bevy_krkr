@@ -10,6 +10,50 @@
 - 纹理首次使用时上传；每帧提交变换、顶点、蒙版及绘制命令。仅显式抓帧接口允许读回。
 - 本文的接口与验收项是迁移要求；实际完成状态见 [插件迁移清单](plugin-migration.md)。
 
+## C++ 迁移工作区状态
+
+`Kirikiroid2/src/plugins/emoteplayer/` 已迁入参考容器、时间轴、物理、几何与
+TJS 绑定；上述 C++ 翻译单元已分别通过 C++17 语法检查并加入
+`codegen/src/port.rs` 构建清单。真实容器、TJS 播放和 GPU 像素验收仍待完成。
+
+`BevyEmoteRenderer.cpp` 的 target、texture、清空及 Layer GPU copy 使用现有
+`iTVPTexture2D`，无独立窗口或 present。常规图标绘制提交曲面链；CPU 图标网格仅在
+hit test 查询时计算，物理锚点与 shape 查询仍由 C++ 几何计算。
+`D3DAdaptor.captureCanvas` 保留显式读回。
+
+### 通用 GPU 曲面契约
+
+`Kirikiroid2/src/core/environ/bevy/BevyMesh.h` 定义完整操作
+`krkr_render_mesh(const TVPBevyMeshCommand*)`。调用时复制所有指针指向的数据，
+异常不得跨越 C ABI；返回 0 表示成功。宿主尚需实现此函数与对应 Composer 操作。
+
+- `target/source/mask` 为现有 Bevy 纹理 ID；mask=0 关闭 alpha 蒙版。
+- `surfaces` 顺序为 player root 到 icon；`surface_count` 描述整条曲面链。
+- `division_x/y` 是二维网格细分数；UV 顶点由 GPU 生成，索引为每格两个三角形。
+- `blend` 沿用 Emote 0 普通 alpha、1/4 乘色、3 加色、6 跳过、21 纯色替换；
+  `opacity/tint/color` 分别为透明度、乘性颜色及 mode 21 常量色。
+- 每个 surface 的 `control_points[32]` 为 16 个双三次 Bézier 控制点，按参考行序。
+- `models[32][16]` 是 `attachMat * buildMotionLinear(surface, mask)`，mask 为
+  variant 左移 4 位；矩阵为列主序。C++ 预计算线性矩阵，GPU 计算曲面与每顶点贡献链。
+- `placement = attachMat * (coordX,coordY,0,1)`，w 置 0；
+  `geometry=(originX,originY,width,height)`，`offset=(currOx,currOy,0,0)`。
+- `kind` 对应参考 `emoteRender.type`；`inherit_mask` 为当前继承标志。
+
+GPU 顶点评估从 icon 向 root 反向遍历：以参考
+`emotegeometry.h::emoteSurfaceEvaluator::evaluate` 为准，分别保留几何和祖先 placement
+贡献。内层与 root 使用完整 0x1f0 线性 mask，其他贡献使用逐层相与的 inherit mask；
+Bezier 的归一化坐标带轴交换，输出还执行最终 Y 翻转。不能用单个 patch 加总矩阵
+替代这条链，也不能先由 CPU 生成变形顶点再交给 shader。
+
+ABI 使用 C++ `static_assert` 固定：surface 为 2240 字节，command 为 88 字节；
+后者指针与纹理 ID 采用 64 位对齐。Rust 结构必须为 `repr(C)`，WGSL storage buffer
+可由宿主另行打包，不能直接假定 C 布局满足 WGSL 的 vec4 对齐。
+
+构建接入已在 `EXTRA_SOURCES` 添加 `emotefile.cpp/PSBData.cpp/emoterunner.cpp/
+emoteplayerclass.cpp`，并在 `PLUGINS` 添加 `emoteplayer.cpp`；仍需实现
+`motionplayer.dll` 模块别名。`BevyEmoteRenderer.cpp` 已在 environ/bevy 的源码扫描目录，
+因此加入任何构建验证前需先提供 `krkr_render_mesh` 符号。
+
 ## snbk 资源调查
 
 ### PSB/MDF 数量与版本
