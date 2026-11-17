@@ -21,6 +21,7 @@
 | `shrinkCopy.dll` | GPU compute 面积平均；`shrinkCopyFast` 保留分轴截断、尾部采样与不透明输出；真实 Vulkan 像素验证 |
 | `layerExAreaAverage.dll` | `Layer.stretchCopyAA` 走 GPU compute；保留透明色权重与边界语义；真实 Vulkan 像素验证 |
 | `json.dll` | 独立外部 submodule；标准 `tp_stub.h`；JSON 解析、序列化、Storage 文本流、Unicode、卸载重载已验证；见 [外部插件](external-plugins.md) |
+| `psdfile.dll` | 原仓库移入 `external_plugins/psdfile` submodule；PSD 图层 RGBA、Storage BMP、卸载重载与宿主重启已验证 |
 
 ## 已实现（未测试）
 

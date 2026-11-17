@@ -20,3 +20,18 @@ Storage 自动搜索路径查找，再查找宿主应用目录与 `plugin` 目�
 加载去重使用传入名称的精确匹配；存在 `V2Link` 时调用，不以其返回值判定失败。
 卸载前触发 TJS 垃圾回收，`V2Unlink` 负返回值阻止卸载。退出时按加载顺序逆序卸载。
 外部转场仍在使用时拒绝卸载，保护在 GPU 提交中引用的插件对象。
+
+PSD 插件源码位于子模块 `external_plugins/psdfile`。构建脚本会应用
+`tools/external-plugins/psdfile-bmp-header.patch`，确保非 Windows 平台的 BMP
+文件头采用 2 字节对齐；源码中的兼容补丁保持为子模块工作区修改。
+
+```sh
+git submodule update --init --recursive external_plugins/psdfile
+tools/external-plugins/build.sh psdfile
+ALPHA_MOVIE_PLUGIN=$HOME/Workspace/AlphaMovie/AlphaMovie.so \
+  cargo test --test external_classes -- --ignored --nocapture
+```
+
+PSD 构建产物为 `target/external-plugins/psdfile/libpsdfile.so`，测试默认使用该路径；
+`PSD_FILE_PLUGIN` 可指定其他插件二进制。测试覆盖 PSD 图层像素、Storage BMP
+读取以及 AlphaMovie 的 JPEG/zlib 帧与透明度。

@@ -26,7 +26,7 @@ if [[ $plugin == all || $plugin == AlphaMovie ]]; then
     -lz -o "$source_dir/AlphaMovie.so"
 fi
 if [[ $plugin == all || $plugin == psdfile ]]; then
-  source_dir=$workspace/psdfile
+  source_dir=$repo_dir/external_plugins/psdfile
   if git -C "$source_dir" apply --check "$script_dir/psdfile-bmp-header.patch" 2>/dev/null; then
     git -C "$source_dir" apply "$script_dir/psdfile-bmp-header.patch"
   elif ! git -C "$source_dir" apply --reverse --check "$script_dir/psdfile-bmp-header.patch" 2>/dev/null; then
@@ -37,7 +37,6 @@ if [[ $plugin == all || $plugin == psdfile ]]; then
     -DNCBIND_DIR="$ncbind_dir" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_BUILD_TYPE=Release -DKRKRZ_VARIANT=LIB
   cmake --build "$build_dir/psdfile" --parallel 8
-  cp "$build_dir/psdfile/libpsdfile.so" "$source_dir/psdfile.so"
 fi
 
 if [[ $plugin == all || $plugin == json ]]; then

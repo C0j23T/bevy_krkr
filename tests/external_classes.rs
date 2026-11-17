@@ -3,7 +3,7 @@ use bevy_krkr::{script::Tjs2Engine, sys};
 use std::ffi::CString;
 
 #[test]
-#[ignore = "requires ALPHA_MOVIE_PLUGIN and PSD_FILE_PLUGIN"]
+#[ignore = "requires ALPHA_MOVIE_PLUGIN and a built psdfile plugin"]
 fn external_classes_register_and_unload() {
     common::initialize_renderer();
     let project =
@@ -11,14 +11,23 @@ fn external_classes_register_and_unload() {
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(project.join("bad.amv"), b"bad movie").unwrap();
     let path = CString::new(project.to_str().unwrap()).unwrap();
+    for (variable, name) in [
+        ("ALPHA_MOVIE_PLUGIN", "AlphaMovie"),
+        ("PSD_FILE_PLUGIN", "psdfile"),
+    ] {
+        let source = std::env::var_os(variable)
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                (name == "psdfile").then(|| {
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("target/external-plugins/psdfile/libpsdfile.so")
+                })
+            })
+            .expect(variable);
+        std::fs::copy(source, project.join(format!("lib{name}.so"))).unwrap();
+    }
     for _restart in 0..2 {
-        for (variable, class) in [
-            ("ALPHA_MOVIE_PLUGIN", "AlphaMovie"),
-            ("PSD_FILE_PLUGIN", "PSD"),
-        ] {
-            let source = std::env::var(variable).expect(variable);
-            let name = if class == "PSD" { "psdfile" } else { "AlphaMovie" };
-            std::fs::copy(source, project.join(format!("lib{name}.so"))).unwrap();
+        for (name, class) in [("AlphaMovie", "AlphaMovie"), ("psdfile", "PSD")] {
             let plugin = format!("{name}.dll");
             assert_eq!(
                 unsafe { sys::krkr_engine_init(path.as_ptr()) },

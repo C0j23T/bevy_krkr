@@ -8,3 +8,6 @@
 [submodule "external_plugins/json"]
 	path = external_plugins/json
 	url = /home/hepta/Workspace/bevy_krkr/external_plugins/json
+[submodule "external_plugins/psdfile"]
+	path = external_plugins/psdfile
+	url = https://github.com/wamsoft/psdfile
