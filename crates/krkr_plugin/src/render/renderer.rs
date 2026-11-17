@@ -544,8 +544,8 @@ impl KrkrRenderer {
             BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&views[0]) },
             BindGroupEntry { binding: 1, resource: BindingResource::TextureView(&views[1]) },
             BindGroupEntry { binding: 2, resource: BindingResource::TextureView(&views[2]) },
-            BindGroupEntry { binding: 3, resource: BindingResource::Sampler(&self.mesh.sampler) },
-            BindGroupEntry { binding: 4, resource: buffer.as_entire_binding() },
+            BindGroupEntry { binding: 3, resource: BindingResource::TextureView(&views[2]) },
+            BindGroupEntry { binding: 4, resource: BindingResource::TextureView(&views[2]) },
         ];
         let records = NAGANO_RECORDS_DUMMY.get().unwrap();
         let tables = NAGANO_TABLES_DUMMY.get().unwrap();
