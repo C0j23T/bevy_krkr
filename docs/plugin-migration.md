@@ -20,7 +20,7 @@
 
 | `windowEx.dll` | 窗口矩形取宿主画面纹理；显示器为单一假显示器；光标、系统度量、环境变量接宿主；Win32 专属接口为空实现 |
 | `PackinOne.dll` | 批量加载 `layerExBTOA`/`layerExImage`/`layerExRaster`/`shrinkCopy`/`addFont`/`scriptsEx`/`fstat`/`saveStruct` |
-| `scriptsEx.dll` | clone/foreach/getObjectKeys/getObjectCount/getObjectContext/isNullContext/equalStruct/equalStructNumericLoose/getMD5HashString/propGet/propSet/pf* 标志/safeEvalStorage/stringFuzzySearch/rehash；`yz_scripts_ext.dll` 与 `scriptsExt.dll` 别名可链接；专项测试通过 |
+| `scriptsEx.dll` | clone/foreach/getObjectKeys/getObjectCount/getObjectContext/isNullContext/equalStruct/equalStructNumericLoose/getMD5HashString/propGet/propSet/pf* 标志/safeEvalStorage/stringFuzzySearch/rehash；专项测试通过 |
 | `layerExBTOA.dll` | 6 个 Layer 函数走 GPU；蓝色/alpha 通道、province 阈值与填色、区域 alpha；真实 Vulkan 像素验证 |
 | `shrinkCopy.dll` | GPU compute 面积平均；`shrinkCopyFast` 保留分轴截断、尾部采样与不透明输出；真实 Vulkan 像素验证 |
 | `layerExAreaAverage.dll` | `Layer.stretchCopyAA` 走 GPU compute；保留透明色权重与边界语义；真实 Vulkan 像素验证 |

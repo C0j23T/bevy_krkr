@@ -151,7 +151,7 @@ snbk 的主要引用为图像绘制、流程图的线/Bezier/矩阵/箭头，以
 | `extrans.dll` | 本次发现的 mosaic、turn、ripple 已实现并有相关专项证据 |
 | `extNagano.dll` | 配置启用且加载路径存在，已有多种转场实现；本次未确认场景使用其专属方法。morphing 已知末帧误差仍在，但未在此次场景统计中发现 |
 | `krmovie.dll` 对应常规视频路径 | Movie.tjs 基于 VideoOverlay，FFmpeg 宿主提供播放；包内 7 个 WMV，未做这 7 个视频的逐项播放验收，也不代表完整 Windows mixer/MFEVR 兼容 |
-| `scriptsEx.dll` | 已按 krkrsdl3 补齐 clone/foreach/getObjectKeys/getObjectCount/getObjectContext/isNullContext/equalStruct/equalStructNumericLoose/getMD5HashString/propGet/propSet/safeEvalStorage/stringFuzzySearch/rehash；专项回归通过；`scriptsEx.dll`、`yz_scripts_ext.dll`、`scriptsExt.dll` 均可链接 |
+| `scriptsEx.dll` | 已按 krkrsdl3 补齐 clone/foreach/getObjectKeys/getObjectCount/getObjectContext/isNullContext/equalStruct/equalStructNumericLoose/getMD5HashString/propGet/propSet/safeEvalStorage/stringFuzzySearch/rehash；专项回归通过; |
 | `PackinOne.dll` | 图像、字体、文件、结构保存子模块可装载；已改为组合 `scriptsEx.dll` |
 
 ### 用到的功能部分实现

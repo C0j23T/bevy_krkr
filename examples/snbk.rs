@@ -9,12 +9,14 @@
 //! The game's startup scripts create its Kirikiri Window and layer tree;
 //! Bevy presents the scene and forwards keyboard and mouse input.
 //!
-//! Native external plugins must be installed in the game's directory or
-//! `plugin` subdirectory. See `docs/external-plugins.md` and
+//! Native external plugins (`lib*.so`, `.dylib` on macOS) next to the data
+//! file or in its `plugin` subdirectory are attached before the start-up
+//! scripts run. See `docs/external-plugins.md` and
 //! `docs/snbk-acceptance.md` for build commands and observed game behavior.
 //! `--dump-log` saves the engine log after startup; the host also logs
 //! subsequent timer, animation and input errors.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -100,7 +102,9 @@ fn start_game(
 ) {
     #[cfg(target_os = "android")]
     {
-        let Some(android_app) = bevy::android::ANDROID_APP.get() else { return };
+        let Some(android_app) = bevy::android::ANDROID_APP.get() else {
+            return;
+        };
         let storage = crate::storage_access::StorageAccess::new(android_app);
         match storage.has_external_storage_access() {
             Ok(true) => {}
@@ -135,7 +139,12 @@ fn start_game(
     }
     *done = true;
 
-    let dir = Path::new(&game.data).parent().unwrap_or(Path::new("."));
+    let data_path = Path::new(&game.data);
+    let dir = if data_path.is_dir() {
+        data_path
+    } else {
+        data_path.parent().unwrap_or(Path::new("."))
+    };
     let mut found: Vec<PathBuf> = fs::read_dir(dir)
         .into_iter()
         .flatten()
@@ -163,6 +172,9 @@ fn start_game(
     }
     info!("snbk: mounted {mounted}/{} archive(s)", found.len());
 
+    let plugins = load_plugins(&engine, dir);
+    info!("snbk: attached {} native plugin(s)", plugins.len());
+
     // `exec_startup` is the engine's own start-up sequence: `patch.tjs` next
     // to the data file first (games fix up the engine there -- Fal hollow
     // ataraxia defines `GetFileSize`), then `startup.tjs`, then
@@ -185,6 +197,58 @@ fn start_game(
             Err(e) => warn!("snbk: cannot read the engine log: {e}"),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+const PLUGIN_EXTENSION: &str = "dylib";
+#[cfg(not(target_os = "macos"))]
+const PLUGIN_EXTENSION: &str = "so";
+
+/// Attaches every `libNAME.so` next to the data file or in its `plugin`
+/// subdirectory, the way the game's scripts would with `Plugins.link`.
+///
+/// The file attaches as `NAME.dll`, so a later `Plugins.link("NAME.dll")`
+/// finds the plugin already loaded. Files without the `lib` prefix are not
+/// considered. A plugin that fails to load is reported and skipped.
+fn load_plugins(engine: &Tjs2Engine, dir: &Path) -> Vec<String> {
+    let mut modules = BTreeMap::new();
+    for folder in [dir.to_owned(), dir.join("plugin")] {
+        let Ok(entries) = fs::read_dir(folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path
+                .extension()
+                .is_none_or(|extension| extension != PLUGIN_EXTENSION)
+            {
+                continue;
+            }
+            let Some(stem) = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .and_then(|stem| stem.strip_prefix("lib"))
+            else {
+                continue;
+            };
+            if stem.is_empty() {
+                continue;
+            }
+            modules.entry(format!("{stem}.dll")).or_insert(path);
+        }
+    }
+
+    let mut attached = Vec::new();
+    for (module, path) in modules {
+        match engine.exec_script(&format!("Plugins.link({module:?});"), "snbk plugin") {
+            Ok(()) => {
+                debug!("snbk: attached plugin {module} ({})", path.display());
+                attached.push(module);
+            }
+            Err(error) => warn!("snbk: cannot attach plugin {}: {error}", path.display()),
+        }
+    }
+    attached
 }
 
 /// Reports when the game takes the screen over with its own Kirikiri `Window`

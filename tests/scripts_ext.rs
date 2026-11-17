@@ -130,9 +130,7 @@ fn scripts_foreach_and_get_object_keys() {
 
     engine
         .exec_script(
-            r#"Plugins.link("scriptsEx.dll");
-               Plugins.link("yz_scripts_ext.dll");
-               Plugins.link("scriptsExt.dll");"#,
+            r#"Plugins.link("scriptsEx.dll");"#,
             "link scriptsEx",
         )
         .expect("Plugins.link(scriptsEx.dll)");

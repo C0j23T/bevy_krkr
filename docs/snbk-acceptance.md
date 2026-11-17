@@ -19,16 +19,20 @@ cp target/external-plugins/psbfile/libpsbfile.so test_games/snbk/plugin/
 cargo run --example snbk -- test_games/snbk/data.xp3 --dump-log /tmp/snbk-startup.log
 ```
 
+示例在 `exec_startup` 前扫描数据文件同目录与 `plugin` 子目录中的 `lib*.so`，
+按 `libNAME.so` -> `NAME.dll` 的名称预先 attach。
+
 `--dump-log` 保存启动脚本结束时的引擎日志；启动后的异步错误应同时从宿主
 标准输出保存。Linux 验收环境为 NVIDIA RTX 4060 / Vulkan，桌面显示服务可用。
 
 ## 已观察结果
 
 2026-11-17：实际 Bevy 示例成功创建 1280×720 窗口并挂载 9/9 个归档。
-首次启动在 `initialize.tjs` 的 `KAGLoadScript` 报
-`Cannot load Plugin textrender.dll`，发生在 `exec_startup` 内。
-该错误涉及两项前提：游戏 `plugin` 目录原为空；插件查找把归档项目
-`data.xp3` 当作目录。插件查找现对文件项目使用父目录。
+启动前扫描并 attach 了 4 个 `lib*.so`；`exec_startup` 完成，宿主报告显示
+1280×720 画面。`kztouch.dll` 缺失只记录日志，未阻止启动。此前
+`initialize.tjs` 的 `Cannot load Plugin textrender.dll` 发生在启动脚本内，
+前提是游戏 `plugin` 目录为空且归档项目路径被当作目录；现已由启动前扫描避免。
+尚未逐项验收标题、正文、选择与存读档交互；专用检查在窗口显示后按超时结束。
 
 专项回归 `archive_project_loads_plugin_from_game_directory` 使用自制空 XP3，
 已验证游戏同级 `plugin/libtextrender.so` 能被加载、执行布局并卸载（1/1）。
