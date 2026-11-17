@@ -1,44 +1,19 @@
-//! Start a retail game archive (`snbk/data.xp3`) through the bevy_krkr host.
+//! Start a retail game archive through the Bevy host.
 //!
 //! ```sh
 //! cargo run --example snbk -- [data.xp3] [--dump-log PATH]
 //! ```
 //!
-//! Defaults: `snbk/data.xp3`. Every archive next to the data file is mounted
-//! and the game's own start-up scripts are run; the screen is drawn by the
-//! game through Kirikiroid2, whose layers the host draws itself.
+//! Defaults to `test_games/snbk/data.xp3`. Every sibling `.xp3` archive is
+//! mounted through Storage, which handles XP3 and the game's 7z archives.
+//! The game's startup scripts create its Kirikiri Window and layer tree;
+//! Bevy presents the scene and forwards keyboard and mouse input.
 //!
-//! What this archive needs on top of the plain engine:
-//! - the game keeps its voice, CG and event images in **7z** archives next to
-//!   `data.xp3` (`voice.xp3`, `fgimage720.xp3`, …), not in XP3. They are opened
-//!   through libarchive (`Kirikiroid2/src/core/environ/bevy/Archives.cpp`),
-//!   and this example mounts every archive next to the data file so the
-//!   engine's storage layer can reach them;
-//! - its own `startup.tjs` builds the game UI on a Kirikiri `Window`. The port
-//!   implements that class by keeping the window's layer tree
-//!   (`Kirikiroid2/src/core/environ/bevy/BevyWindowLayer.cpp`), whose layers
-//!   the host draws itself, so once the game drives it the first screen
-//!   reaches the host's window. That start-up currently stops earlier, at a
-//!   plugin that is not available here, so the game's own title screen does
-//!   not appear yet;
-//! - it uses plugins that the open-source release does not ship: `PSBFile`
-//!   (psbfile.dll, the `.pimg` pictures) and `Motion` (motionplayer.dll). They
-//!   are Windows x86 DLLs and the engine cannot load those (upstream compiled
-//!   the `LoadLibrary` path out), so nothing stands in for them and start-up
-//!   stops with `Member "…" does not exist`. This example reports exactly
-//!   where. `Scripts.foreach` / `Scripts.getObjectKeys` (from KAGParserEx.dll)
-//!   are reimplemented in `environ/bevy/plugins/ScriptsExt.cpp`, and
-//!   `System.addFont` / `CSVParser` are compiled in from this checkout.
-//!
-//! The point where a game stops is worth reading from the engine's own log,
-//! which is where the game's script writes what it could not load;
-//! `--dump-log FILE` writes it out after start-up. `atri/data.xp3` gets through
-//! `startup.tjs`, `initialize.tjs`, `afterinit.tjs` and `override.tjs` and then
-//! stops while building its quick menu, which it defines in PSD files: the log
-//! says `psd-file load failed, Member "PSBFile" does not exist`.
-//!
-//! Input is forwarded to the game's `Window` as the key and mouse events its
-//! TJS handlers expect (`krkr_plugin::input`), so its own UI reacts to a click.
+//! Native external plugins must be installed in the game's directory or
+//! `plugin` subdirectory. See `docs/external-plugins.md` and
+//! `docs/snbk-acceptance.md` for build commands and observed game behavior.
+//! `--dump-log` saves the engine log after startup; the host also logs
+//! subsequent timer, animation and input errors.
 
 use std::fs;
 use std::path::{Path, PathBuf};

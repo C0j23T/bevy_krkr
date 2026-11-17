@@ -7,6 +7,46 @@ static ENGINE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 #[ignore = "requires tools/external-plugins/build.sh textrender"]
+fn archive_project_loads_plugin_from_game_directory() {
+    let _guard = ENGINE_LOCK.lock().unwrap();
+    let project = std::env::temp_dir().join(format!("krkr-archive-plugin-{}", std::process::id()));
+    std::fs::create_dir_all(project.join("plugin")).unwrap();
+    let plugin = std::env::var("TEXTRENDER_PLUGIN").unwrap_or_else(|_| {
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/target/external-plugins/textrender/libtextrender.so"
+        )
+        .into()
+    });
+    std::fs::copy(plugin, project.join("plugin/libtextrender.so")).unwrap();
+    let archive = project.join("data.xp3");
+    let mut bytes = b"XP3\r\n \n\x1a\x8b\x67\x01".to_vec();
+    bytes.extend_from_slice(&19u64.to_le_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    std::fs::write(&archive, bytes).unwrap();
+    let path = CString::new(archive.to_str().unwrap()).unwrap();
+    assert_eq!(
+        unsafe { sys::krkr_engine_init(path.as_ptr()) },
+        sys::KRKR_OK
+    );
+    let engine = Tjs2Engine::new().unwrap();
+    engine.exec_script("Plugins.link('textrender.dll'); global.r=new TextRenderBase(); r.setRenderSize(100,100); r.render('Archive',0,0);", "archive plugin lookup").unwrap();
+    assert_eq!(engine.eval("r.renderText").unwrap(), "Archive");
+    engine
+        .exec_script("invalidate r; r=void;", "archive plugin cleanup")
+        .unwrap();
+    assert_eq!(
+        engine.eval("Plugins.unlink('textrender.dll')").unwrap(),
+        "1"
+    );
+    drop(engine);
+    unsafe { sys::krkr_engine_shutdown() };
+    std::fs::remove_dir_all(project).unwrap();
+}
+
+#[test]
+#[ignore = "requires tools/external-plugins/build.sh textrender"]
 fn textrender_layout_callbacks_links_scroll_and_reload() {
     let _guard = ENGINE_LOCK.lock().unwrap();
     let project =
@@ -187,7 +227,9 @@ fn textrender_layout_callbacks_links_scroll_and_reload() {
     eq("Plugins.unlink('textrender.dll')", "1");
     run("global.removed=false; try { TextRenderBase; } catch(e) { removed=true; }");
     eq("removed", "1");
-    run("Plugins.link('textrender.dll'); global.r=new TextRenderBase(); r.setRenderSize(100,100); r.render('再読',0,0);");
+    run(
+        "Plugins.link('textrender.dll'); global.r=new TextRenderBase(); r.setRenderSize(100,100); r.render('再読',0,0);",
+    );
     eq("r.renderCount", "2");
     run("invalidate r; r=void;");
     eq("Plugins.unlink('textrender.dll')", "1");

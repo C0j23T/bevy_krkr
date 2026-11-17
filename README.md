@@ -249,9 +249,10 @@ screen's.
 For an Android NativeActivity smoke-test host and integration details for
 embedding the library in a game's existing Bevy app, see [Android](docs/android.md).
 
-That archive's `startup.tjs` currently stops at `PSBFile` (see below), so it
-does not reach the game's own title screen yet; the example prints where it
-stopped.
+Install the required native external plugins in the game's directory or its
+`plugin` subdirectory before running it; see [external plugins](docs/external-plugins.md).
+The current snbk observations and reproduction commands are recorded in
+[snbk acceptance](docs/snbk-acceptance.md).
 
 The following command has been checked through startup, the opening image and
 the title menu with the Bevy GPU renderer:
