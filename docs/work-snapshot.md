@@ -6,6 +6,7 @@
 - Emote GPU/真实sd001.mtn `21fd1f8`；时间轴/物理/hit/reload/两轮restart 3项通过 `d39c58a`。`emote_mesh_inheritance`补4层GPU曲面oracle；PSB打开已测两遍禁止重复，atri/snbk资源可用。
 - XP3 资源需参考 xp3filter 解密；已通知 emote_mesh_test。负责人定位 data720.xp3 内33个 .mtn，正在用项目 Storage 验证。
 - LayerExDraw Vello GPU首检查点`28d19f4`（K2 ABI`615d5f8`），同设备路径/alpha/clip/transform/gradient/stroke/image/crop/self/resize专项通过。lead继续C++对象/图像/文字/记录，GPU代理继续Hatch/PathGradient/pen；见layerexdraw-task.md与layer-ex-draw-ffi.md。未整体完成。
+- LayerExDraw C++对象/Path/Matrix/图像/文字轮廓端到端已提交`64999fd`（K2`a980b6c`）；仍在推进EMF+与复杂画笔。Emote mode6 FFI跳过已修`98b51c1`，待继承代理专项回归。
 - Fate 与 Emote 验收后，按时间运行 `test_games/snbk` 收尾测试；必须按当前实现更新 `docs/plugin-migration.md`。
 - 旧morphing末帧失败已定位：nagano.wesl权重255/256；完成帧应直接返回src2，尚未修复，不能误报通过。
 - PSD源码已按用户要求存档：根`298e8f6`，PSD`0f8a684`；保留其`.gitignore`工作树改动。用户另删除了两份docs文档，勿恢复或夹带提交。

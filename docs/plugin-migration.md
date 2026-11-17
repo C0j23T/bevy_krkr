@@ -37,12 +37,12 @@
 | 插件 | 范围 |
 | --- | --- |
 | `win32dialog.dll` | 独立 tp_stub 外部 submodule；控件模型、Unicode、公开 System 消息/输入协议、卸载已测试；宿主实际 UI、GDI、原生资源模板等未实现 |
-| `layerExDraw.dll` | 文字、字体度量、简化 Appearance、GPU clear 与矩形/椭圆的不透明实色整数子集；专项像素测试通过；描边、半透明形状、路径、图像、变换与记录未完成 |
-| `emoteplayer.dll` / `motionplayer.dll` | C++引擎与别名、GPU网格/蒙版/混合与source=target已验证；真实snbk Motion绘制通过；物理、时间轴、继承、hit test与完整游戏仍待独立验收 |
+| `layerExDraw.dll` | Vello同设备GPU路径、矩阵、裁剪、实色/线性渐变/描边、GPU图像与文字轮廓；专项像素及TJS测试通过；复杂画笔、记录/EMF+与完整字体兼容未完成 |
+| `emoteplayer.dll` / `motionplayer.dll` | C++引擎/别名、GPU网格/蒙版/混合、时间轴、序列化、物理、hit test、资源重载与两轮重启已验证；多层曲面及完整游戏仍待验收 |
 
 ### 调查
 
-- `layerExDraw.dll`：[Vello GPU 后端评估](layer-ex-draw-vello.md)；同设备纹理、预乘 alpha、提交顺序与 EMF+ 兼容仍需验证。
+- `layerExDraw.dll`：[Vello GPU 后端评估](layer-ex-draw-vello.md)、[绘图操作契约](layer-ex-draw-ffi.md)；同设备纹理、alpha与提交顺序已验证，EMF+仍待实现。
 - `emoteplayer.dll`：[集成与验收](emote-integration.md)。
 
 ## 下一批实现
