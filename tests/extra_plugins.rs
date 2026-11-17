@@ -18,6 +18,34 @@ fn rgba(x: usize, y: usize, second: bool) -> [u8; 4] {
         [200, (x * 7) as u8, (y * 10) as u8, 255]
     }
 }
+
+#[test]
+fn layer_ex_draw_clear_argb_gpu() {
+    common::initialize_renderer();
+    let path = CString::new(format!("{}/assets/game", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    assert_eq!(
+        unsafe { sys::krkr_engine_init(path.as_ptr()) },
+        sys::KRKR_OK
+    );
+    let engine = Tjs2Engine::new().unwrap();
+    let run = |s: &str| engine.exec_script(s, "LayerExDraw clear").unwrap();
+    let value = |s: &str| engine.eval(s).unwrap().parse::<i64>().unwrap();
+    run(r#"
+        Plugins.link("layerExDraw.dll");
+        global.w=new Window(); w.setInnerSize(8,8);
+        global.s=new Layer(w,null); s.setImageSize(8,8); s.type=ltAlpha;
+        s.fillRect(0,0,8,8,0xffffffff);
+    "#);
+    run("s.clear(0x80402010);");
+    assert_eq!(value("s.getMainPixel(4,4)"), 0x102040);
+    assert_eq!(value("s.getMaskPixel(4,4)"), 128);
+    run("s.clear(0x00112233);");
+    assert_eq!(value("s.getMainPixel(4,4)"), 0x332211);
+    assert_eq!(value("s.getMaskPixel(4,4)"), 0);
+    drop(engine);
+    unsafe { sys::krkr_engine_shutdown() };
+}
+
 #[test]
 fn text_and_gpu_transitions_restart() {
     common::initialize_renderer();

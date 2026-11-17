@@ -16,10 +16,11 @@
 
 ## 与现有接口的对应
 
-当前 [C++ 插件](../Kirikiroid2/src/core/environ/bevy/plugins/LayerExDraw.cpp) 只注册文字、字体度量和简化 Appearance；文字先生成 FreeType 遮罩，再用 `LayerExTextPaint` 合成。完整需求以 [上游注册表](../layerExDraw/main.cpp) 和 [实现](../layerExDraw/LayerExDraw.cpp) 为准。
+当前 [C++ 插件](../Kirikiroid2/src/core/environ/bevy/plugins/LayerExDraw.cpp) 注册 `clear`、文字绘制/度量和简化 Appearance。`clear` 通过现有 GPU `FillARGB` 命令写 Layer 主纹理；文字先生成 FreeType 遮罩，再用 `LayerExTextPaint` 合成。完整需求以 [上游注册表](../layerExDraw/main.cpp) 和 [实现](../layerExDraw/LayerExDraw.cpp) 为准。
 
 | LayerExDraw 能力 | Vello GPU 对应及额外工作 |
 | --- | --- |
+| clear | `FillARGB` 写入宿主 Layer 纹理；验证 ARGB 到 RGBA 和 alpha 清除语义 |
 | Path、形状、填充、描边 | `BezPath`、`fill_path`、`stroke_path`；弧线和 GDI+ cardinal spline 转曲线；核对填充规则、端帽、连接、虚线和 inset pen |
 | Matrix、viewTransform | `Affine` / `set_transform`；自行保持两套矩阵，验证 prepend/append、角度方向和 Appearance 偏移顺序 |
 | 裁剪、透明度 | `push_clip_rect/path` 与 layer；沿用 Layer 当前 clip，保持栈配对；不能把 mask layer 当成已实现功能 |
