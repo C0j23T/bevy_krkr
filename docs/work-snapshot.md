@@ -1,25 +1,28 @@
 # 工作快照
 
-- 截止：2026-11-17 北京时间 21:30（启动时北京时间 08:39）；用户可随时叫停。
-- 每完成一个可验证部分提交 Git；主代理串行提交，子代理全新上下文。
-- 规范：根 `AGENTS.md`；仅测受影响子系统；GPU 复用纹理，避免逐帧 CPU 回读上传。
-- 初始用户改动：`Kirikiroid2/src/core/base/win32/PluginImpl.cpp` 从 ignoredPlugins 删除 `lzfs.dll`，保留。
-- 进度以 `plugin-migration.md` 与 Git 记录为准；只在本文件维护当前工作和阻塞。
+- 截止：2026-11-17 北京时间 21:30；用户可随时叫停。每完成部分 Git commit；全新上下文代理，主代理串行提交。
+- 规范见根 `AGENTS.md`；仅测受影响子系统，GPU不逐帧CPU往返；清单只由主代理维护。
+- 保留用户预存改动：K2 `src/core/base/win32/PluginImpl.cpp` 删除 ignored `lzfs.dll`（提交时从index版本补回，工作树继续保留删除）；PSD `psdclass.cpp` 两行BMP对齐与未跟踪 `psdfile.so`。
 
-| 负责人 | 当前任务 | 主要范围 |
-| --- | --- | --- |
-| `linux_video`（完成） | Linux FFmpeg / wgpu 修复：`e9dd3f4`；硬件4项通过 | 已释放槽位 |
-| `gpu_lead`（阶段停） | GPU接口核心/真实GPU测试完成未提交；owner hooks已接，待独立插件验证/文档 | render operations/composer/renderer、shim/render、三插件 C++ |
-| `external_lead`（阶段停） | loader/json已提交 `06883b7`；组员 `logic_plugins` 跟踪 sqlite3/ExtKAGParser验证 | 外部加载、构建、`external_plugins` |
-| `move_psdfile` | 用户追加：真实移动既有PSD仓库并登记submodule；构建通过，待external_classes | psdfile仓库、构建脚本PSD段、docs/测试 |
-| `ida_compat` | 用户追加：IDA MCP更新与IDA Pro版本兼容修复 | 本机IDA/MCP环境、专项修复文档 |
-| 主代理 | 提交整合、清单、恢复排期 | docs、验收 |
+| 已完成 | 根提交 / 验收 |
+| --- | --- |
+| Linux视频DMA-BUF | `e9dd3f4`；NVIDIA VAAPI连续10帧全Imported，视频专项4通过 |
+| 三插件GPU加速 | `8e7ef5f`；BTOA/AreaAverage/Shrink真实Vulkan像素1通过 |
+| 通道数组转换 | `6c4b985`；GPU数组1通过，外部Extrans1通过，AlphaMovie+PSD1通过 |
+| 外部JSON/krkrz加载 | `ea1cb1b` / `06883b7`；标准tp_stub、Unicode/Storage/卸载重载1通过 |
+| 多文件插件目录整理 | `b46e09c`；extrans/layerExSave/xp3filter及所有构建引用 |
+| 外部WESL GPU接口 | `ebf4b87`；随机唯一>100、统一编译、失败回滚、卸载；注册/独立插件各1通过；见gpu-plugin-interface.md |
+| PSD仓库真实移动 | `d63cbde`；保留历史remote/用户dirty，CMake+外部classes测试通过 |
+| IDA MCP版本修复 | `61e505c`；IDA9.4/Nexus0.14.2/插件20261028.0.3，实际MCP打开查询关闭通过；见ida-mcp-repair.md |
 
-- 通道：GPU数组/原地/区域测试已过；C++接入随FFI编译通过。外部测试依赖loader首批完成。
-- task6目录整理已提交 `b46e09c`；JSON子仓库已登记submodule，宿主集成测试通过。
-- GPU owner hooks已接回，接口真实GPU注册/回滚/卸载测试通过；外部Extrans完整像素与生命周期1项通过。
-- sqlite/KAG测试日志 `/tmp/krkr-external-logic-batch.log`；PSD日志 `/tmp/bevy-krkr-psd-external-classes.log`。
-- 新外部仓库统一主代理提交；PSD已有origin/history保持，预存dirty `psdclass.cpp`与untracked `psdfile.so`保留，迁移commit不含它们。
-- `external_plugins/psbfile`独立构建通过但尚未验收；继续查MDF资源offset/缓存/损坏数据边界。textrender/wuffmpeg/win32dialog尚未做。
-- GPU 组与外部组共享边界：tp_stub GPU 注册导出；插件目录移动须协调三插件路径。
-- 任务7待空槽分新上下文做Vello调查；任务8由external_lead排期，逻辑留C++/Kirikiroid2。Emote文档已按新约束精简提交 `cbc63e2`。
+| 当前负责人 | 未完成部分 |
+| --- | --- |
+| `external_lead` | psbfile纯tp_stub草稿已构建，修MDF资源/缓存/边界并验证；随后win32dialog/wuffmpeg/textrender及任务8 C++ Emote排期 |
+| `external_lead/logic_plugins` | sqlite3/ExtKAGParser独立构建通过；集成暴露宿主UTF8/UTF16代理对bug，修CharacterSet.cpp/tjsConfig.cpp并跑unicode+两插件专项；日志 `/tmp/krkr-unicode-logic-tests.log` |
+| `vello_assessment` | 任务7官方当前Vello/wgpu兼容评估，写docs/layer-ex-draw-vello.md；不改依赖 |
+| 主代理 | 审查、分批提交、迁移清单、快照 |
+
+- 未提交宿主标准exports/内外插件去重在 `PluginImpl.cpp`、`ExternalStorage.cpp`、`InternalPlugins.cpp`、`ncbind.hpp`；属逻辑插件批次。
+- `external_plugins/{sqlite3,ExtKAGParser,psbfile}` 尚未init/gitlink；完成验收后主代理各自init+commit+submodule add+absorbgitdirs。JSON本地绝对URL未发布；PSD保留上游remote。
+- task8逻辑必须留Kirikiroid2/C++；GPU网格变形须内建Composer。docs/emote-integration.md已按该约束重写（`cbc63e2`）。
+- 外部GPU候选drawdevice/autotest/压缩图像解码均需额外宿主能力，不能只靠pixel kernel完整迁移，仍列待实现。
