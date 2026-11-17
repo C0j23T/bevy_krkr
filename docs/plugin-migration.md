@@ -24,7 +24,7 @@
 | `shrinkCopy.dll` | GPU compute 面积平均；`shrinkCopyFast` 保留分轴截断、尾部采样与不透明输出；真实 Vulkan 像素验证 |
 | `layerExAreaAverage.dll` | `Layer.stretchCopyAA` 走 GPU compute；保留透明色权重与边界语义；真实 Vulkan 像素验证 |
 | `json.dll` | 独立外部 submodule；标准 `tp_stub.h`；JSON 解析、序列化、Storage 文本流、Unicode、卸载重载已验证；见 [外部插件](external-plugins.md) |
-| `psdfile.dll` | 原仓库移入 `external_plugins/psdfile` submodule；PSD 图层 RGBA、Storage BMP、卸载重载与宿主重启已验证 |
+| `psdfile.dll` / `psd.dll` | 原仓库移入 submodule；IDA 确认 snbk 同插件家族；双名混合加载共用注册；图层 RGBA、Storage、卸载重载与重启已验证；见 [比对证据](psd-plugin-identification.md) |
 | `psbfile.dll` | 独立 tp_stub 外部 submodule；PSB v1–v3、MDF、路径/octet、`psb://` 资源、重载与损坏输入；真实 snbk `window.pimg` 已验证 |
 | `sqlite3.dll` | 独立 tp_stub 外部 submodule；SQL 绑定、事务、Unicode/blob、Storage/XP3 只读 VFS、卸载重载与关闭已验证 |
 | `ExtKAGParser.dll` | 独立 tp_stub 外部 submodule；扩展宏/循环/局部变量、Unicode、状态恢复与赋值；卸载恢复原 KAGParser、重载与关闭已验证 |

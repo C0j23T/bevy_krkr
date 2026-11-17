@@ -33,10 +33,11 @@ if [[ $plugin == all || $plugin == psdfile ]]; then
     echo "psdclass.cpp does not match the BMP header compatibility patch" >&2
     exit 1
   fi
-  cmake -S "$source_dir" -B "$build_dir/psdfile" -DTPSTUB_DIR="$stub_dir" \
+  cmake -S "$script_dir/psdfile" -B "$build_dir/psdfile-alias" -DTPSTUB_DIR="$stub_dir" \
     -DNCBIND_DIR="$ncbind_dir" -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$build_dir/psdfile" \
     -DCMAKE_BUILD_TYPE=Release -DKRKRZ_VARIANT=LIB
-  cmake --build "$build_dir/psdfile" --parallel 8
+  cmake --build "$build_dir/psdfile-alias" --parallel 8
 fi
 
 if [[ $plugin == all || $plugin == json ]]; then

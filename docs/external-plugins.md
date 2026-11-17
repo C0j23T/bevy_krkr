@@ -38,6 +38,11 @@ PSD 构建产物为 `target/external-plugins/psdfile/libpsdfile.so`，测试默�
 `PSD_FILE_PLUGIN` 可指定其他插件二进制。测试覆盖 PSD 图层像素、Storage BMP
 读取以及 AlphaMovie 的 JPEG/zlib 帧与透明度。
 
+IDA 对照确认 snbk 的 `psd.dll` 属于相同插件家族，见
+[比对证据](psd-plugin-identification.md)。构建同时生成相对链接
+`libpsd.so -> libpsdfile.so`，部署时保留链接，即可使用 `Plugins.link("psd.dll")`。
+两名称混用只注册一次；最后一个名称卸载时才注销，活实例仍阻止最后卸载。
+
 ## PSB
 
 ```sh
