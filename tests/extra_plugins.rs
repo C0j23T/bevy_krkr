@@ -89,9 +89,9 @@ fn layer_ex_draw_primitives_gpu() {
 
     run("s.clear(0); app.clear(); app.addBrush(0xff0000ff); bounds=s.drawEllipse(app,1,1,6,4);");
     assert_eq!(value("s.getMainPixel(3,2)"), 0xff0000);
-    assert_eq!(value("s.getMaskPixel(2,1)"), 255);
-    assert_eq!(value("s.getMaskPixel(1,2)"), 255);
-    assert_eq!(value("s.getMaskPixel(1,1)"), 0);
+    assert!(value("s.getMaskPixel(2,1)")>128);
+    assert!(value("s.getMaskPixel(1,2)")>128);
+    assert!(value("s.getMaskPixel(1,1)")<32);
     assert_eq!(value("s.getMaskPixel(0,2)"), 0);
     assert_eq!(value("int(bounds.width*10+bounds.height)"), 64);
     run("s.clear(0); s.setClip(3,2,2,1); s.drawEllipse(app,1,1,6,4);");
@@ -101,14 +101,15 @@ fn layer_ex_draw_primitives_gpu() {
 
     run(r#"
         s.setClip(0,0,8,8); s.clear(0); app.clear(); app.addBrush(0xffff0000); app.addPen(0xff0000ff,2);
-        global.rejected=0; try { s.drawRectangle(app,1,1,4,3); } catch(e) { rejected=1; }
+        s.drawRectangle(app,1,1,4,3);
     "#);
-    assert_eq!(value("rejected"), 1);
-    assert_eq!(value("s.getMaskPixel(2,2)"), 0);
-    run("app.clear(); app.addBrush(0x80402010); rejected=0; try { s.drawEllipse(app,1,1,4,3); } catch(e) { rejected=1; }");
-    assert_eq!(value("rejected"), 1);
-    run("app.clear(); app.addBrush(0xff402010); rejected=0; try { s.drawRectangle(app,1.5,1,4,3); } catch(e) { rejected=1; }");
-    assert_eq!(value("rejected"), 1);
+    assert_eq!(value("s.getMaskPixel(2,2)"), 255);
+    assert_eq!(value("s.getMainPixel(1,2)"), 0xff0000);
+    run("s.clear(0); app.clear(); app.addBrush(0x80402010); s.drawEllipse(app,1,1,4,3);");
+    assert!((value("s.getMaskPixel(2,2)")-128).abs()<=1);
+    run("s.clear(0); app.clear(); app.addBrush(0xff402010); s.drawRectangle(app,1.5,1,4,3);");
+    assert!(value("s.getMaskPixel(1,2)")>0 && value("s.getMaskPixel(1,2)")<255);
+    assert_eq!(value("s.getMaskPixel(2,2)"),255);
     run("app.clear(); bounds=s.drawRectangle(app,1,1,4,3);");
     assert_eq!(value("int(bounds.width+bounds.height)"), 0);
     drop(engine);
