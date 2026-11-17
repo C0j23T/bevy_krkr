@@ -9,12 +9,17 @@
 | 负责人 | 当前任务 | 主要范围 |
 | --- | --- | --- |
 | `linux_video`（完成） | Linux FFmpeg / wgpu 修复：`e9dd3f4`；硬件4项通过 | 已释放槽位 |
-| `gpu_lead` | 三插件已提交 `8e7ef5f`；当前实现外部 WESL 注册与适用插件 | render operations/composer/renderer、shim/render、三插件 C++ |
-| `external_lead` | loader/json已验证待提交；组员 `logic_plugins` 做 sqlite3/ExtKAGParser | 外部加载、构建、`external_plugins` |
-| 主代理 | 清单、提交整合、通道转换接入、Vello 调查 | docs、BevyRender.cpp、ExternalTransitions.cpp |
+| `gpu_lead`（阶段停） | GPU接口核心/真实GPU测试完成未提交；owner hooks已接，待独立插件验证/文档 | render operations/composer/renderer、shim/render、三插件 C++ |
+| `external_lead`（阶段停） | loader/json已提交 `06883b7`；组员 `logic_plugins` 跟踪 sqlite3/ExtKAGParser验证 | 外部加载、构建、`external_plugins` |
+| `move_psdfile` | 用户追加：真实移动既有PSD仓库并登记submodule；构建通过，待external_classes | psdfile仓库、构建脚本PSD段、docs/测试 |
+| `ida_compat` | 用户追加：IDA MCP更新与IDA Pro版本兼容修复 | 本机IDA/MCP环境、专项修复文档 |
+| 主代理 | 提交整合、清单、恢复排期 | docs、验收 |
 
 - 通道：GPU数组/原地/区域测试已过；C++接入随FFI编译通过。外部测试依赖loader首批完成。
-- 外部loader GPU owner hooks曾提前加入导致链接失败；external_lead先撤并提交loader/json，GPU接口完成后再接线。
-- 新外部子仓库提交、submodule登记统一由主代理做；尚未发布远程仓库。
+- task6目录整理已提交 `b46e09c`；JSON子仓库已登记submodule，宿主集成测试通过。
+- GPU owner hooks已接回，接口真实GPU注册/回滚/卸载测试通过；外部Extrans完整像素与生命周期1项通过。
+- sqlite/KAG测试日志 `/tmp/krkr-external-logic-batch.log`；PSD日志 `/tmp/bevy-krkr-psd-external-classes.log`。
+- 新外部仓库统一主代理提交；PSD已有origin/history保持，预存dirty `psdclass.cpp`与untracked `psdfile.so`保留，迁移commit不含它们。
+- `external_plugins/psbfile`独立构建通过但尚未验收；继续查MDF资源offset/缓存/损坏数据边界。textrender/wuffmpeg/win32dialog尚未做。
 - GPU 组与外部组共享边界：tp_stub GPU 注册导出；插件目录移动须协调三插件路径。
 - 任务7待空槽分新上下文做Vello调查；任务8由external_lead排期，逻辑留C++/Kirikiroid2。Emote文档已按新约束精简提交 `cbc63e2`。
