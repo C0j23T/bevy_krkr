@@ -126,7 +126,13 @@ fn video_commands_decode_into_the_gpu_scene() {
         &engine,
         "v.brightness = 0.2; v.contrast = 0; v.hue = 180; v.saturation = 0; v.mixingMovieAlpha = 0; v.mixingMovieBGColor = 0xffffffff; v.setMixingLayer(base); v.resetMixingLayer();",
     );
-    assert!(pixel()[0] > 240, "unsupported controls changed video");
+    let paused_frame = pixel();
+    assert!(paused_frame[0] > 240, "unsupported controls changed video");
+    #[cfg(feature = "test-render-stats")]
+    let paused_stats = bevy_krkr::plugin::render::stats().unwrap();
+    assert_eq!(pixel(), paused_frame);
+    #[cfg(feature = "test-render-stats")]
+    assert_eq!(bevy_krkr::plugin::render::stats().unwrap(), paused_stats);
     script(
         &engine,
         "if (v.mixingMovieAlpha != 1 || (v.mixingMovieBGColor & 0xffffff) != 0) throw 'mixer defaults';",

@@ -6,6 +6,7 @@ mod layer_ex_draw_record;
 // krkr renderer
 
 use std::{
+    borrow::Cow,
     collections::{HashMap as StdHashMap, VecDeque},
     ffi::CStr,
     hash::{BuildHasher, RandomState},
@@ -63,7 +64,9 @@ pub struct RenderStats {
     pub composite_pixels: u64,
     pub draw_commands: u64,
     pub draw_pixels: u64,
+    pub copy_on_write_pixels: u64,
     pub texture_create_commands: u64,
+    pub scene_image_updates: u64,
 }
 
 #[cfg(feature = "test-render-stats")]
@@ -136,6 +139,19 @@ pub fn read_pixels(id: u64) -> Result<Vec<u8>, String> {
     Ok(pixels)
 }
 
+pub fn texture_usage() -> (usize, u64) {
+    let renderer = RENDERER_INSTANCE.lock().unwrap();
+    let Some(renderer) = renderer.as_ref() else {
+        return (0, 0);
+    };
+    let bytes = renderer
+        .textures
+        .values()
+        .map(|entry| texture_bytes(entry.texture.width(), entry.texture.height()))
+        .sum();
+    (renderer.textures.len(), bytes)
+}
+
 #[cfg(feature = "video-ffmpeg")]
 pub(crate) fn color_video(
     target: u64,
@@ -169,33 +185,41 @@ pub(crate) fn color_video(
     renderer.draw(&command, Some(image))
 }
 
-pub fn image(id: u64) -> Option<GpuImage> {
+pub fn scene_image(id: u64, current: Option<&GpuImage>) -> Option<Cow<'_, GpuImage>> {
     let mut renderer = RENDERER_INSTANCE.lock().unwrap();
     let renderer = renderer.as_mut()?;
 
-    let texture = renderer.textures.get(&id)?.clone();
+    renderer.flush();
+    renderer.update();
+
+    let texture = renderer.textures.get(&id)?;
+    if let Some(current) = current
+        && current.texture.id() == texture.texture.id()
+        && current.sampler.id() == renderer.sampler.id()
+    {
+        return Some(Cow::Borrowed(current));
+    }
     let texture_descriptor = descriptor(texture.texture.width(), texture.texture.height());
     let view_descriptor = TextureViewDescriptor {
         format: Some(TextureFormat::Rgba8UnormSrgb),
         usage: Some(TextureUsages::TEXTURE_BINDING),
         ..Default::default()
     };
-    let image = GpuImage {
+    #[cfg(feature = "test-render-stats")]
+    {
+        renderer.stats.scene_image_updates += 1;
+    }
+    Some(Cow::Owned(GpuImage {
         texture_view: texture
             .srgb_view
             .get_or_init(|| texture.texture.create_view(&view_descriptor))
             .clone(),
-        texture: texture.texture,
+        texture: texture.texture.clone(),
         sampler: renderer.sampler.clone(),
         texture_descriptor,
         texture_view_descriptor: Some(view_descriptor),
         had_data: false,
-    };
-
-    renderer.flush();
-    renderer.update();
-
-    Some(image)
+    }))
 }
 
 struct KrkrRenderer {
@@ -1313,6 +1337,7 @@ impl KrkrRenderer {
                         timeout: None,
                     })
                     .map_err(|e| e.to_string())?;
+                self.texture_pool = TexturePool::default();
             }
             OP_COPY_TO_EXISTING_TEXTURE => {
                 if c.target == 0 || c.target == c.sources[0] {
@@ -1473,6 +1498,11 @@ impl KrkrRenderer {
             && data[0][2] >= old.texture.width() as f32
             && data[0][3] >= old.texture.height() as f32;
         if !matches!(operation, 40 | 41) && !full_overwrite {
+            #[cfg(feature = "test-render-stats")]
+            {
+                self.stats.copy_on_write_pixels +=
+                    u64::from(old.texture.width()) * u64::from(old.texture.height());
+            }
             self.encoder().copy_texture_to_texture(
                 old.texture.as_image_copy(),
                 output.texture.as_image_copy(),

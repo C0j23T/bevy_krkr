@@ -60,6 +60,7 @@ opus = ["krkr_sys/opus"]
 video-ffmpeg = ["krkr_plugin/video-ffmpeg"]
 video-bundled = ["video-ffmpeg", "krkr_plugin/video-bundled"]
 android-native-activity = ["bevy/android-native-activity"]
+test-render-stats = ["krkr_plugin/test-render-stats"]
 
 [[example]]
 name = "snbk"

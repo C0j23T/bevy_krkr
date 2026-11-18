@@ -75,8 +75,12 @@ The display layout uses the window's physical resolution on every platform.
 to fit uniformly along the limiting axis, centered with the original aspect
 ratio preserved, updating when the window is resized.
 
-`krkr_scene_build` returns a GPU texture identity. Pixel readback happens only
-for explicit script pixel access or `render::read_pixels`, used by GPU tests.
+`krkr_scene_build` returns a GPU texture identity. Static scenes reuse the
+target, and local layer updates composite and copy only their dirty bounding
+rectangle into it. The Bevy sprite reuses the same GPU image binding while the
+underlying texture is stable. Pixel readback happens only for explicit script
+pixel access or `render::read_pixels`, used by GPU tests. See the
+[dirty rectangle rendering and idle benchmark](docs/dirty-rect-render-plan.md).
 Raw FFI hosts must initialize the renderer with `render::initialize` before
 creating layers. `BevyKrkrPlugin` does this automatically.
 

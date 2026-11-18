@@ -27,6 +27,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 use krkr_sys as sys;
+use std::borrow::Cow;
 
 use crate::KirikiriCamera;
 use crate::host::KrkrScreen;
@@ -119,6 +120,10 @@ pub fn read_pixels(texture: u64) -> Result<Vec<u8>, String> {
     renderer::read_pixels(texture)
 }
 
+pub fn texture_usage() -> (usize, u64) {
+    renderer::texture_usage()
+}
+
 fn setup_camera(
     mut commands: Commands,
     cameras: Query<(Entity, Option<&RenderLayers>), Added<KirikiriCamera>>,
@@ -173,15 +178,25 @@ fn show_scene(
     });
     if id == 0 || width <= 0 || height <= 0 {
         flush();
-        scene.clear(&mut commands);
-        texture.0 = None;
+        if scene.image.is_some() {
+            scene.clear(&mut commands);
+        }
+        if texture.0.is_some() {
+            texture.0 = None;
+        }
         return;
     }
 
-    let Some(image) = renderer::image(id) else {
+    let Some(image) = renderer::scene_image(id, texture.0.as_ref().map(|(_, image)| image)) else {
         return;
     };
     let size = UVec2::new(width as u32, height as u32);
+    let viewport_size = windows
+        .single()
+        .map_or(size, |window| window.resolution.physical_size());
+    if viewport_size.x == 0 || viewport_size.y == 0 {
+        return;
+    }
     let resized = scene.image.is_none() || scene.size != size;
     if resized {
         scene.image = Some(images.add(Image::new_uninit(
@@ -194,15 +209,9 @@ fn show_scene(
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::MAIN_WORLD,
         )));
+        scene.size = size;
     }
-    scene.size = size;
 
-    let viewport_size = windows
-        .single()
-        .map_or(size, |window| window.resolution.physical_size());
-    if viewport_size.x == 0 || viewport_size.y == 0 {
-        return;
-    }
     let scale = (viewport_size.as_vec2() / size.as_vec2()).min_element();
     let displayed = size.as_vec2() * scale;
     for (mut camera, mut projection) in &mut cameras {
@@ -222,23 +231,15 @@ fn show_scene(
         }
     }
 
-    let handle = scene.image.as_ref().unwrap().clone();
-    let binding_changed = texture
-        .0
-        .as_ref()
-        .is_none_or(|(previous_handle, previous)| {
-            previous_handle.id() != handle.id()
-                || previous.texture_view.id() != image.texture_view.id()
-                || previous.sampler.id() != image.sampler.id()
-        });
-    if binding_changed {
+    if resized || matches!(image, Cow::Owned(_)) {
         for (material, _) in &screen_materials {
             if let Some(material) = materials.get_mut(&material.0) {
                 // Replacing a GpuImage does not rebuild an existing material binding.
                 material.into_inner();
             }
         }
-        texture.0 = Some((handle, image));
+        let image = image.into_owned();
+        texture.0 = Some((scene.image.as_ref().unwrap().clone(), image));
     }
 
     let transform = Transform::from_xyz(-displayed.x / 2.0, displayed.y / 2.0, 0.0)
