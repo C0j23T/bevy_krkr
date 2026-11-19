@@ -100,8 +100,17 @@ fn rgba(argb: u32) -> [f32; 4] {
     .map(|v| f32::from(v) / 255.0)
 }
 
-fn uses_native_gradient(paint: &Paint) -> bool {
-    paint.wrap == 4 && paint.blend_positions.is_empty() && paint.brush_flags == 0
+fn gradient_extend(paint:&Paint) -> Option<Extend> {
+    if !paint.blend_positions.is_empty() {return None;}
+    if paint.wrap==4 {return Some(Extend::Pad);}
+    let [x,y,end_x,end_y]=paint.coordinates;
+    let [left,top,width,height]=paint.tile;
+    let reflect=if y==end_y && x==left && end_x==left+width {
+        matches!(paint.wrap,1|3)
+    } else if x==end_x && y==top && end_y==top+height {
+        matches!(paint.wrap,2|3)
+    } else {return None};
+    Some(if reflect {Extend::Reflect} else {Extend::Repeat})
 }
 
 fn native_crop(p: [f64; 4], width: u32, height: u32) -> bool {
@@ -401,7 +410,8 @@ impl KrkrRenderer {
                     if p[0] == p[2] && p[1] == p[3] {
                         return Err("zero length gradient".into());
                     }
-                    if !uses_native_gradient(paint) {
+                    let extend=gradient_extend(paint);
+                    if extend.is_none() {
                         scene.set_paint_transform(transform.inverse());
                         scene.set_paint(vello_gpu::Image {
                             image: vello_gpu::ImageSource::external_texture(
@@ -414,8 +424,9 @@ impl KrkrRenderer {
                         });
                     } else {
                         let mut gradient = Gradient::new_linear((p[0], p[1]), (p[2], p[3]))
-                            .with_extend(Extend::Pad)
-                            .with_interpolation_cs(ColorSpaceTag::Srgb);
+                            .with_extend(extend.unwrap())
+                            .with_interpolation_cs(if paint.brush_flags & 1 != 0 {ColorSpaceTag::LinearSrgb} else {ColorSpaceTag::Srgb})
+                            .with_interpolation_alpha_space(vello_gpu::peniko::InterpolationAlphaSpace::Unpremultiplied);
                         if paint.stops.is_empty() {
                             gradient = gradient.with_stops(paint.colors.map(color));
                         } else {
@@ -571,7 +582,7 @@ impl KrkrRenderer {
                         backend.hatches[&key].clone()
                     }
                     3 | 4 => {
-                        if paint.brush_type == 4 && uses_native_gradient(paint) {
+                        if paint.brush_type == 4 && gradient_extend(paint).is_some() {
                             continue;
                         }
                         self.prepare_draw_paint(

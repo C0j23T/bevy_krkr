@@ -1,5 +1,10 @@
 #[path = "layer_ex_draw_record_shapes.rs"]
 mod shapes;
+#[path = "layer_ex_draw_record_region.rs"]
+mod region;
+use region::Region;
+#[path = "layer_ex_draw_record_text.rs"]
+mod text;
 
 use krkr_shim::layer_ex_draw::{BrushPoint, ColorStop, DrawRequest, Paint, PathElement};
 use std::{collections::HashMap, sync::Arc};
@@ -367,8 +372,10 @@ fn blend_read(r: &mut Reader<'_>, flags: u32, p: &mut Paint) -> Result<(), Strin
         }
     } else if flags & 24 != 0 {
         if flags & 16 != 0 {
-            return Err("vertical gradient blend is unsupported".into());
+            let count=r.count(4096)?;
+            r.take(count*8)?;
         }
+        if flags & 8 == 0 {p.brush_flags=(flags>>7)&1; return Ok(());}
         let count = r.count(4096)?;
         for _ in 0..count {
             p.blend_positions.push(r.f32()?);
@@ -379,6 +386,40 @@ fn blend_read(r: &mut Reader<'_>, flags: u32, p: &mut Paint) -> Result<(), Strin
     }
     p.brush_flags = (flags >> 7) & 1;
     Ok(())
+}
+
+fn texture_brush_bitmap(image:&Bitmap,rect:[f64;4]) -> Result<(Bitmap,[f64;6]),String> {
+    let [x,y,w,h]=rect;
+    if rect==[0.,0.,f64::from(image.width),f64::from(image.height)] {return Ok((image.clone(),IDENTITY));}
+    let (width,height)=(w.ceil() as u32,h.ceil() as u32);
+    if width==0 || height==0 || width.max(height)>65535 || u64::from(width)*u64::from(height)>MAX_BYTES as u64/4 {
+        return Err("invalid texture brush crop".into());
+    }
+    let sx=w/f64::from(width);
+    let sy=h/f64::from(height);
+    let pixel=|x:i64,y:i64| -> [f64;4] {
+        if x<0 || y<0 || x>=i64::from(image.width) || y>=i64::from(image.height) {return [0.;4];}
+        let at=(y as usize*image.width as usize+x as usize)*4;
+        let a=f64::from(image.rgba[at+3])/255.;
+        [f64::from(image.rgba[at])*a,f64::from(image.rgba[at+1])*a,f64::from(image.rgba[at+2])*a,a*255.]
+    };
+    let mut rgba=Vec::with_capacity(width as usize*height as usize*4);
+    for row in 0..height {
+        for col in 0..width {
+            let px=x+((f64::from(col)+0.5)*sx).clamp(0.5f64.min(w/2.),w-0.5f64.min(w/2.))-0.5;
+            let py=y+((f64::from(row)+0.5)*sy).clamp(0.5f64.min(h/2.),h-0.5f64.min(h/2.))-0.5;
+            let (ix,iy)=(px.floor() as i64,py.floor() as i64);
+            let (fx,fy)=(px-px.floor(),py-py.floor());
+            let samples=[pixel(ix,iy),pixel(ix+1,iy),pixel(ix,iy+1),pixel(ix+1,iy+1)];
+            let mut p:[f64;4]=std::array::from_fn(|i| {
+                (samples[0][i]*(1.-fx)+samples[1][i]*fx)*(1.-fy)+(samples[2][i]*(1.-fx)+samples[3][i]*fx)*fy
+            });
+            let a=p[3];
+            if a>0. {for c in &mut p[..3] {*c=*c*255./a;}}
+            rgba.extend(p.map(|v|v.round() as u8));
+        }
+    }
+    Ok((Bitmap {width,height,rgba:rgba.into()},[sx,0.,0.,sy,x,y]))
 }
 
 fn brush_write(p: &Paint, images: &HashMap<u64, Bitmap>) -> Result<Vec<u8>, String> {
@@ -404,11 +445,10 @@ fn brush_write(p: &Paint, images: &HashMap<u64, Bitmap>) -> Result<Vec<u8>, Stri
         2 => {
             u32w(&mut out, 2);
             u32w(&mut out, p.wrap);
-            floats(&mut out, p.transform)?;
-            let image = images
-                .get(&p.image)
-                .ok_or("metafile texture image is missing")?;
-            out.extend(bitmap_write(image)?);
+            let image=images.get(&p.image).ok_or("metafile texture image is missing")?;
+            let (image,map)=texture_brush_bitmap(image,p.coordinates)?;
+            floats(&mut out,multiply(map,p.transform))?;
+            out.extend(bitmap_write(&image)?);
         }
         3 => {
             u32w(&mut out, flags | if p.focus != [0.; 2] { 0x40 } else { 0 });
@@ -433,21 +473,19 @@ fn brush_write(p: &Paint, images: &HashMap<u64, Bitmap>) -> Result<Vec<u8>, Stri
         4 => {
             u32w(&mut out, flags);
             u32w(&mut out, p.wrap);
-            floats(
-                &mut out,
-                [
-                    p.coordinates[0],
-                    p.coordinates[1],
-                    p.coordinates[2] - p.coordinates[0],
-                    p.coordinates[3] - p.coordinates[1],
-                ],
-            )?;
+            let [x,y,xx,yy]=p.coordinates;
+            let canonical=p.tile[2]>0. && p.tile[3]>0. && y==yy && x==p.tile[0] && xx==x+p.tile[2];
+            let (tile,map)=if canonical {(p.tile,IDENTITY)} else {
+                let dx=xx-x; let dy=yy-y; let len=dx.hypot(dy);
+                if len==0. {return Err("invalid linear gradient".into());}
+                ([0.,-len/2.,len,len],[dx/len,dy/len,-dy/len,dx/len,x,y])
+            };
+            floats(&mut out,tile)?;
             for c in p.colors {
                 u32w(&mut out, c);
             }
-            u32w(&mut out, 0);
-            u32w(&mut out, 0);
-            floats(&mut out, p.transform)?;
+            for c in p.colors {u32w(&mut out,c);}
+            floats(&mut out,multiply(map,p.transform))?;
             blend_write(&mut out, p)?;
         }
         _ => return Err("invalid metafile brush".into()),
@@ -522,9 +560,9 @@ fn brush_read(r: &mut Reader<'_>, images: &mut HashMap<u64, Bitmap>) -> Result<P
             p.tile = r.floats()?;
             p.coordinates = [
                 p.tile[0],
-                p.tile[1],
+                p.tile[1]+p.tile[3]/2.,
                 p.tile[0] + p.tile[2],
-                p.tile[1] + p.tile[3],
+                p.tile[1]+p.tile[3]/2.,
             ];
             p.colors = [r.u32()?, r.u32()?];
             r.take(8)?;
@@ -710,41 +748,60 @@ fn bitmap_read(r: &mut Reader<'_>) -> Result<Bitmap, String> {
         let rgba = reader.decode().map_err(|e|e.to_string())?.into_rgba8().into_raw().into();
         return Ok(Bitmap { width,height,rgba });
     }
-    let length = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|v| v.checked_mul(4))
-        .ok_or("bitmap length overflow")?;
-    if width == 0
-        || height == 0
-        || length > MAX_BYTES
-        || kind != 0
-        || ![0x26200a, 0xe200b, 0x22009].contains(&format)
-        || stride.unsigned_abs() as usize != width as usize * 4
-    {
-        return Err("unsupported EMF+ bitmap encoding".into());
+    let bits=match format {
+        0x30101=>1,0x30402=>4,0x30803=>8,
+        0x101004|0x21005|0x21006|0x61007=>16,0x21808=>24,
+        0x22009|0x26200a|0xe200b=>32,0x10300c=>48,0x34400d|0x1a400e=>64,
+        _=>return Err("invalid EMF+ pixel format".into()),
+    };
+    let pitch=stride.unsigned_abs() as usize;
+    if kind!=0 || width==0 || height==0 || width.max(height)>65535 ||
+        u64::from(width)*u64::from(height)>MAX_BYTES as u64/4 ||
+        pitch<(width as usize*bits).div_ceil(8) || pitch%4!=0 {
+        return Err("invalid EMF+ bitmap layout".into());
     }
-    let source = r.take(length)?;
-    let mut rgba = vec![0; length];
+    let mut palette=Vec::new();
+    if bits<=8 {
+        r.take(4)?;
+        let n=r.count(1<<bits)?;
+        for _ in 0..n {
+            let [a,red,g,b]=r.u32()?.to_be_bytes();
+            palette.push([red,g,b,a]);
+        }
+    }
+    let source=r.take(pitch.checked_mul(height as usize).ok_or("bitmap length overflow")?)?;
+    let mut rgba=Vec::with_capacity(width as usize*height as usize*4);
     for y in 0..height as usize {
-        let src_y = if stride < 0 {
-            height as usize - 1 - y
-        } else {
-            y
-        };
+        let row=if stride<0 {height as usize-1-y} else {y};
+        let line=&source[row*pitch..][..pitch];
         for x in 0..width as usize {
-            let src = &source[(src_y * width as usize + x) * 4..][..4];
-            let dst = &mut rgba[(y * width as usize + x) * 4..][..4];
-            dst.copy_from_slice(&[
-                src[2],
-                src[1],
-                src[0],
-                if format == 0x22009 { 255 } else { src[3] },
-            ]);
-            if format == 0xe200b && src[3] != 0 {
-                for c in &mut dst[..3] {
-                    *c = ((*c as u32 * 255 + src[3] as u32 / 2) / src[3] as u32).min(255) as u8;
+            let pixel=&line[x*bits/8..];
+            let u16_at=|i|u16::from_le_bytes([pixel[i],pixel[i+1]]);
+            let scaled=|v:u16,max:u16|((u32::from(v)*255+u32::from(max)/2)/u32::from(max)) as u8;
+            let mut p=match bits {
+                1|4|8=>{
+                    let index=(pixel[0] as usize>>(8-bits-x*bits%8))&((1<<bits)-1);
+                    *palette.get(index).ok_or("invalid EMF+ palette index")?
                 }
+                16=>{
+                    let v=u16_at(0);
+                    if format==0x101004 {
+                        let c=scaled(v,65535); [c,c,c,255]
+                    } else {
+                        let g=if format==0x21006 {63} else {31};
+                        [scaled((v/(g+1)/32)&31,31),scaled((v>>5)&g,g),scaled(v&31,31),
+                          if format==0x61007 && v&0x8000==0 {0} else {255}]
+                    }
+                }
+                24|32=>[pixel[2],pixel[1],pixel[0],if bits==24 || format==0x22009 {255} else {pixel[3]}],
+                _=>[scaled(u16_at(4),65535),scaled(u16_at(2),65535),scaled(u16_at(0),65535),
+                    if bits==48 {255} else {scaled(u16_at(6),65535)}],
+            };
+            if format==0xe200b || format==0x1a400e {
+                let alpha=u32::from(p[3]);
+                for c in &mut p[..3] {*c=if alpha==0 {0} else {((u32::from(*c)*255+alpha/2)/alpha).min(255) as u8};}
             }
+            rgba.extend_from_slice(&p);
         }
     }
     Ok(Bitmap {
@@ -757,7 +814,7 @@ fn bitmap_read(r: &mut Reader<'_>) -> Result<Bitmap, String> {
 pub(super) fn encode(record: &Record) -> Result<Vec<u8>, String> {
     let mut data = Vec::new();
     let mut header = Vec::new();
-    for v in [VERSION, 1, 96, 96] {
+    for v in [VERSION, 1, record.dpi[0].round().max(1.) as u32, record.dpi[1].round().max(1.) as u32] {
         u32w(&mut header, v);
     }
     plus(&mut data, 0x4001, 0, &header);
@@ -783,6 +840,8 @@ pub(super) fn encode(record: &Record) -> Result<Vec<u8>, String> {
             &[],
         );
         for paint in &request.paints {
+            let mut paint=paint.clone();
+            paint.transform=multiply(paint.transform,[1.,0.,0.,1.,paint.offset[0],paint.offset[1]]);
             let mut path = request.path.clone();
             for e in &mut path {
                 let n = match e.verb {
@@ -797,10 +856,10 @@ pub(super) fn encode(record: &Record) -> Result<Vec<u8>, String> {
             }
             object(&mut data, 3, 0, &path_write(&path, request.fill_rule)?);
             if paint.stroke {
-                object(&mut data, 2, 1, &pen_write(paint, &record.images)?);
+                object(&mut data, 2, 1, &pen_write(&paint, &record.images)?);
                 plus(&mut data, 0x4015, 0, &1u32.to_le_bytes());
             } else {
-                object(&mut data, 1, 1, &brush_write(paint, &record.images)?);
+                object(&mut data, 1, 1, &brush_write(&paint, &record.images)?);
                 plus(&mut data, 0x4014, 0, &1u32.to_le_bytes());
             }
         }
@@ -854,6 +913,8 @@ enum Object {
     Image(u64),
     Metafile(Arc<Record>),
     Attributes(u32),
+    Region(Region),
+    Font(text::Font),
 }
 
 pub(super) fn decode(bytes: &[u8]) -> Result<Record, String> {
@@ -934,15 +995,36 @@ fn decode_at_depth(bytes:&[u8], depth:usize) -> Result<Record,String> {
     Ok(record)
 }
 
+fn unit_pixels(unit:u32,dpi:[f64;2]) -> Result<[f64;2],String> {
+    let per_inch=match unit {0..=2=>return Ok([1.;2]),3=>72.,4=>1.,5=>300.,6=>25.4,_=>return Err("invalid EMF+ graphics unit".into())};
+    Ok(dpi.map(|v|v/per_inch))
+}
+
+#[derive(Clone)]
+struct GraphicsState {
+    world:[f64;6],
+    page:[f64;2],
+    page_unit:u32,
+    container:[f64;6],
+    region:Region,
+    flags:u32,
+}
+
+impl GraphicsState {
+    fn matrix(&self) -> [f64;6] {
+        let [x,y]=self.page;
+        multiply(multiply(self.world,[x,0.,0.,y,0.,0.]),self.container)
+    }
+}
+
 struct Parser<'a> {
     record: &'a mut Record,
     depth:usize,
     objects: HashMap<u8, Object>,
     pending: HashMap<u8, (u8, usize, Vec<u8>)>,
-    transform: [f64; 6],
-    flags: u32,
-    clips: Vec<Clip>,
-    saved: Vec<(u32, [f64; 6], u32, Vec<Clip>)>,
+    state:GraphicsState,
+    logical_dpi:[f64;2],
+    saved:Vec<(u32,bool,GraphicsState)>,
     header: bool,
     eof: bool,
     retained_points: usize,
@@ -950,13 +1032,12 @@ struct Parser<'a> {
 impl<'a> Parser<'a> {
     fn new(record: &'a mut Record) -> Self {
         Self {
+            logical_dpi:record.dpi,
             record,
             depth:0,
             objects: HashMap::new(),
             pending: HashMap::new(),
-            transform: IDENTITY,
-            flags: 0,
-            clips: vec![],
+            state:GraphicsState {world:IDENTITY,page:[1.;2],page_unit:2,container:IDENTITY,region:Region::infinite(),flags:0},
             saved: vec![],
             header: false,
             eof: false,
@@ -971,15 +1052,15 @@ impl<'a> Parser<'a> {
         if self.record.operations.len() >= 100_000 || self.retained_points > MAX_POINTS {
             return Err("metafile operation limit".into());
         }
-        self.record.operations.push(RecordedDraw { clips:self.clips.clone(), draw:DrawRequest {
+        self.record.operations.push(RecordedDraw { clips:self.state.region.clip(self.record.bounds)?.into_iter().collect(), draw:DrawRequest {
             target: 0,
             clip: [0;4],
-            transform: self.transform,
+            transform: self.state.matrix(),
             path,
             fill_rule,
             paints: vec![paint],
             alpha_mode: 0,
-            flags: self.flags,
+            flags: self.state.flags,
         }});
         Ok(())
     }
@@ -1043,6 +1124,8 @@ impl<'a> Parser<'a> {
                 let (p, f) = path_read(&object_data)?;
                 Object::Path(p, f)
             }
+            6 => Object::Font(text::Font::read(&mut r)?),
+            4 => Object::Region(Region::read(&mut r)?),
             5 => {
                 r.version()?;
                 match r.u32()? {
@@ -1080,8 +1163,12 @@ impl<'a> Parser<'a> {
                 Some(Object::Attributes(w)) => *w, _=>return Err("missing image attributes".into()),
             }
         };
-        if r.u32()? != 2 || flags & 0x2000 != 0 {return Err("unsupported EMF+ image effect or units".into());}
-        let rect:[f64;4]=r.floats()?;
+        let unit=r.u32()?;
+        if flags & 0x2000 != 0 {return Err("unsupported EMF+ image effect".into());}
+        let dpi=match self.objects.get(&(flags as u8)) {Some(Object::Metafile(m))=>m.dpi,_=>self.logical_dpi};
+        let [sx,sy]=unit_pixels(unit,dpi)?;
+        let [x,y,w,h]=r.floats()?;
+        let rect=[x*sx,y*sy,w*sx,h*sy];
         let [x,y,w,h]=rect;
         if w<=0. || h<=0. {return Err("invalid EMF+ source rectangle".into());}
         let [a,b,c] = if kind==0x401a {
@@ -1098,17 +1185,18 @@ impl<'a> Parser<'a> {
                 let image=&self.record.images[id];
                 let mut p=solid(0);
                 p.image=*id; p.brush_type=2; p.wrap=wrap; p.coordinates=[0.,0.,image.width as f64,image.height as f64];
-                let transform=self.transform;
-                self.transform=multiply(matrix,transform);
+                let transform=self.state.world;
+                self.state.world=multiply(matrix,transform);
                 let result=self.emit(rectangle(rect),0,p);
-                self.transform=transform;
+                self.state.world=transform;
                 result
             }
             Some(Object::Metafile(src)) => {
                 let ids:HashMap<_,_>=src.images.keys().enumerate().map(|(i,id)|(*id,(self.record.images.len()+i+1) as u64)).collect();
                 let count=src.operations.iter().map(|o|o.draw.path.len()).sum::<usize>();
                 self.retained_points=self.retained_points.checked_add(count).filter(|&n|n<=MAX_POINTS).ok_or("metafile point limit")?;
-                self.record.embed(src,rect,multiply(matrix,self.transform),&self.clips,&ids)?;
+                let clips=self.state.region.clip(self.record.bounds)?.into_iter().collect::<Vec<_>>();
+                self.record.embed(src,rect,multiply(matrix,self.state.matrix()),&clips,&ids)?;
                 self.record.images.extend(src.images.iter().map(|(id,b)|(ids[id],b.clone())));
                 Ok(())
             }
@@ -1143,7 +1231,9 @@ impl<'a> Parser<'a> {
                         return Err("duplicate EMF+ header".into());
                     }
                     r.version()?;
-                    r.take(12)?;
+                    r.take(4)?;
+                    self.logical_dpi=[f64::from(r.u32()?),f64::from(r.u32()?)];
+                    if self.logical_dpi.contains(&0.) {return Err("invalid EMF+ logical DPI".into());}
                     self.header = true;
                 }
                 0x4002 => self.eof = true,
@@ -1155,6 +1245,15 @@ impl<'a> Parser<'a> {
                     self.record.operations.clear();
                 }
                 0x400a..=0x4012 | 0x4016..=0x4019 => self.shape(kind, flags, &mut r)?,
+                0x4013 => {
+                    let paint=self.brush(flags,r.u32()?)?;
+                    let Some(Object::Region(region))=self.objects.get(&(flags as u8)) else {return Err("missing EMF+ fill region".into());};
+                    let matrix=self.state.matrix();
+                    let inv=vello_gpu::kurbo::Affine::new(matrix).inverse();
+                    let domain=Region::from_path(&rectangle(self.record.bounds),0).transform(inv.as_coeffs());
+                    let region=region.combine(&domain,1)?;
+                    if let Some(clip)=region.clip(self.record.bounds)? {self.emit(clip.path.to_vec(),clip.fill,paint)?;}
+                }
                 0x4014 | 0x4015 => {
                     let id = r.u32()?;
                     let paint = if kind == 0x4014 {
@@ -1171,34 +1270,38 @@ impl<'a> Parser<'a> {
                     };
                     self.emit(path, fill, paint)?;
                 }
+                0x4036 => self.driver_string(flags,&mut r)?,
                 0x401a|0x401b => self.draw_image(kind, flags, &mut r)?,
-                0x401e => self.flags = u32::from(flags & 1 == 0),
+                0x401e => self.state.flags = (self.state.flags & !1) | u32::from(flags & 1 == 0),
                 0x4023 if flags & 255 != 0 => {
                     return Err("EMF+ source-copy compositing is unsupported".into());
                 }
                 0x401f..=0x4024 => {}
-                0x4025 => {
-                    let id = r.u32()?;
-                    if self.saved.len() >= 1024 {
-                        return Err("metafile state depth limit".into());
+                0x4025 | 0x4027 | 0x4028 => {
+                    if self.saved.len() >= 1024 {return Err("metafile state depth limit".into());}
+                    let map=if kind==0x4027 {
+                        let [x,y,w,h]=r.floats()?;
+                        let [sx,sy,sw,sh]=r.floats()?;
+                        let [ux,uy]=unit_pixels(u32::from(flags&255),self.logical_dpi)?;
+                        if sw==0. || sh==0. {return Err("empty EMF+ container source".into());}
+                        Some([w/(sw*ux),0.,0.,h/(sh*uy),x-sx*w/sw,y-sy*h/sh])
+                    } else {None};
+                    self.saved.push((r.u32()?,kind!=0x4025,self.state.clone()));
+                    if kind!=0x4025 {
+                        self.state.container=multiply(map.unwrap_or(IDENTITY),self.state.matrix());
+                        self.state.world=IDENTITY;
+                        self.state.page=[1.;2];
+                        self.state.page_unit=2;
                     }
-                    self.saved.push((id, self.transform, self.flags, self.clips.clone()));
                 }
-                0x4026 => {
-                    let id = r.u32()?;
-                    let n = self
-                        .saved
-                        .iter()
-                        .rposition(|s| s.0 == id)
-                        .ok_or("missing EMF+ saved state")?;
-                    let (_, m, f, c) = self.saved.swap_remove(n);
-                    self.transform = m;
-                    self.flags = f;
-                    self.clips = c;
+                0x4026 | 0x4029 => {
+                    let id=r.u32()?;
+                    let n=self.saved.iter().rposition(|s|s.0==id && s.1==(kind==0x4029)).ok_or("missing EMF+ saved state")?;
+                    self.state=self.saved.swap_remove(n).2;
                     self.saved.truncate(n);
                 }
-                0x402a => self.transform = r.floats()?,
-                0x402b => self.transform = IDENTITY,
+                0x402a => self.state.world = r.floats()?,
+                0x402b => self.state.world = IDENTITY,
                 0x402c..=0x402f => {
                     let matrix = match kind {
                         0x402c => r.floats()?,
@@ -1216,33 +1319,37 @@ impl<'a> Parser<'a> {
                             [c, s, -s, c, 0., 0.]
                         }
                     };
-                    self.transform = if flags & 0x2000 != 0 {
-                        multiply(self.transform, matrix)
+                    self.state.world = if flags & 0x2000 != 0 {
+                        multiply(self.state.world, matrix)
                     } else {
-                        multiply(matrix, self.transform)
+                        multiply(matrix, self.state.world)
                     };
                 }
                 0x4030 => {
                     let scale = r.f32()?;
-                    if flags & 255 != 2 || scale != 1. {
-                        return Err("nonpixel EMF+ page transform is unsupported".into());
-                    }
+                    if scale<=0. {return Err("invalid EMF+ page scale".into());}
+                    self.state.page_unit=u32::from(flags&255);
+                    self.state.page=unit_pixels(self.state.page_unit,self.logical_dpi)?.map(|v|v*scale);
                 }
-                0x4031 => self.clips.clear(),
-                0x4032 | 0x4033 => {
-                    match (flags >> 8) & 15 {
-                        0 => self.clips.clear(),
-                        1 => {}
-                        _ => return Err("unsupported metafile clip combination".into()),
-                    }
-                    if self.clips.len() == 64 { return Err("metafile clip depth limit".into()); }
-                    let (path,fill) = if kind == 0x4032 { (rectangle(r.floats()?),0) } else {
-                        match self.objects.get(&(flags as u8)) {
-                            Some(Object::Path(p,f)) => (p.clone(),*f),
-                            _ => return Err("missing clip path".into()),
-                        }
+                0x4031 => self.state.region=Region::infinite(),
+                0x4032..=0x4034 => {
+                    let region=match kind {
+                        0x4032=>Region::from_path(&rectangle(r.floats()?),0),
+                        0x4033=>match self.objects.get(&(flags as u8)) {
+                            Some(Object::Path(p,f))=>Region::from_path(p,*f),
+                            _=>return Err("missing EMF+ clip path".into()),
+                        },
+                        _=>match self.objects.get(&(flags as u8)) {
+                            Some(Object::Region(region))=>region.clone(),
+                            _=>return Err("missing EMF+ clip region".into()),
+                        },
                     };
-                    self.clips.push(Clip {path:path.into(),fill,transform:self.transform});
+                    self.state.region=self.state.region.combine(&region.transform(self.state.matrix()),(flags>>8)&15)?;
+                }
+                0x4035 => {
+                    let [x,y]=r.floats()?;
+                    let [a,b,c,d,..]=self.state.matrix();
+                    self.state.region=self.state.region.transform([1.,0.,0.,1.,a*x+c*y,b*x+d*y]);
                 }
                 _ => return Err(format!("unsupported EMF+ record 0x{kind:04x}")),
             }
@@ -1336,6 +1443,61 @@ mod tests {
             record.operations[0].draw.transform
         );
     }
+    #[test]
+    fn external_gradient_clip_driver_text_and_compressed_bitmap() {
+        let bytes=include_bytes!("../../tests/fixtures/layer_ex_draw/wine-mixed.emf");
+        let record=decode(bytes).unwrap();
+        assert_eq!((record.width,record.height),(96,80));
+        assert_eq!(record.operations.len(),4);
+        assert!(record.operations[1].clips.len()==1);
+        assert!(record.operations[2].draw.path.len()>30);
+        assert_eq!(record.images.len(),1);
+        let roundtrip=decode(&encode(&record).unwrap()).unwrap();
+        assert_eq!(roundtrip.operations.len(),4);
+        assert_eq!(roundtrip.operations[1].clips.len(),1);
+        assert_eq!(roundtrip.operations[0].draw.paints[0].coordinates,[0.,8.,48.,8.]);
+    }
+
+    #[test]
+    fn page_units_container_clip_and_saved_state() {
+        let mut record=Record::new(200,150,0).unwrap();
+        let mut parser=Parser::new(&mut record);
+        parser.header=true;
+        let mut bytes=Vec::new();
+        plus(&mut bytes,0x4030,3,&1.5f32.to_le_bytes());
+        plus(&mut bytes,0x4028,0,&74u32.to_le_bytes());
+        let mut clip=Vec::new();
+        floats(&mut clip,[1.,2.,4.,5.]).unwrap();
+        plus(&mut bytes,0x4032,0,&clip);
+        plus(&mut bytes,0x402d,0,&[2f32,3.].map(f32::to_le_bytes).concat());
+        let mut rect=vec![];
+        u32w(&mut rect,0xff040302); u32w(&mut rect,1); floats(&mut rect,[0.,0.,10.,10.]).unwrap();
+        plus(&mut bytes,0x400a,0x8000,&rect);
+        plus(&mut bytes,0x4029,0,&74u32.to_le_bytes());
+        plus(&mut bytes,0x400a,0x8000,&rect);
+        parser.parse(&bytes).unwrap();
+        let ops=&parser.record.operations;
+        assert_eq!(ops[0].draw.transform,[2.,0.,0.,2.,4.,6.]);
+        assert_eq!(ops[1].draw.transform,[2.,0.,0.,2.,0.,0.]);
+        assert!(ops[1].clips.is_empty());
+        assert_eq!(ops[0].clips[0].path[0].points[..2],[2.,4.]);
+    }
+
+    #[test]
+    fn indexed_bitmap_padding_negative_stride_and_rgb565() {
+        let mut data=Vec::new();
+        for n in [VERSION,1,3,2,(-4i32) as u32,0x30402,0,1,3,0,0xffff0000,0xff0000ff] {u32w(&mut data,n);}
+        data.extend([0x22,0x10,0,0,0x12,0x20,0,0]);
+        let read=bitmap_read(&mut Reader::new(&data)).unwrap();
+        assert_eq!(&read.rgba[..8],&[255,0,0,255,0,0,255,255]);
+        assert_eq!(&read.rgba[12..16],&[0,0,255,255]);
+        data[20..24].copy_from_slice(&0x21006u32.to_le_bytes());
+        data[8..12].copy_from_slice(&2u32.to_le_bytes()); data.truncate(28);
+        data.extend([0xe0,0x07,0x00,0xf8,0x1f,0,0xff,0xff]);
+        let read=bitmap_read(&mut Reader::new(&data)).unwrap();
+        assert_eq!(&read.rgba[..8],&[0,0,255,255,255,255,255,255]);
+    }
+
     #[test]
     fn rejects_lengths_and_truncation() {
         let record = Record::new(10, 10, 0).unwrap();

@@ -67,6 +67,16 @@ pub struct PositionedGlyph {
     pub character: u32,
 }
 
+pub fn with_default_font<T>(family:&str, style:u32, callback:impl FnOnce(&[u8],u32)->T) -> Option<T> {
+    let mut callback=Some(callback);
+    if let Some(result)=with_system_font(family,style,|b,i| callback.take().unwrap()(b,i)) {return Some(result);}
+    let database=system_fonts();
+    let id=database.query(&Query {families:&[Family::SansSerif],..Default::default()})
+        .or_else(||database.faces().next().map(|f|f.id));
+    if let Some(result)=id.and_then(|id|database.with_face_data(id,|b,i|callback.take().unwrap()(b,i))) {return Some(result);}
+    (!fallback_font().is_empty()).then(||callback.take().unwrap()(fallback_font(),0))
+}
+
 pub fn shape_line(bytes: &[u8], index: u32, text: &str) -> Option<Vec<PositionedGlyph>> {
     let font = harfrust::FontRef::from_index(bytes, index).ok()?;
     let data = harfrust::ShaperData::new(&font);

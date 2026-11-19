@@ -244,6 +244,7 @@ struct KrkrRenderer {
     ext_nagano: Option<ExtNaganoExtension>,
     mesh: super::mesh::MeshPipelines,
     layer_ex_draw: Option<layer_ex_draw::Backend>,
+    record_images: StdHashMap<usize,(std::sync::Weak<[u8]>,PooledTexture)>,
 }
 
 #[derive(Clone)]
@@ -487,6 +488,7 @@ impl KrkrRenderer {
             ext_nagano,
             mesh,
             layer_ex_draw: None,
+            record_images:StdHashMap::new(),
         }
     }
 
@@ -602,6 +604,7 @@ impl KrkrRenderer {
     }
 
     fn update(&mut self) {
+        self.record_images.retain(|_,(data,_)| data.strong_count()!=0);
         self.texture_pool.update();
     }
 

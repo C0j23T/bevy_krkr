@@ -262,14 +262,11 @@ fn vello_paths_alpha_clip_transform_gradient_stroke_and_external_gpu_image() {
         };
         draw(&path, &[hatch], IDENTITY, [0, 0, 8, 8], 0);
         let pixels = read(1);
-        assert!(
-            pixels
-                .chunks_exact(4)
-                .all(|p| p == [255, 0, 0, 255] || p == [0, 0, 255, 255]),
-            "style {style}"
-        );
-        assert!(pixels.chunks_exact(4).any(|p| p == [255, 0, 0, 255]));
-        assert!(pixels.chunks_exact(4).any(|p| p == [0, 0, 255, 255]));
+        let coverage=include_bytes!("../src/render/layer_ex_draw_hatch.bin");
+        for (index,p) in pixels.chunks_exact(4).enumerate() {
+            let value=coverage[style as usize*64+index];
+            assert_eq!(p,[value,0,255-value,255],"hatch style {style} at pixel {index}");
+        }
     }
     upload(1, [0; 4]);
     let points = [

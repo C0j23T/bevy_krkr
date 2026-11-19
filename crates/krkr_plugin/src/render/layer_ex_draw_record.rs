@@ -1,12 +1,12 @@
 #[path = "layer_ex_draw_record_format.rs"]
 mod format;
 
-use super::{KrkrRenderer, PooledTexture, RENDERER_INSTANCE};
+use super::{PooledTexture, RENDERER_INSTANCE};
 use format::{Bitmap, Clip, Record, RecordedDraw, multiply};
 use vello_gpu::{kurbo::Affine, peniko::Fill};
 use krkr_shim::layer_ex_draw::DrawOperation;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     ffi::c_void,
     sync::{
         Arc, LazyLock, Mutex,
@@ -265,34 +265,32 @@ fn replay(
     let stored = get(id)?;
     let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
     let renderer = guard.as_mut().ok_or("Bevy renderer is not initialized")?;
-    let mut resources = HashMap::new();
-    let mut temporary_images = HashSet::new();
-    for (&id, image) in &stored.textures {
-        resources.insert(id, image.clone());
-    }
+    let mut resources=stored.textures.clone();
     for (&id, image) in &stored.content.images {
-        temporary_images.insert(id);
-        let texture = renderer
-            .texture_pool
-            .acquire(&renderer.device, image.width, image.height);
-        renderer.flush();
-        renderer.queue.write_texture(
-            texture.texture.as_image_copy(),
-            &image.rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(image.width * 4),
-                rows_per_image: Some(image.height),
-            },
-            texture.texture.size(),
-        );
-        resources.insert(id, texture);
+        let key=image.rgba.as_ptr() as usize;
+        let texture=if let Some((_,texture))=renderer.record_images.get(&key) {
+            texture.clone()
+        } else {
+            if image.width.max(image.height)>renderer.device.limits().max_texture_dimension_2d {
+                return Err("metafile bitmap exceeds GPU texture limit".into());
+            }
+            let texture=renderer.texture_pool.acquire(&renderer.device,image.width,image.height);
+            renderer.flush();
+            renderer.queue.write_texture(
+                texture.texture.as_image_copy(),&image.rgba,
+                wgpu::TexelCopyBufferLayout {offset:0,bytes_per_row:Some(image.width*4),rows_per_image:Some(image.height)},
+                texture.texture.size(),
+            );
+            renderer.record_images.insert(key,(Arc::downgrade(&image.rgba),texture.clone()));
+            texture
+        };
+        resources.insert(id,texture);
     }
-    let mut remap = HashMap::new();
-    for (id, image) in resources {
-        let temporary = NEXT_IMAGE.fetch_add(1, Ordering::Relaxed);
-        renderer.textures.insert(temporary, image);
-        remap.insert(id, temporary);
+    let mut remap=HashMap::new();
+    for (id,image) in resources {
+        let temporary=NEXT_IMAGE.fetch_add(1,Ordering::Relaxed);
+        renderer.textures.insert(temporary,image);
+        remap.insert(id,temporary);
     }
     let result = (|| {
         let crop = source.map(|rect| Clip {path:format::rectangle(rect).into(), fill:0, transform:format::IDENTITY});
@@ -318,13 +316,7 @@ fn replay(
         }
         Ok(())
     })();
-    for (original, id) in remap {
-        if let Some(image) = renderer.textures.remove(&id) {
-            if temporary_images.contains(&original) {
-                renderer.texture_pool.retire(image);
-            }
-        }
-    }
+    for id in remap.values() {renderer.textures.remove(id);}
     result
 }
 
@@ -415,6 +407,7 @@ const _: () = assert!(std::mem::size_of::<RecordInfo>() == 64);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::KrkrRenderer;
     use bevy::{
         app::PluginsState,
         prelude::*,
