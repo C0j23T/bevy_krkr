@@ -38,12 +38,12 @@
 | 插件 | 范围 |
 | --- | --- |
 | `win32dialog.dll` | 独立 tp_stub 外部 submodule；控件模型、Unicode、公开 System 消息/输入协议、卸载已测试；宿主实际 UI、GDI、原生资源模板等未实现 |
-| `layerExDraw.dll` | Vello同设备GPU路径、矩阵、裁剪、实色/线性渐变/描边、GPU图像与文字轮廓；专项像素及TJS测试通过；复杂画笔、记录/EMF+与完整字体兼容未完成 |
+| `layerExDraw.dll` | Vello GPU 路径、复杂画笔、图像和文字轮廓、GPU 记录与 EMF+ 编解码。GPU、TJS 和 Wine 专项通过，原生 Windows 与 Android 真机待验收 |
 | `emoteplayer.dll` / `motionplayer.dll` | C++引擎/别名、GPU网格/蒙版/混合、时间轴、序列化、物理、hit test、资源重载与两轮重启已验证；多层曲面及完整游戏仍待验收 |
 
 ### 调查
 
-- `layerExDraw.dll`：[Vello GPU 后端评估](layer-ex-draw-vello.md)、[绘图操作契约](layer-ex-draw-ffi.md)；同设备纹理、alpha与提交顺序已验证，EMF+仍待实现。
+- `layerExDraw.dll`：[Vello GPU 后端](layer-ex-draw-vello.md)、[绘图操作契约](layer-ex-draw-ffi.md)、[EMF+ 与平台验证](layerexdraw-task.md)。
 - `emoteplayer.dll`：[集成与验收](emote-integration.md)。
 
 ## 下一批实现

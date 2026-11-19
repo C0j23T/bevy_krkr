@@ -35,6 +35,8 @@ The implementation uses FreeType outlines and Vello on the shared Bevy GPU devic
 Vello GPU, Vello Common and Vello GPU Shaders 0.4.0 are copyright 2020 the Vello
 Authors and used under the MIT license; distributions include
 [licenses/vello-mit.txt](licenses/vello-mit.txt).
+Parley 0.11 formats EMF+ DrawString text. It is copyright 2020 the Parley
+Authors and used under [the MIT license](licenses/parley-mit.txt).
 
 Wave, mosaic, turn and the rotate transitions adapt the algorithms by W.Dee and contributors in
 [wamsoft/extrans](https://github.com/wamsoft/extrans), commit

@@ -14,7 +14,7 @@
 
 所有维度、坐标、矩阵、stop 和 dash 在消费前验证有限值与上限。每次 Vello render 编码前先 flush 既有 encoder；render 与 queue submit 使用 renderer mutex 内的 surface_sync 顺序，并在下一次 render 前提交。
 
-`TVPBevyLayerExDraw` 为 144 字节；`TVPBevyDrawPaint` 为 392 字节。Paint 在原 200 字节字段后追加以下完整画笔参数：
+`TVPBevyLayerExDraw` 为 144 字节；`TVPBevyDrawPaint` 为 392 字节。Paint 的扩展画笔参数使用以下字段。
 
 | 偏移 | 字段 | 含义 |
 | --- | --- | --- |
@@ -27,8 +27,8 @@
 | 312 / 316 / 320 | `compound_count` / `reserved2` / `compound` | compound pen 的归一化横截面区间 |
 | 328 / 360 | `start_arrow[4]` / `end_arrow[4]` | cap255 时的 width、height、middleInset、filled；尺寸以笔宽为单位 |
 
-当前后端使用同一个 Bevy wgpu 30.0.1 设备和队列，路径覆盖由 Vello 生成。实色、sRGB 渐变与 stops、clip、仿射变换、外部 GPU 纹理和整数裁剪均有像素测试。线性渐变的五种 wrap 使用二维 tile 映射；PathGradient 用独立 polygon 边界、逐边周边颜色、center、focus scales 和 stops/blend 生成 GPU paint 纹理，再由 Vello 填充路径。Gamma 路径尚未对照 GDI+，procedural paint 当前使用 2.2 指数近似。
+路径覆盖由 Vello 生成。线性渐变的五种 wrap 使用二维 tile 映射。PathGradient 用 polygon 边界、周边颜色、center、focus scales 和 stops/blend 生成 GPU paint 纹理。开启 gamma 时按线性光插值后转换回 sRGB，Vello 渐变和 WESL 渐变均有中点像素用例。
 
-Hatch 使用独立算法生成并缓存 8×8 小纹理，支持 style 0–52；未复制 Wine 的图案表，图案像素尚未与 GDI+ 对照。Pen 支持居中描边、闭合路径 inset、flat/square/round 端帽、扩展形状端帽、可调箭头、flat/round/triangle dash cap 与对称 compound。零宽 pen 在目标像素空间生成一像素描边。MiterClipped join、非对称 compound 和开放路径 inset 明确拒绝，不能视为完整 GDI+ pen。
+Hatch 缓存 53 种 8×8 覆盖图案着色后的纹理。Pen 支持居中描边、闭合路径 inset、flat/square/round 端帽、扩展形状端帽、可调箭头、flat/round/triangle dash cap 与对称 compound。零宽笔在目标像素空间生成一像素描边。MiterClipped join、非对称 compound 和开放路径 inset 会返回错误。
 
-`cargo test -p krkr_plugin --test layer_ex_draw_pixels -- --nocapture` 在 RTX 4060 Vulkan 上验证三种 alpha、clip/变换、渐变、描边边界、外部纹理、自纹理绘制、整数裁剪、空 clip 与 target resize；扩展用例覆盖 53 种 Hatch、polygon PathGradient、斜向二维 FlipX、inset、对称 compound、自定义箭头和非均匀缩放/旋转/clip 下的一像素 cosmetic pen 与虚线。`cargo tree -p krkr_plugin -i wgpu --depth 1` 确认仅一份 wgpu 30.0.1。普通操作不读回像素。仍需 GDI+ 参考图、完整 pen 组合、Android 和性能验收。
+公开绘图 FFI 只使用抗锯齿位。EMF+ 回放另外携带 SourceCopy 模式，由 GPU 单独计算几何覆盖。测试范围和命令见 [专项验证](layerexdraw-task.md)。

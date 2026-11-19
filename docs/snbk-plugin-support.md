@@ -110,23 +110,11 @@ Kirikiroid2 检查点中的 `plugins/emoteplayer/emoteplayerclass.cpp`：
 
 ## LayerExDraw 现状
 
-### 已实现与验证
+Vello 复用 Bevy 的设备、队列和纹理，绘制 Path、Matrix、clip、Appearance、图像和文字轮廓。已有专项用例覆盖复杂画笔、字体回退与度量、EMF+ 图像和文字、纹理快照、嵌套记录及常见图片格式。Wine GDI+ 对路径样本的原始文件和导出文件做了逐像素比对。
 
-Vello 已接入 Bevy 的同一设备、队列和纹理。Path、Matrix、clip、Appearance、图像仿射和 FreeType 字体轮廓走 GPU。
+snbk 使用图像绘制、流程图的线段、Bezier、矩阵与箭头，以及片尾文字测量和 `drawPathString`。实际流程图和片尾画面仍待游戏内验收。
 
-已有专项覆盖实色/线性渐变/PathGradient、53 种 Hatch、描边/虚线/inset/compound/箭头、图像裁剪与仿射、文字轮廓、内部 record 重放、PNG 保存和颜色区域扫描。
-
-### 剩余边界
-
-- EMF+ 已有编解码子集、外部 fixture 和独立 Wine 结构/播放验证，不能描述为完全没有实现。
-- 外部 DrawImage/DrawString 记录、压缩或嵌套 metafile、部分 pen/brush/clip/page/compositing 组合仍不完整。
-- record 纹理快照误入资源池问题已有局部修复和回归草稿，但该回归没有取得验收结果。
-- 字体、文字度量和 GDI+ 参考像素一致性、资源释放/重启、Android 和性能未完整验收。
-- 单独存在的 `LayerExDrawFont.inc` 不代表它已被当前 `LayerExDraw.cpp` 接入并验证。
-
-snbk 的主要引用为图像绘制、流程图的线/Bezier/矩阵/箭头，以及片尾文字测量和 `drawPathString`。主要接口已存在，但没有实际流程图/片尾画面验收，下面保守列为部分覆盖；未发现游戏要求完整 EMF+，不能把所有 EMF+ 缺口当作 snbk 必需阻塞。
-
-当前边界见 [GPU 后端与绘图验证](layer-ex-draw-vello.md)、[EMF+ 实现范围](layer-ex-draw-record-task.md) 和 [检查点验证状态](work-snapshot.md)。旧迁移表中的“多层曲面待验证”“EMF+ 待实现”等概括已落后于这些证据。
+实现范围和平台对照见 [GPU 后端](layer-ex-draw-vello.md)、[EMF+ 记录](layer-ex-draw-record-task.md)及 [专项验证](layerexdraw-task.md)。
 
 ## snbk 插件分类
 
