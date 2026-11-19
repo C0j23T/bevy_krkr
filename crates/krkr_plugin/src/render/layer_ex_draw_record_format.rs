@@ -916,6 +916,7 @@ enum Object {
     Attributes(u32),
     Region(Region),
     Font(text::Font),
+    StringFormat(text::StringFormat),
 }
 
 pub(super) fn decode(bytes: &[u8]) -> Result<Record, String> {
@@ -1126,6 +1127,7 @@ impl<'a> Parser<'a> {
                 Object::Path(p, f)
             }
             6 => Object::Font(text::Font::read(&mut r)?),
+            7 => Object::StringFormat(text::StringFormat::read(&mut r)?),
             4 => Object::Region(Region::read(&mut r)?),
             5 => {
                 r.version()?;
@@ -1271,7 +1273,7 @@ impl<'a> Parser<'a> {
                     };
                     self.emit(path, fill, paint)?;
                 }
-                0x4036 => self.driver_string(flags,&mut r)?,
+                0x401c | 0x4036 => self.text(kind, flags, &mut r)?,
                 0x401a|0x401b => self.draw_image(kind, flags, &mut r)?,
                 0x401e => self.state.flags = (self.state.flags & !1) | u32::from(flags & 1 == 0),
                 0x4023 => {
@@ -1460,6 +1462,68 @@ mod tests {
         assert_eq!(roundtrip.operations.len(),4);
         assert_eq!(roundtrip.operations[1].clips.len(),1);
         assert_eq!(roundtrip.operations[0].draw.paints[0].coordinates,[0.,8.,48.,8.]);
+    }
+
+    #[test]
+    fn draw_string_uses_format_alignment_and_scopes_its_clip() {
+        let mut record = Record::new(100, 80, 0).unwrap();
+        let mut parser = Parser::new(&mut record);
+        parser.header = true;
+        let mut bytes = Vec::new();
+        let mut font = Vec::new();
+        u32w(&mut font, VERSION);
+        floats(&mut font, [14.]).unwrap();
+        for value in [2, 4, 0, 11] {
+            u32w(&mut font, value);
+        }
+        font.extend("DejaVu Sans".encode_utf16().flat_map(u16::to_le_bytes));
+        plus(&mut bytes, 0x4008, 0x0601, &font);
+
+        let mut format = Vec::new();
+        for value in [VERSION, 0x1000, 0, 1, 1, 0, 0, 0, 1] {
+            u32w(&mut format, value);
+        }
+        floats(&mut format, [0., 0., 1.]).unwrap();
+        for value in [0; 3] {
+            u32w(&mut format, value);
+        }
+        plus(&mut bytes, 0x4008, 0x0702, &format);
+
+        for format_id in [2, u32::MAX] {
+            let mut text = Vec::new();
+            for value in [0xff008000, format_id, 5] {
+                u32w(&mut text, value);
+            }
+            floats(&mut text, [10., 10., 80., 40.]).unwrap();
+            text.extend("Vello".encode_utf16().flat_map(u16::to_le_bytes));
+            plus(&mut bytes, 0x401c, 0x8001, &text);
+        }
+        let mut rect = Vec::new();
+        u32w(&mut rect, 0xff008000);
+        u32w(&mut rect, 1);
+        floats(&mut rect, [0., 0., 10., 10.]).unwrap();
+        plus(&mut bytes, 0x400a, 0x8000, &rect);
+
+        parser.parse(&bytes).unwrap();
+        let [center, near, fill] = &record.operations[..] else {
+            panic!("expected two text operations and one fill");
+        };
+        let bounds = |operation: &RecordedDraw| {
+            assert!(operation.draw.path.len() > 30);
+            let x = operation.draw.path[0].points[0];
+            let y = operation.draw.path[0].points[1];
+            (x, y)
+        };
+        let (center_x, center_y) = bounds(center);
+        let (near_x, near_y) = bounds(near);
+        assert!(center_x > near_x + 10. && center_y > near_y + 5.);
+        assert_eq!(center.clips.len(), 1);
+        assert_eq!(near.clips.len(), 1);
+        assert!(fill.clips.is_empty());
+
+        let reloaded = decode(&encode(&record).unwrap()).unwrap();
+        assert_eq!(reloaded.operations[0].draw.path.len(), center.draw.path.len());
+        assert_eq!(reloaded.operations[0].clips.len(), 1);
     }
 
     #[test]

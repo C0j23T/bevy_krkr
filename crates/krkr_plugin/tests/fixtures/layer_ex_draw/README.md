@@ -15,6 +15,18 @@ WINEDEBUG=-all /tmp/layerexdraw-record-reference.exe
 cp /tmp/layerexdraw-external.emf crates/krkr_plugin/tests/fixtures/layer_ex_draw/wine-path.emf
 ```
 
+`wine-mixed.emf` exercises a linear gradient, an excluded clip rectangle,
+positioned text and a compressed bitmap. Wine records the text as
+`EmfPlusDrawDriverString`. The separate DrawString test constructs a formatted
+text record with the object layouts in
+[MS-EMFPLUS](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-emfplus/ae7927c3-e416-4069-a9b8-3200113d6c41).
+
+```sh
+winegcc crates/krkr_plugin/tests/fixtures/layer_ex_draw/generate-mixed.c -o /tmp/layerexdraw-mixed-reference -lgdiplus
+xvfb-run -a env WINEDEBUG=-all /tmp/layerexdraw-mixed-reference.exe
+cp /tmp/layerexdraw-mixed.emf crates/krkr_plugin/tests/fixtures/layer_ex_draw/wine-mixed.emf
+```
+
 `ms-emfplus-path.bin` contains the exact 196-byte hexadecimal path-object
 record from Microsoft [MS-EMFPLUS] v20240423, section 3.2.32.21 (pages 221–222).
 Its unit test also consumes the literal FillPath bytes from section 3.2.32.22.
