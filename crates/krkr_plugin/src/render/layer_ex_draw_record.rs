@@ -1,7 +1,7 @@
 #[path = "layer_ex_draw_record_format.rs"]
 mod format;
 
-use super::{PooledTexture, RENDERER_INSTANCE};
+use super::{KrkrRenderer, PooledTexture, RENDERER_INSTANCE};
 use format::{Bitmap, Clip, Record, RecordedDraw, multiply};
 use vello_gpu::{kurbo::Affine, peniko::Fill};
 use krkr_shim::layer_ex_draw::DrawOperation;
@@ -100,6 +100,66 @@ pub unsafe extern "C" fn krkr_layer_ex_record_create(
         )
     })
 }
+
+fn snapshot(renderer: &mut KrkrRenderer, source: &PooledTexture) -> PooledTexture {
+    let image = renderer.texture_pool.acquire(
+        &renderer.device,
+        source.texture.width(),
+        source.texture.height(),
+    );
+    renderer.encoder().copy_texture_to_texture(
+        source.texture.as_image_copy(),
+        image.texture.as_image_copy(),
+        source.texture.size(),
+    );
+    image
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn krkr_layer_ex_record_capture(
+    source: u64,
+    dpi: *const f64,
+    result: *mut u64,
+) -> i32 {
+    ffi(|| {
+        let dpi = unsafe { array::<f64, 2>(dpi)? };
+        if dpi.iter().any(|v| !v.is_finite() || *v <= 0.)
+            || result.is_null()
+            || !result.is_aligned()
+        {
+            return Err("invalid bitmap record arguments".into());
+        }
+        let (mut content, texture) = {
+            let mut guard = RENDERER_INSTANCE.lock().map_err(|e| e.to_string())?;
+            let renderer = guard.as_mut().ok_or("Bevy renderer is not initialized")?;
+            let source = renderer.texture(source)?;
+            let record = Record::new(source.texture.width(), source.texture.height(), 0)?;
+            (record, snapshot(renderer, &source))
+        };
+        content.dpi = dpi;
+        let mut paint = format::solid(0);
+        paint.brush_type = 2;
+        paint.wrap = 4;
+        paint.image = NEXT_IMAGE.fetch_add(1, Ordering::Relaxed);
+        paint.coordinates = content.bounds;
+        let textures = HashMap::from([(paint.image, texture)]);
+        content.operations.push(RecordedDraw {
+            draw: krkr_shim::layer_ex_draw::DrawRequest {
+                target: 0,
+                transform: format::IDENTITY,
+                path: format::rectangle(content.bounds),
+                clip: [0; 4],
+                fill_rule: 0,
+                paints: vec![paint],
+                alpha_mode: 0,
+                flags: 0,
+            },
+            clips: Vec::new(),
+        });
+        unsafe { insert(StoredRecord { content, textures }, result) }
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_layer_ex_record_append(
     id: u64,
@@ -134,16 +194,7 @@ pub unsafe extern "C" fn krkr_layer_ex_record_append(
                     *id
                 } else {
                     let source = renderer.texture(paint.image)?;
-                    let image = renderer.texture_pool.acquire(
-                        &renderer.device,
-                        source.texture.width(),
-                        source.texture.height(),
-                    );
-                    renderer.encoder().copy_texture_to_texture(
-                        source.texture.as_image_copy(),
-                        image.texture.as_image_copy(),
-                        source.texture.size(),
-                    );
+                    let image = snapshot(renderer, &source);
                     let id = NEXT_IMAGE.fetch_add(1, Ordering::Relaxed);
                     copies.insert(paint.image, id);
                     record.textures.insert(id, image);
@@ -407,7 +458,6 @@ const _: () = assert!(std::mem::size_of::<RecordInfo>() == 64);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::KrkrRenderer;
     use bevy::{
         app::PluginsState,
         prelude::*,
@@ -463,6 +513,17 @@ mod tests {
             unsafe { renderer.execute(&command(0, 1002)) }.unwrap();
             upload(renderer, 1001, [240, 30, 70, 255]);
         }
+        let mut capture = 0;
+        let dpi = [144., 72.];
+        assert_eq!(
+            unsafe { krkr_layer_ex_record_capture(1001, dpi.as_ptr(), &mut capture) },
+            0
+        );
+        let bitmap = get(capture).unwrap();
+        assert_eq!(bitmap.content.dpi, dpi);
+        assert_eq!(bitmap.content.operations.len(), 1);
+        assert_eq!(bitmap.textures.len(), 1);
+        krkr_layer_ex_record_release(capture);
         let path = [
             (0, [0., 0., 0., 0., 0., 0.]),
             (1, [8., 0., 0., 0., 0., 0.]),

@@ -192,9 +192,55 @@ fn geometry_path_transform_alpha_and_stroke() {
     assert_ne!(value("s.getMainPixel(11,59)"),0x202020);
     run("global.textInk=0; for(var j=21;j<49;++j) for(var i=23;i<75;++i) if(s.getMainPixel(i,j)!=0x202020) ++textInk;");
     assert!(value("textInk")>45);
+    let formats = [
+        ("png", "%[]", 0x26200a, 128),
+        ("bmp", "%[depth:32]", 0x26200a, 128),
+        ("gif", "%[version:10,scanmethod:7]", 0x30803, 255),
+        ("tiff", "%[depth:32,compression:2]", 0x26200a, 128),
+        ("jpeg", "%[quality:100,render:11]", 0x21808, 255),
+    ];
+    for (ext, params, pixel_format, alpha) in formats {
+        let file = emf.with_extension(ext);
+        let file_name = file.display();
+        run(&format!(
+            "s.record=false; s.setImageSize(12,8); s.setClip(0,0,12,8); s.clear(0x80cc3050); global.saved=s.saveImage('{file_name}','image/{ext}',{params}); global.bitmap=new GdiPlus.Image('{file_name}');"
+        ));
+        assert_eq!(value("saved"), 1, "{ext}");
+        assert_eq!(value("bitmap.GetWidth()*100+bitmap.GetHeight()"), 1208);
+        assert_eq!(value("bitmap.GetPixelFormat()"), pixel_format, "{ext}");
+        run("bitmap.RotateFlip(1);");
+        assert_eq!(value("bitmap.GetWidth()*100+bitmap.GetHeight()"), 812);
+        run(&format!("s.clear(0); s.loadRecord('{file_name}');"));
+        assert_eq!(value("s.getMaskPixel(2,2)"), alpha, "{ext}");
+        let pixel = value("s.getMainPixel(2,2)");
+        for (shift, channel) in [(0, 204), (8, 48), (16, 80)] {
+            assert!((((pixel >> shift) & 255) - channel).abs() <= 3, "{ext} pixel {pixel:#x}");
+        }
+        std::fs::remove_file(file).unwrap();
+    }
+
+    let rotated = emf.with_extension("png");
+    let rotated_name = rotated.display();
+    run(&format!(
+        "s.record=false; s.resetViewTransform(); s.clear(0xffff0000); s.fillRect(0,0,12,4,0xff0000ff); s.saveImage('{rotated_name}','image/png',%[transform:Layer.EncoderValueTransformRotate90]); global.bitmap=new GdiPlus.Image('{rotated_name}');"
+    ));
+    assert_eq!(value("bitmap.GetWidth()*100+bitmap.GetHeight()"), 812);
+    assert_eq!(value("s.getMainPixel(2,2)"), 0xff0000);
+    run(&format!("s.setImageSize(8,12); s.setClip(0,0,8,12); s.loadRecord('{rotated_name}');"));
+    assert_eq!(value("s.getMainPixel(2,2)"), 255);
+    assert_eq!(value("s.getMainPixel(6,2)"), 0xff0000);
+    std::fs::remove_file(rotated).unwrap();
+
+    let invalid = emf.with_extension("invalid.emf");
+    std::fs::write(&invalid, [1, 0, 0, 0]).unwrap();
+    run(&format!("global.rejected=0; try {{ s.loadRecord('{}'); }} catch(e) {{ rejected=1; }}", invalid.display()));
+    assert_eq!(value("rejected"), 1);
+    assert_eq!(value("s.getMainPixel(2,2)"), 255);
+    run("s.translateViewTransform(1,0);");
+    assert_eq!(value("s.getMaskPixel(0,2)"), 0);
+    assert_eq!(value("s.getMainPixel(3,2)"), 255);
+    std::fs::remove_file(invalid).unwrap();
     std::fs::remove_file(emf).unwrap();
-    run("global.rejected=0; try { s.loadRecord('nonexistent.emf'); } catch(e) { rejected=1; }");
-    assert_eq!(value("rejected"),1);
     drop(engine);
     unsafe { sys::krkr_engine_shutdown() };
 }
