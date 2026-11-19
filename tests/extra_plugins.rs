@@ -112,6 +112,41 @@ fn layer_ex_draw_primitives_gpu() {
     assert_eq!(value("s.getMaskPixel(2,2)"),255);
     run("app.clear(); bounds=s.drawRectangle(app,1,1,4,3);");
     assert_eq!(value("int(bounds.width+bounds.height)"), 0);
+
+    run("s.clear(0); app.addPen(0xffffffff,300); s.drawLine(app,2,4,6,4);");
+    assert_eq!(value("s.getMaskPixel(4,1)"), 255);
+    assert_eq!(value("s.getMaskPixel(1,1)"), 0);
+
+    run(r#"
+        w.setInnerSize(32,24); w.visible=true;
+        s.setImageSize(32,24); s.setSizeToImageSize(); s.clear(0xff0000ff);
+        global.dirty=new Layer(w,s); dirty.type=ltAlpha;
+        dirty.setImageSize(16,16); dirty.setSize(8,8);
+        dirty.setImagePos(-3,-2); dirty.setPos(4,3); dirty.visible=true;
+        dirty.clear(0); dirty.setClip(6,4,2,2);
+        app.clear(); app.addBrush(0xff00ff00);
+    "#);
+    let previous = frame();
+    #[cfg(feature = "test-render-stats")]
+    let before = bevy_krkr::plugin::render::stats().unwrap();
+    run("dirty.drawRectangle(app,5.5,3.5,3,3);");
+    let updated = frame();
+    for y in 0..24 {
+        for x in 0..32 {
+            let index = (y * 32 + x) * 4;
+            let expected = if (7..9).contains(&x) && (5..7).contains(&y) {
+                &[0, 255, 0, 255]
+            } else {
+                &previous[index..index + 4]
+            };
+            assert_eq!(&updated[index..index + 4], expected, "pixel ({x}, {y})");
+        }
+    }
+    #[cfg(feature = "test-render-stats")]
+    {
+        let after = bevy_krkr::plugin::render::stats().unwrap();
+        assert_eq!(after.scene_copy_pixels - before.scene_copy_pixels, 4);
+    }
     drop(engine);
     unsafe { sys::krkr_engine_shutdown() };
 }
