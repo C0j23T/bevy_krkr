@@ -172,13 +172,32 @@ fn geometry_path_transform_alpha_and_stroke() {
     run("s.clear(0); app.clear(); app.addPen(0xffffffff,%[width:6,compoundArray:[0,0.2,0.8,1]]); s.drawLine(app,4,16,24,16);");
     assert_eq!(value("s.getMaskPixel(12,16)"),0);
     let emf=std::env::temp_dir().join(format!("krkr-layerexdraw-{}.emf",std::process::id()));
-    run("s.record=true; s.clear(0); app.clear(); app.addBrush(0xff20a040); s.drawRectangle(app,2,3,6,5);");
+    run(r#"
+        global.layerPixels=function(layer,width,height) {
+            var pixels=[];
+            for(var y=0; y<height; ++y) {
+                for(var x=0; x<width; ++x) {
+                    pixels.push(layer.getMaskPixel(x,y)*0x1000000+layer.getMainPixel(x,y));
+                }
+            }
+            return pixels.join(',');
+        };
+        s.record=true; s.clear(0); app.clear(); app.addBrush(0xff20a040); s.drawRectangle(app,2,3,6,5);
+        app.clear(); app.addBrush(0x80804020); s.drawEllipse(app,12.5,4.5,8,7);
+    "#);
+    let snapshot = || engine.eval("layerPixels(s,32,32)").unwrap();
+    let original = snapshot();
+    run("s.redrawRecord();");
+    assert_eq!(snapshot(), original);
     run(&format!("s.saveRecord('{}'); s.record=false; s.clear(0); s.loadRecord('{}');",emf.display(),emf.display()));
+    assert_eq!(snapshot(), original);
     assert_eq!(value("s.getMainPixel(4,5)"),0x40a020);
     run(&format!("global.metafile=new GdiPlus.Image('{}'); s.record=false; s.clear(0); s.drawImageStretch(0,0,64,64,metafile,0,0,32,32);",emf.display()));
     assert_eq!(value("s.getMainPixel(8,10)"),0x40a020);
     run("s.record=true; s.clear(0); s.drawImageStretch(0,0,16,16,metafile,2,3,6,5);");
+    let nested = snapshot();
     run(&format!("s.saveRecord('{}'); s.record=false; s.clear(0); s.loadRecord('{}');",emf.display(),emf.display()));
+    assert_eq!(snapshot(), nested);
     assert_eq!(value("s.getMainPixel(10,10)"),0x40a020);
     assert_eq!(value("s.getMaskPixel(18,10)"),0);
     run("s.record=false; s.clear(0);");
