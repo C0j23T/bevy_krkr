@@ -105,6 +105,21 @@ fn geometry_path_transform_alpha_and_stroke() {
     let mut left=0;
     for y in 0..24 { for x in 0..10 { left+=value(&format!("s.getMaskPixel({x},{y})")); } }
     assert_eq!(left,0);
+    let fonts = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/layer_ex_draw");
+    run(&format!(
+        "GdiPlus.addPrivateFont('{fonts}/layer-test-latin.ttf'); GdiPlus.addPrivateFont('{fonts}/layer-test-fallback.ttf');"
+    ));
+    let fallback_character = '\u{e123}';
+    run(&format!(r#"
+        s.resetTransform(); s.clear(0);
+        global.privateFont=new GdiPlus.Font("Layer Test Latin",20,0);
+        global.metrics=s.measureStringInternal(privateFont,"A");
+        global.fallbackMetrics=s.measureStringInternal(privateFont,"{fallback_character}");
+        s.drawString(privateFont,app,2,1,"{fallback_character}");
+    "#));
+    assert_eq!(value("int(metrics.width)"), 12);
+    assert!((value("int(fallbackMetrics.width * 100)") - 1500).abs() <= 2);
+    assert!(value("s.getMaskPixel(9,10)") > 200);
     run(r#"
         s.resetTransform(); s.record=true; s.clear(0); app.clear(); app.addBrush(0xff00ff00);
         s.drawRectangle(app,2,3,4,5); app.clear();

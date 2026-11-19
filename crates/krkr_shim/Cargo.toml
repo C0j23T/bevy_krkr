@@ -10,9 +10,11 @@ publish     = false
 name = "krkr_shim"
 
 [dependencies]
+ttf-parser = "0.25"
 fontdb = "0.23"
 harfrust = "0.12"
 unicode-bidi = "0.3"
+unicode-segmentation = "1"
 unicode-script = "0.5"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 krkr_storage = { path = "../krkr_storage" }

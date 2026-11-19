@@ -51,40 +51,62 @@ pub unsafe extern "C" fn krkr_host_font_face(
     })
 }
 
+#[repr(C)]
+pub struct DrawingFace {
+    bytes: *const u8,
+    length: usize,
+    index: u32,
+}
+type GlyphVisitor =
+    unsafe extern "C" fn(*mut c_void, *const u8, usize, u32, *const PositionedGlyph, usize) -> bool;
+
+/// # Safety
+/// Font bytes and UTF-16 text must remain readable until all synchronous callbacks return.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_host_shape_line(
-    bytes: *const u8,
-    len: usize,
-    index: u32,
+    faces: *const DrawingFace,
+    face_count: usize,
     text: *const u16,
     count: usize,
-    output: *mut *mut PositionedGlyph,
-    glyph_count: *mut usize,
+    style: u32,
+    context: *mut c_void,
+    visit: GlyphVisitor,
 ) -> bool {
     guard(false, || {
-        if bytes.is_null() || text.is_null() || output.is_null() || glyph_count.is_null() {
+        if faces.is_null() || text.is_null() || !(1..=513).contains(&face_count) {
             return false;
         }
-        let text = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, count) });
-        let Some(glyphs) = font::shape_line(
-            unsafe { std::slice::from_raw_parts(bytes, len) },
-            index,
-            &text,
-        ) else {
+        let faces: Option<Vec<_>> = unsafe { std::slice::from_raw_parts(faces, face_count) }
+            .iter()
+            .map(|f| {
+                (!f.bytes.is_null()).then(|| {
+                    (
+                        unsafe { std::slice::from_raw_parts(f.bytes, f.length) },
+                        f.index,
+                    )
+                })
+            })
+            .collect();
+        let Some(faces) = faces else {
             return false;
         };
-        let slice = glyphs.into_boxed_slice();
-        unsafe {
-            *glyph_count = slice.len();
-            *output = Box::into_raw(slice).cast();
-        }
-        true
+        let text = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, count) });
+        font::shape_runs(&faces, &text, style, |bytes, index, glyphs| {
+            if unsafe {
+                visit(
+                    context,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    index,
+                    glyphs.as_ptr(),
+                    glyphs.len(),
+                )
+            } {
+                Ok(())
+            } else {
+                Err("glyph callback failed".into())
+            }
+        })
+        .is_ok()
     })
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn krkr_host_release_glyphs(output: *mut PositionedGlyph, count: usize) {
-    if !output.is_null() {
-        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(output, count)) });
-    }
 }
