@@ -2,17 +2,81 @@
 #include <gdiplus.h>
 #include <gdiplusflat.h>
 #include <stdio.h>
-static int records=0,paths=0,pens=0,brushes=0,draws=0;
-static BOOL CALLBACK visit(EmfPlusRecordType type,UINT flags,UINT size,const BYTE *data,void *context) {
- GpMetafile *meta=context; records++; if(type==EmfPlusRecordTypeObject) { if((flags>>8&127)==3)paths++;if((flags>>8&127)==2)pens++;if((flags>>8&127)==1)brushes++; }
- if(type==EmfPlusRecordTypeDrawPath||type==EmfPlusRecordTypeFillPath)draws++;
- Status s=GdipPlayMetafileRecord(meta,type,flags,size,data); if(s)printf("play failed type %x status %d\n",type,s); return TRUE;
+
+struct playback {
+    GpMetafile *metafile;
+    int records, paths, pens, brushes, draws, errors;
+};
+
+static BOOL CALLBACK visit(EmfPlusRecordType type, UINT flags, UINT size,
+                           const BYTE *data, void *context) {
+    struct playback *playback = context;
+    ++playback->records;
+    if (type == EmfPlusRecordTypeObject) {
+        switch ((flags >> 8) & 127) {
+        case 1: ++playback->brushes; break;
+        case 2: ++playback->pens; break;
+        case 3: ++playback->paths; break;
+        }
+    }
+    if (type == EmfPlusRecordTypeDrawPath || type == EmfPlusRecordTypeFillPath)
+        ++playback->draws;
+    Status status = GdipPlayMetafileRecord(playback->metafile, type, flags, size, data);
+    if (status != Ok) {
+        fprintf(stderr, "record %x returned %d\n", type, status);
+        ++playback->errors;
+    }
+    return TRUE;
 }
-int main(void) {
- struct GdiplusStartupInput input={1,NULL,FALSE,FALSE}; ULONG_PTR token; GdiplusStartup(&token,&input,NULL);
- GpMetafile *meta; Status s=GdipCreateMetafileFromFile(L"Z:\\tmp\\layerexdraw-reencoded.emf",&meta); if(s){printf("open %d\n",s);return 1;}
- GpBitmap *bitmap; GpGraphics *graphics; GdipCreateBitmapFromScan0(64,48,0,PixelFormat32bppARGB,NULL,&bitmap);GdipGetImageGraphicsContext((GpImage*)bitmap,&graphics);
- GpRectF dest={0,0,64,48};s=GdipEnumerateMetafileDestRect(graphics,meta,&dest,visit,meta,NULL);printf("enumerate %d records %d paths %d pens %d brushes %d draws %d\n",s,records,paths,pens,brushes,draws);
- ARGB color;GdipBitmapGetPixel(bitmap,20,30,&color);printf("sample pixel %08x\n",color);
- GdipDeleteGraphics(graphics);GdipDisposeImage((GpImage*)bitmap);GdipDisposeImage((GpImage*)meta);GdiplusShutdown(token);return s||paths!=2||pens!=1||brushes!=1||draws!=2;
+
+#define CHECK(expr) do { \
+    Status status = (expr); \
+    if (status != Ok) { fprintf(stderr, "%s returned %d\n", #expr, status); return 1; } \
+} while (0)
+
+static int render(const char *path, struct playback *playback, ARGB *pixels) {
+    WCHAR filename[MAX_PATH];
+    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, filename, MAX_PATH))
+        return 1;
+    CHECK(GdipCreateMetafileFromFile(filename, &playback->metafile));
+    GpBitmap *bitmap;
+    GpGraphics *graphics;
+    CHECK(GdipCreateBitmapFromScan0(64, 48, 0, PixelFormat32bppARGB, NULL, &bitmap));
+    CHECK(GdipGetImageGraphicsContext((GpImage *)bitmap, &graphics));
+    GpRectF dest = {0, 0, 64, 48};
+    CHECK(GdipEnumerateMetafileDestRect(graphics, playback->metafile, &dest, visit, playback, NULL));
+    for (int y = 0; y < 48; ++y)
+        for (int x = 0; x < 64; ++x)
+            CHECK(GdipBitmapGetPixel(bitmap, x, y, &pixels[y * 64 + x]));
+    GdipDeleteGraphics(graphics);
+    GdipDisposeImage((GpImage *)bitmap);
+    GdipDisposeImage((GpImage *)playback->metafile);
+    return playback->errors != 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc != 3)
+        return 1;
+    struct GdiplusStartupInput input = {1, NULL, FALSE, FALSE};
+    ULONG_PTR token;
+    CHECK(GdiplusStartup(&token, &input, NULL));
+    struct playback original = {0}, exported = {0};
+    ARGB reference[64 * 48], actual[64 * 48];
+    if (render(argv[1], &original, reference) || render(argv[2], &exported, actual))
+        return 1;
+    GdiplusShutdown(token);
+
+    int different = 0, covered = 0;
+    for (int i = 0; i < 64 * 48; ++i) {
+        different += reference[i] != actual[i];
+        covered += reference[i] != reference[0];
+    }
+    printf("exported records %d paths %d pens %d brushes %d draws %d, differing pixels %d/%d, reference non-background pixels %d\n",
+           exported.records, exported.paths, exported.pens, exported.brushes, exported.draws,
+           different, 64 * 48, covered);
+    printf("sample pixels %08x/%08x (background), %08x/%08x (20,30)\n",
+           reference[0], actual[0], reference[30 * 64 + 20], actual[30 * 64 + 20]);
+    return covered == 0 || different != 0 ||
+           exported.paths != 2 || exported.pens != 1 ||
+           exported.brushes != 1 || exported.draws != 2;
 }

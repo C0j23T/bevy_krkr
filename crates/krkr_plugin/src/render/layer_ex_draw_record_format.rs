@@ -576,11 +576,19 @@ fn brush_read(r: &mut Reader<'_>, images: &mut HashMap<u64, Bitmap>) -> Result<P
     Ok(p)
 }
 
-fn pen_write(p: &Paint, images: &HashMap<u64, Bitmap>) -> Result<Vec<u8>, String> {
+const DASH_PATTERNS: [&[f64]; 5] = [
+    &[],
+    &[3., 1.],
+    &[1., 1.],
+    &[3., 1., 1., 1.],
+    &[3., 1., 1., 1., 1., 1.],
+];
 
+fn pen_write(p: &Paint, images: &HashMap<u64, Bitmap>) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     u32w(&mut out, VERSION);
     u32w(&mut out, 0);
+    let style = DASH_PATTERNS.iter().position(|&pattern| pattern == p.dashes).unwrap_or(5);
     let flags = 2
         | 4
         | 8
@@ -588,22 +596,23 @@ fn pen_write(p: &Paint, images: &HashMap<u64, Bitmap>) -> Result<Vec<u8>, String
         | 64
         | 128
         | 512
-        | if p.dashes.is_empty() { 0 } else { 32 | 256 }
+        | if style == 0 { 0 } else { 32 }
+        | if style == 5 { 256 } else { 0 }
         | if p.compound.is_empty() { 0 } else { 1024 }
         | if p.start_cap==255 { 2048 } else { 0 } | if p.end_cap==255 { 4096 } else { 0 };
     u32w(&mut out, flags);
-    u32w(&mut out, 2);
+    u32w(&mut out, if p.width == 0. { 2 } else { 0 });
     floats(&mut out, [p.width])?;
     for v in [p.start_cap, p.end_cap, p.join] {
         u32w(&mut out, v);
     }
     floats(&mut out, [p.miter_limit])?;
-    if !p.dashes.is_empty() {
-        u32w(&mut out, 5);
+    if style != 0 {
+        u32w(&mut out, style as u32);
     }
     u32w(&mut out, p.dash_cap);
     floats(&mut out, [p.dash_offset])?;
-    if !p.dashes.is_empty() {
+    if style == 5 {
         u32w(&mut out, p.dashes.len() as u32);
         floats(&mut out, p.dashes.iter().copied())?;
     }
@@ -645,13 +654,10 @@ fn pen_read(bytes: &[u8], images: &mut HashMap<u64, Bitmap>) -> Result<Paint, St
     let style = if flags & 32 != 0 { r.u32()? } else { 0 };
     let dash_cap = if flags & 64 != 0 { r.u32()? } else { 0 };
     let offset = if flags & 128 != 0 { r.f32()? } else { 0. };
-    let mut dashes = match style {
-        0 | 5 => vec![],
-        1 => vec![3., 1.],
-        2 => vec![1., 1.],
-        3 => vec![3., 1., 1., 1.],
-        4 => vec![3., 1., 1., 1., 1., 1.],
-        _ => return Err("invalid pen line style".into()),
+    let mut dashes = if style == 5 {
+        Vec::new()
+    } else {
+        DASH_PATTERNS.get(style as usize).ok_or("invalid pen line style")?.to_vec()
     };
     if flags & 256 != 0 {
         let n = r.count(4096)?;
@@ -820,9 +826,12 @@ pub(super) fn encode(record: &Record) -> Result<Vec<u8>, String> {
     plus(&mut data, 0x4001, 0, &header);
     plus(&mut data, 0x4030, 2, &1f32.to_le_bytes());
     plus(&mut data, 0x4009, 0, &record.background.to_le_bytes());
-    for item in &record.operations {
+    for (index, item) in record.operations.iter().enumerate() {
         let request = &item.draw;
-        plus(&mut data, 0x4031, 0, &[]);
+        let state_id = (index as u32 + 1).to_le_bytes();
+        if !item.clips.is_empty() {
+            plus(&mut data, 0x4025, 0, &state_id);
+        }
         for clip in &item.clips {
             let mut matrix = Vec::new();
             floats(&mut matrix, clip.transform)?;
@@ -863,6 +872,9 @@ pub(super) fn encode(record: &Record) -> Result<Vec<u8>, String> {
                 object(&mut data, 1, 1, &brush_write(&paint, &record.images)?);
                 plus(&mut data, 0x4014, 0, &1u32.to_le_bytes());
             }
+        }
+        if !item.clips.is_empty() {
+            plus(&mut data, 0x4026, 0, &state_id);
         }
         if data.len() > MAX_BYTES {
             return Err("metafile resource limit".into());
@@ -1419,6 +1431,55 @@ mod tests {
         assert_eq!(record.operations[1].draw.paints[0].dashes, [3., 1.]);
         assert_eq!(record.operations[1].draw.paints[0].width, 2.5);
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires Wine, winegcc, and a graphical session"]
+    fn wine_gdiplus_plays_exported_metafile() {
+        use std::{fs, path::Path, process::Command};
+
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/layer_ex_draw");
+        let original = fixture.join("wine-path.emf");
+        let directory = std::env::temp_dir().join(format!("krkr-layerexdraw-wine-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let scratch = Scratch(directory);
+        let exported = scratch.0.join("exported.emf");
+        let record = decode(&fs::read(&original).unwrap()).unwrap();
+        fs::write(&exported, encode(&record).unwrap()).unwrap();
+        let status = Command::new("winegcc")
+            .arg(fixture.join("validate-wine.c"))
+            .arg("-o")
+            .arg(scratch.0.join("validate"))
+            .arg("-lgdiplus")
+            .status()
+            .unwrap();
+        assert!(status.success(), "winegcc returned {status}");
+        let windows_path = |path: &Path| {
+            let output = Command::new("winepath")
+                .args(["-w"])
+                .arg(path)
+                .env("WINEDEBUG", "-all")
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            String::from_utf8(output.stdout).unwrap().trim_end().to_owned()
+        };
+        let status = Command::new(scratch.0.join("validate.exe"))
+            .arg(windows_path(&original))
+            .arg(windows_path(&exported))
+            .env("WINEDEBUG", "-all")
+            .status()
+            .unwrap();
+        assert!(status.success(), "Wine validator returned {status}");
+    }
+
     #[test]
     fn emfplus_vector_roundtrip() {
         let mut record = Record::new(32, 24, 0xff102030).unwrap();

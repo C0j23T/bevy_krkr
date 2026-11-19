@@ -23,7 +23,7 @@ text record with the object layouts in
 
 ```sh
 winegcc crates/krkr_plugin/tests/fixtures/layer_ex_draw/generate-mixed.c -o /tmp/layerexdraw-mixed-reference -lgdiplus
-xvfb-run -a env WINEDEBUG=-all /tmp/layerexdraw-mixed-reference.exe
+WINEDEBUG=-all /tmp/layerexdraw-mixed-reference.exe
 cp /tmp/layerexdraw-mixed.emf crates/krkr_plugin/tests/fixtures/layer_ex_draw/wine-mixed.emf
 ```
 
@@ -36,18 +36,15 @@ Microsoft's Open Specifications copyright notice permits distributing portions
 of the documentation needed to implement or document the specified technology.
 The bytes are a protocol example, not third-party parser source.
 
-`validate-wine.c` independently opens and plays a Rust-produced file at
-`Z:\tmp\layerexdraw-reencoded.emf`, enumerating object and drawing records.
-Generate that file by decoding `wine-path.emf` with the format module and
-encoding the returned record. Compile and execute the validator with:
+`validate-wine.c` opens the original path fixture and the Rust export in
+Wine GDI+. The validator checks every playback status, counts the exported
+path and drawing records, and compares the two 64×48 pixel buffers. Run it
+in a graphical Linux session with Wine development tools:
 
 ```sh
-winegcc crates/krkr_plugin/tests/fixtures/layer_ex_draw/validate-wine.c -o /tmp/layerexdraw-record-reader -lgdiplus
-WINEDEBUG=-all /tmp/layerexdraw-record-reader.exe
+cargo test -p krkr_plugin --lib wine_gdiplus_plays_exported_metafile -- --ignored --nocapture
 ```
 
-The checked checkpoint accepts 16 EMF+ records, including two path objects,
-one brush, one pen, and two path draws; enumeration and every PlayMetafileRecord
-return success. This proves external structural acceptance, not pixel equality.
-Continued-object tests currently construct records from the specification;
-there is no external continued-object fixture yet.
+Wine 11.22 plays all 18 records in the exported path sample, including two
+paths, one brush, one pen and two drawing records. All 3,072 pixels match.
+Continued-object tests use records constructed from the specification.
