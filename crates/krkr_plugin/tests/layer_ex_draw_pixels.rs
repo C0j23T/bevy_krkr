@@ -181,6 +181,21 @@ fn vello_paths_alpha_clip_transform_gradient_stroke_and_external_gpu_image() {
     let pixels = read(1);
     near(&pixels[..4], [239, 0, 16, 255]);
     near(&pixels[28..32], [16, 0, 239, 255]);
+    let blend = [0., 1.];
+    for blend_count in [0, 2] {
+        for (brush_flags, midpoint) in [(0, 128), (1, 188)] {
+            let gradient = DrawPaint {
+                coordinates: [0., 0., 7., 0.],
+                blend_count,
+                blend_positions: blend.as_ptr(),
+                blend_factors: blend.as_ptr(),
+                brush_flags,
+                ..gradient
+            };
+            draw(&path, &[gradient], IDENTITY, [0, 0, 8, 8], 0);
+            near(&read(1)[12..16], [midpoint, 0, midpoint, 255]);
+        }
+    }
     upload(1, [0; 4]);
     let line = [
         PathElement {
@@ -251,6 +266,24 @@ fn vello_paths_alpha_clip_transform_gradient_stroke_and_external_gpu_image() {
     draw(&path, &[crop], IDENTITY, [0, 0, 8, 8], 0);
     for p in read(1).chunks_exact(4) {
         near(p, [0, 255, 0, 255]);
+    }
+    let mut stripes = [0, 0, 255, 255u8].repeat(64);
+    for row in stripes.chunks_exact_mut(32) {
+        row[..16].copy_from_slice(&[255, 0, 0, 255].repeat(4));
+    }
+    let mut source = command(2, 2);
+    source.data = stripes.as_mut_ptr().cast();
+    dispatch(source);
+    upload(1, [0; 4]);
+    draw(&path, &[image], [0., 1., -1., 0., 8., 0.], [1, 1, 7, 7], 0);
+    let pixels = read(1);
+    for (x, y, expected) in [
+        (3, 2, [255, 0, 0, 255]),
+        (3, 5, [0, 0, 255, 255]),
+        (0, 2, [0; 4]),
+        (3, 7, [0; 4]),
+    ] {
+        near(&pixels[(y * 8 + x) * 4..][..4], expected);
     }
     for style in 0..53 {
         upload(1, [0; 4]);
