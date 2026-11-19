@@ -2,6 +2,7 @@
 @group(0) @binding(1) var previous: texture_2d<f32>;
 @group(0) @binding(2) var output: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(3) var<uniform> settings: vec4<u32>;
+@group(0) @binding(4) var coverage: texture_2d<f32>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let q = vec2<i32>(gid.xy);
@@ -12,15 +13,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let d = textureLoad(previous, q, 0);
-    if (s.a == 0.0) { textureStore(output, q, d); return; }
-    let a = s.a + d.a * (1.0 - s.a);
+    let covered = select(s.a, textureLoad(coverage, q, 0).a, settings.y != 0u);
+    if (covered == 0.0) { textureStore(output, q, d); return; }
+    let a = s.a + d.a * (1.0 - covered);
     var result = vec4(0.0);
     if (settings.x == 0u && a > 0.0) {
-        result = vec4((s.rgb + d.rgb * d.a * (1.0 - s.a)) / a, a);
+        result = vec4((s.rgb + d.rgb * d.a * (1.0 - covered)) / a, a);
     } else if (settings.x == 1u) {
-        result = vec4(s.rgb + d.rgb * (1.0 - s.a), a);
+        result = vec4(s.rgb + d.rgb * (1.0 - covered), a);
     } else if (settings.x == 2u) {
-        result = vec4(s.rgb + d.rgb * (1.0 - s.a), 1.0);
+        result = vec4(s.rgb + d.rgb * (1.0 - covered), 1.0);
     }
     textureStore(output, q, clamp(result, vec4(0.0), vec4(1.0)));
 }

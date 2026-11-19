@@ -250,6 +250,7 @@ impl KrkrRenderer {
         source: &PooledTexture,
         previous: &PooledTexture,
         mode: u32,
+        coverage:Option<&PooledTexture>,
     ) -> PooledTexture {
         use bevy::render::render_resource::{BufferInitDescriptor, BufferUsages};
         let output = self.texture_pool.acquire(
@@ -259,7 +260,7 @@ impl KrkrRenderer {
         );
         let settings = self.device.create_buffer_with_data(&BufferInitDescriptor {
             label: Some("LayerExDraw alpha mode"),
-            contents: bytemuck::cast_slice(&[mode, 0u32, 0, 0]),
+            contents: bytemuck::cast_slice(&[mode, u32::from(coverage.is_some()), 0, 0]),
             usage: BufferUsages::UNIFORM,
         });
         let group = self
@@ -285,6 +286,12 @@ impl KrkrRenderer {
                         binding: 3,
                         resource: settings.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(
+                            &coverage.unwrap_or(source).default_view,
+                        ),
+                    },
                 ],
             });
         let mut pass = self
@@ -301,20 +308,49 @@ impl KrkrRenderer {
         output
     }
 
-    pub(super) fn draw_layer_ex(&mut self, request: &DrawRequest) -> Result<[f64; 4], String> {
-        self.draw_layer_ex_clipped(request, &[])
+    fn render_layer_ex_scene(
+        &mut self,
+        backend: &mut Backend,
+        scene: &Scene,
+        bindings: &vello_gpu::TextureBindings,
+        width: u16,
+        height: u16,
+    ) -> Result<PooledTexture, String> {
+        let rendered = self
+            .texture_pool
+            .acquire(&self.device, width.into(), height.into());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("LayerExDraw Vello render"),
+            });
+        let _submission = super::super::surface_sync::lock();
+        backend
+            .renderer
+            .render(
+                scene,
+                &mut backend.resources,
+                &mut encoder,
+                vello_gpu::RenderTarget {
+                    view: &rendered.default_view,
+                    depth_view: None,
+                },
+                bindings,
+                vello_gpu::RenderOptions::default(),
+            )
+            .map_err(|error| error.to_string())?;
+        self.queue.submit([encoder.finish()]);
+        Ok(rendered)
     }
 
-    pub(super) fn draw_layer_ex_clipped(
-        &mut self,
+    fn layer_ex_scene(
+        &self,
         request: &DrawRequest,
         clips: &[(BezPath, Fill)],
-    ) -> Result<[f64; 4], String> {
-        let target = self.texture(request.target)?;
-        let width =
-            u16::try_from(target.texture.width()).map_err(|_| "LayerExDraw target too wide")?;
-        let height =
-            u16::try_from(target.texture.height()).map_err(|_| "LayerExDraw target too tall")?;
+        width: u16,
+        height: u16,
+        coverage: bool,
+    ) -> Result<(Scene, Rect, bool), String> {
         let path = bez_path(&request.path);
         let mut scene = Scene::new(width, height);
         if request.flags & 1 != 0 {
@@ -370,6 +406,7 @@ impl KrkrRenderer {
             scene.set_transform(transform);
             scene.set_paint_transform(paint_transform);
             match paint.brush_type {
+                _ if coverage => scene.set_paint(color(0xffffffff)),
                 0 => scene.set_paint(color(paint.colors[0])),
                 1 => {
                     if !hatch::supported(paint.hatch) {
@@ -536,14 +573,35 @@ impl KrkrRenderer {
             scene.pop_clip();
         }
         scene.pop_clip();
-        if clip_left == clip_right
+        let empty = clip_left == clip_right
             || clip_top == clip_bottom
-            || request.paints.is_empty()
             || path.is_empty()
-        {
-            let bounds = bounds.unwrap_or_default();
-            return Ok([bounds.x0, bounds.y0, bounds.width(), bounds.height()]);
+            || request.paints.is_empty();
+        Ok((scene, bounds.unwrap_or_default(), empty))
+    }
+
+    pub(super) fn draw_layer_ex(&mut self, request: &DrawRequest) -> Result<[f64; 4], String> {
+        self.draw_layer_ex_clipped(request, &[])
+    }
+
+    pub(super) fn draw_layer_ex_clipped(
+        &mut self,
+        request: &DrawRequest,
+        clips: &[(BezPath, Fill)],
+    ) -> Result<[f64; 4], String> {
+        let target = self.texture(request.target)?;
+        let width =
+            u16::try_from(target.texture.width()).map_err(|_| "LayerExDraw target too wide")?;
+        let height =
+            u16::try_from(target.texture.height()).map_err(|_| "LayerExDraw target too tall")?;
+        let (scene, bounds, empty) = self.layer_ex_scene(request, clips, width, height, false)?;
+        let bounds = [bounds.x0, bounds.y0, bounds.width(), bounds.height()];
+        if empty {
+            return Ok(bounds);
         }
+        let coverage = (request.flags & 2 != 0)
+            .then(|| self.layer_ex_scene(request, clips, width, height, true))
+            .transpose()?;
         self.flush();
         let mut backend = self
             .layer_ex_draw
@@ -596,7 +654,7 @@ impl KrkrRenderer {
                     2 => {
                         let source = self.texture(paint.image)?;
                         if native_crop(paint.coordinates, source.texture.width(), source.texture.height()) {
-                            self.convert_draw_texture(&backend, &source, &source, 3)
+                            self.convert_draw_texture(&backend, &source, &source, 3, None)
                         } else {
                             self.prepare_draw_paint(&backend, request, paint, width.into(), height.into())?
                         }
@@ -612,34 +670,20 @@ impl KrkrRenderer {
                 }
             }
             self.flush();
-            let rendered = self
-                .texture_pool
-                .acquire(&self.device, width.into(), height.into());
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("LayerExDraw Vello render"),
-                });
-            {
-                let _submission = super::super::surface_sync::lock();
-                backend
-                    .renderer
-                    .render(
-                        &scene,
-                        &mut backend.resources,
-                        &mut encoder,
-                        vello_gpu::RenderTarget {
-                            view: &rendered.default_view,
-                            depth_view: None,
-                        },
-                        &bindings,
-                        vello_gpu::RenderOptions::default(),
+            let rendered = self.render_layer_ex_scene(&mut backend, &scene, &bindings, width, height)?;
+            let mask = coverage
+                .as_ref()
+                .map(|(scene, _, _)| {
+                    self.render_layer_ex_scene(
+                        &mut backend, scene, &vello_gpu::TextureBindings::new(), width, height,
                     )
-                    .map_err(|error| error.to_string())?;
-                self.queue.submit([encoder.finish()]);
-            }
+                })
+                .transpose()?;
             let output =
-                self.convert_draw_texture(&backend, &rendered, &target, request.alpha_mode);
+                self.convert_draw_texture(&backend, &rendered, &target, request.alpha_mode, mask.as_ref());
+            if let Some(texture) = mask {
+                self.texture_pool.retire(texture);
+            }
             if let Some(previous) = self.textures.insert(request.target, output) {
                 self.texture_pool.retire(previous);
             }
@@ -648,8 +692,7 @@ impl KrkrRenderer {
                 self.texture_pool.retire(source);
             }
             self.flush();
-            let bounds = bounds.unwrap_or_default();
-            Ok([bounds.x0, bounds.y0, bounds.width(), bounds.height()])
+            Ok(bounds)
         })();
         self.layer_ex_draw = Some(backend);
         result

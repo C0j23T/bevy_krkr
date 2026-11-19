@@ -549,6 +549,40 @@ mod tests {
             }
         }
         krkr_layer_ex_record_release(copy);
+
+        let mut content = Record::new(8, 8, 0xff0000ff).unwrap();
+        let mut solid = paint;
+        solid.brush_type = 0;
+        solid.colors = [0; 2];
+        let mut operation = operation;
+        operation.paints = &solid;
+        operation.transform[4] = 2.5;
+        let mut draw = unsafe { krkr_shim::layer_ex_draw::DrawRequest::copy(&operation) }.unwrap();
+        draw.flags = 2;
+        content.operations.push(RecordedDraw { draw, clips: Vec::new() });
+        let encoded = format::encode(&content).unwrap();
+        let mut source_copy = 0;
+        assert_eq!(
+            unsafe { krkr_layer_ex_record_decode(encoded.as_ptr().cast(), encoded.len(), &mut source_copy) },
+            0
+        );
+        for (alpha_mode, edge, inside) in [
+            (0, [0, 0, 255, 127], [0; 4]),
+            (1, [0, 0, 127, 127], [0; 4]),
+            (2, [0, 0, 127, 255], [0, 0, 0, 255]),
+        ] {
+            replay(source_copy, 1002, [0, 0, 8, 8], format::IDENTITY, alpha_mode, None).unwrap();
+            let mut guard = RENDERER_INSTANCE.lock().unwrap();
+            let renderer = guard.as_mut().unwrap();
+            let mut rgba = [0u8; 256];
+            unsafe { renderer.read(1002, 4, 32, rgba.as_mut_ptr()) }.unwrap();
+            let pixel = |x: usize| &rgba[(3 * 8 + x) * 4..][..4];
+            assert_eq!(pixel(1), &[0, 0, 255, 255]);
+            assert_eq!(pixel(3), &inside);
+            assert!(pixel(2).iter().zip(edge).all(|(&a, b)| a.abs_diff(b) <= 1), "{:?}", pixel(2));
+        }
+        krkr_layer_ex_record_release(source_copy);
+
         let mut guard = RENDERER_INSTANCE.lock().unwrap();
         unsafe { guard.as_mut().unwrap().execute(&command(1, 1002)) }.unwrap();
         guard.as_mut().unwrap().flush();

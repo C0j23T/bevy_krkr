@@ -839,6 +839,7 @@ pub(super) fn encode(record: &Record) -> Result<Vec<u8>, String> {
             if request.flags & 1 != 0 { 0 } else { 9 },
             &[],
         );
+        plus(&mut data, 0x4023, ((request.flags >> 1) & 1) as u16, &[]);
         for paint in &request.paints {
             let mut paint=paint.clone();
             paint.transform=multiply(paint.transform,[1.,0.,0.,1.,paint.offset[0],paint.offset[1]]);
@@ -1273,8 +1274,11 @@ impl<'a> Parser<'a> {
                 0x4036 => self.driver_string(flags,&mut r)?,
                 0x401a|0x401b => self.draw_image(kind, flags, &mut r)?,
                 0x401e => self.state.flags = (self.state.flags & !1) | u32::from(flags & 1 == 0),
-                0x4023 if flags & 255 != 0 => {
-                    return Err("EMF+ source-copy compositing is unsupported".into());
+                0x4023 => {
+                    if flags & 255 > 1 {
+                        return Err("invalid EMF+ compositing mode".into());
+                    }
+                    self.state.flags = (self.state.flags & !2) | (u32::from(flags & 1) << 1);
                 }
                 0x401f..=0x4024 => {}
                 0x4025 | 0x4027 | 0x4028 => {
