@@ -467,4 +467,78 @@ mod tests {
                 .all(|(&a, b)| a.abs_diff(b) <= 2)
         );
     }
+
+    #[test]
+    fn gif_version_and_interlace_preserve_row_order() {
+        let rgba: Vec<u8> = (0..10)
+            .flat_map(|row| [row * 20, 50, 255, if row == 2 { 0 } else { 255 }])
+            .collect();
+        for (version, magic, transparent) in [(9, b"GIF87a", false), (10, b"GIF89a", true)] {
+            let options = DrawingEncoder {
+                format: 1,
+                depth: 8,
+                compression: -1,
+                scan: 7,
+                version,
+                render: 0,
+                quality: 0,
+            };
+            let bytes = encode(&rgba, 1, 10, &options).unwrap();
+            assert_eq!(bytes.get(..6), Some(magic.as_slice()));
+            let mut gif = gif::DecodeOptions::new()
+                .read_info(Cursor::new(&bytes))
+                .unwrap();
+            assert!(gif.next_frame_info().unwrap().unwrap().interlaced);
+            let (_, loaded) = decode_drawing_bitmap(&bytes).unwrap();
+            for (row, (actual, expected)) in
+                loaded.chunks_exact(4).zip(rgba.chunks_exact(4)).enumerate()
+            {
+                if row == 2 {
+                    assert_eq!(actual[3], if transparent { 0 } else { 255 });
+                } else {
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tiff_compression_depth_and_jpeg_scan_are_encoded() {
+        use tiff::{decoder::Decoder, tags::Tag};
+        let rgba = [100, 30, 220, 128];
+        let mut options = DrawingEncoder {
+            format: 2,
+            depth: 32,
+            compression: 2,
+            scan: 0,
+            version: 0,
+            render: 0,
+            quality: 100,
+        };
+        for (compression, tag) in [(2, 5), (5, 32773), (6, 1)] {
+            options.compression = compression;
+            for (depth, alpha) in [(24, 255), (32, 128)] {
+                options.depth = depth;
+                let bytes = encode(&rgba, 1, 1, &options).unwrap();
+                let mut tiff = Decoder::new(Cursor::new(&bytes)).unwrap();
+                assert_eq!(tiff.get_tag_unsigned::<u16>(Tag::Compression).unwrap(), tag);
+                assert_eq!(
+                    decode_drawing_bitmap(&bytes).unwrap().1,
+                    [100, 30, 220, alpha]
+                );
+            }
+        }
+
+        options.format = 3;
+        for (render, frame_marker) in [(11, 0xc2), (12, 0xc0)] {
+            options.render = render;
+            let bytes = encode(&rgba, 1, 1, &options).unwrap();
+            assert!(
+                bytes
+                    .windows(2)
+                    .any(|marker| marker == [0xff, frame_marker])
+            );
+            assert_eq!(decode_drawing_bitmap(&bytes).unwrap().1[3], 255);
+        }
+    }
 }
