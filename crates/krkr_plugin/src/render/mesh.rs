@@ -1,33 +1,7 @@
 use bevy::{
-    asset::{AssetId, uuid::uuid},
     render::{render_resource::*, renderer::RenderDevice},
-    shader::{Shader, ShaderCache, ShaderCacheSource},
 };
 use krkr_shim::mesh::MeshRequest;
-
-fn raster_shader(device: &RenderDevice) -> std::sync::Arc<wgpu::ShaderModule> {
-    let mut shaders = ShaderCache::new(device.clone(), |device, source, _| {
-        let ShaderCacheSource::Wgsl(source) = source else {
-            unreachable!()
-        };
-        Ok(device
-            .wgpu_device()
-            .create_shader_module(ShaderModuleDescriptor {
-                label: Some("Kirikiri mesh raster"),
-                source: ShaderSource::Wgsl(source.into()),
-            }))
-    });
-    let id = AssetId::<Shader>::Uuid {
-        uuid: uuid!("a726401c-982f-4ea6-935b-25840c22b97f"),
-    };
-    shaders.set_shader(
-        id,
-        Shader::from_wesl(include_str!("mesh_raster.wesl"), "krkr/mesh_raster.wesl"),
-    );
-    shaders
-        .get(0, id, &[])
-        .expect("compile Kirikiri mesh shader")
-}
 
 pub(super) struct MeshPipelines {
     pub deform: ComputePipeline,
@@ -92,7 +66,7 @@ impl MeshPipelines {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let shader = raster_shader(device);
+        let shader = super::shader::standalone_shader(device, "krkr/mesh_raster.wesl", include_str!("mesh_raster.wesl"));
         let pipeline = |label, prepare, blend| {
             device
                 .wgpu_device()

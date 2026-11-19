@@ -12,6 +12,21 @@ use vello_gpu::{
     peniko::{Color, Extend, Fill, Gradient, ImageSampler, color::ColorSpaceTag},
 };
 
+pub(super) fn bez_path(elements: &[krkr_shim::layer_ex_draw::PathElement]) -> BezPath {
+        let mut path = BezPath::new();
+        for element in elements {
+            let p = element.points;
+            match element.verb {
+                0 => path.move_to((p[0], p[1])),
+                1 => path.line_to((p[0], p[1])),
+                2 => path.curve_to((p[0], p[1]), (p[2], p[3]), (p[4], p[5])),
+                3 => path.close_path(),
+                _ => unreachable!(),
+            }
+        }
+    path
+}
+
 pub(super) struct Backend {
     renderer: vello_gpu::Renderer,
     resources: vello_gpu::Resources,
@@ -22,37 +37,9 @@ pub(super) struct Backend {
     hatches: HashMap<(u32, [u32; 2]), PooledTexture>,
 }
 
-const CONVERT: &str = r#"
-@group(0) @binding(0) var source: texture_2d<f32>;
-@group(0) @binding(1) var previous: texture_2d<f32>;
-@group(0) @binding(2) var output: texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(3) var<uniform> settings: vec4<u32>;
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let q = vec2<i32>(gid.xy);
-    if (any(gid.xy >= textureDimensions(output))) { return; }
-    let s = textureLoad(source, q, 0);
-    if (settings.x == 3u) {
-        textureStore(output, q, vec4(s.rgb * s.a, s.a));
-        return;
-    }
-    let d = textureLoad(previous, q, 0);
-    if (s.a == 0.0) { textureStore(output, q, d); return; }
-    let a = s.a + d.a * (1.0 - s.a);
-    var result = vec4(0.0);
-    if (settings.x == 0u && a > 0.0) {
-        result = vec4((s.rgb + d.rgb * d.a * (1.0 - s.a)) / a, a);
-    } else if (settings.x == 1u) {
-        result = vec4(s.rgb + d.rgb * (1.0 - s.a), a);
-    } else if (settings.x == 2u) {
-        result = vec4(s.rgb + d.rgb * (1.0 - s.a), 1.0);
-    }
-    textureStore(output, q, clamp(result, vec4(0.0), vec4(1.0)));
-}
-"#;
-
 impl Backend {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, width: u16, height: u16) -> Self {
+    fn new(host: &bevy::render::renderer::RenderDevice, queue: &wgpu::Queue, width: u16, height: u16) -> Self {
+        let device = host.wgpu_device();
         let (renderer, resources) = vello_gpu::Renderer::new(
             device,
             queue,
@@ -62,10 +49,7 @@ impl Backend {
                 height,
             },
         );
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("LayerExDraw alpha conversion"),
-            source: wgpu::ShaderSource::Wgsl(CONVERT.into()),
-        });
+        let module = super::super::shader::standalone_shader(host, "krkr/layer_ex_draw_convert.wesl", include_str!("layer_ex_draw_convert.wesl"));
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("LayerExDraw alpha conversion"),
             layout: None,
@@ -75,10 +59,7 @@ impl Backend {
             cache: None,
         });
         let layout = pipeline.get_bind_group_layout(0);
-        let paint_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("LayerExDraw procedural brushes"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("layer_ex_draw_paint.wgsl").into()),
-        });
+        let paint_module = super::super::shader::standalone_shader(host, "krkr/layer_ex_draw_paint.wesl", include_str!("layer_ex_draw_paint.wesl"));
         let paint_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("LayerExDraw procedural brushes"),
             layout: None,
@@ -119,12 +100,13 @@ fn rgba(argb: u32) -> [f32; 4] {
     .map(|v| f32::from(v) / 255.0)
 }
 
-fn mix_color(a: u32, b: u32, factor: f64) -> Color {
-    let a = rgba(a);
-    let b = rgba(b);
-    Color::new(std::array::from_fn(|i| {
-        a[i] + (b[i] - a[i]) * factor as f32
-    }))
+fn uses_native_gradient(paint: &Paint) -> bool {
+    paint.wrap == 4 && paint.blend_positions.is_empty() && paint.brush_flags == 0
+}
+
+fn native_crop(p: [f64; 4], width: u32, height: u32) -> bool {
+    p.iter().all(|v| v.fract() == 0.0) && p[0] >= 0.0 && p[1] >= 0.0
+        && p[0] + p[2] <= f64::from(width) && p[1] + p[3] <= f64::from(height)
 }
 
 impl KrkrRenderer {
@@ -160,40 +142,18 @@ impl KrkrRenderer {
             }
             tile = [left, top, right - left, bottom - top];
         }
-        if paint.wrap < 4 && (tile[2] <= 0.0 || tile[3] <= 0.0) {
-            return Err("gradient tile has no area".into());
+        if paint.brush_type == 2 {
+            tile = paint.coordinates;
         }
-        let mut ramps: Vec<(f32, [f32; 4])> = Vec::new();
-        if !paint.stops.is_empty() {
-            ramps.extend(
-                paint
-                    .stops
-                    .iter()
-                    .map(|stop| (stop.position as f32, rgba(stop.color))),
-            );
+        let ramps: Vec<(f32, [f32; 4])> = if !paint.stops.is_empty() {
+            paint.stops.iter().map(|stop| (stop.position as f32, rgba(stop.color))).collect()
         } else if !paint.blend_positions.is_empty() {
-            ramps.extend(
-                paint
-                    .blend_positions
-                    .iter()
-                    .zip(&paint.blend_factors)
-                    .map(|(&p, &f)| {
-                        (
-                            p as f32,
-                            if paint.brush_type == 3 {
-                                [f as f32, f as f32, f as f32, 1.0]
-                            } else {
-                                mix_color(paint.colors[0], paint.colors[1], f).components
-                            },
-                        )
-                    }),
-            );
-        } else if paint.brush_type == 3 {
-            ramps = vec![(0.0, [0.0, 0.0, 0.0, 1.0]), (1.0, [1.0; 4])];
+            paint.blend_positions.iter().zip(&paint.blend_factors)
+                .map(|(&p, &f)| (p as f32, [f as f32; 4])).collect()
         } else {
-            ramps = vec![(0.0, rgba(paint.colors[0])), (1.0, rgba(paint.colors[1]))];
-        }
-        let mut data = vec![[0.0; 4]; 8];
+            vec![(0.0, [0.0; 4]), (1.0, [1.0; 4])]
+        };
+        let mut data = vec![[0.0; 4]; 9];
         data[0] = [
             width as f32,
             paint.brush_type as f32,
@@ -221,6 +181,7 @@ impl KrkrRenderer {
             f32::from(!paint.stops.is_empty()),
             (paint.brush_flags & 1) as f32,
         ];
+        data[8] = rgba(paint.colors[1]);
         for (position, color) in ramps {
             data.push(color);
             data.push([position, 0.0, 0.0, 0.0]);
@@ -231,7 +192,7 @@ impl KrkrRenderer {
                 paint
                     .surround_colors
                     .get(i)
-                    .or_else(|| paint.surround_colors.first())
+                    .or_else(|| paint.surround_colors.last())
                     .copied()
                     .unwrap_or(paint.colors[1]),
             ));
@@ -241,6 +202,7 @@ impl KrkrRenderer {
             contents: bytemuck::cast_slice(&data),
             usage: BufferUsages::STORAGE,
         });
+        let source = self.texture(if paint.brush_type == 2 { paint.image } else { request.target })?;
         let texture = self.texture_pool.acquire(&self.device, width, height);
         let group = self
             .device
@@ -256,6 +218,10 @@ impl KrkrRenderer {
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureView(&texture.default_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&source.default_view),
                     },
                 ],
             });
@@ -327,30 +293,20 @@ impl KrkrRenderer {
     }
 
     pub(super) fn draw_layer_ex(&mut self, request: &DrawRequest) -> Result<[f64; 4], String> {
-        self.draw_layer_ex_clipped(request, None)
+        self.draw_layer_ex_clipped(request, &[])
     }
 
     pub(super) fn draw_layer_ex_clipped(
         &mut self,
         request: &DrawRequest,
-        clip_quad: Option<&[[f64; 2]; 4]>,
+        clips: &[(BezPath, Fill)],
     ) -> Result<[f64; 4], String> {
         let target = self.texture(request.target)?;
         let width =
             u16::try_from(target.texture.width()).map_err(|_| "LayerExDraw target too wide")?;
         let height =
             u16::try_from(target.texture.height()).map_err(|_| "LayerExDraw target too tall")?;
-        let mut path = BezPath::new();
-        for element in &request.path {
-            let p = element.points;
-            match element.verb {
-                0 => path.move_to((p[0], p[1])),
-                1 => path.line_to((p[0], p[1])),
-                2 => path.curve_to((p[0], p[1]), (p[2], p[3]), (p[4], p[5])),
-                3 => path.close_path(),
-                _ => unreachable!(),
-            }
-        }
+        let path = bez_path(&request.path);
         let mut scene = Scene::new(width, height);
         if request.flags & 1 != 0 {
             scene.set_aliasing_threshold(Some(128));
@@ -371,18 +327,11 @@ impl KrkrRenderer {
             clip_right as f64,
             clip_bottom as f64,
         ));
-        if let Some(quad) = clip_quad {
-            if quad.iter().flatten().any(|value| !value.is_finite()) {
-                return Err("invalid record source clip".into());
-            }
-            let mut clip = BezPath::new();
-            clip.move_to((quad[0][0], quad[0][1]));
-            for point in &quad[1..] {
-                clip.line_to((point[0], point[1]));
-            }
-            clip.close_path();
-            scene.push_clip_path(&clip);
+        for (path, fill) in clips {
+            scene.set_fill_rule(*fill);
+            scene.push_clip_path(path);
         }
+        scene.set_fill_rule(if request.fill_rule == 0 { Fill::EvenOdd } else { Fill::NonZero });
         let transform = Affine::new(request.transform);
         let mut bounds: Option<Rect> = None;
         for (paint_index, paint) in request.paints.iter().enumerate() {
@@ -417,6 +366,7 @@ impl KrkrRenderer {
                     if !hatch::supported(paint.hatch) {
                         return Err("invalid hatch style".into());
                     }
+                    scene.set_paint_transform(transform.inverse());
                     scene.set_paint(vello_gpu::Image {
                         image: vello_gpu::ImageSource::external_texture(
                             vello_gpu::TextureId(paint_index as u64 + 1),
@@ -431,9 +381,7 @@ impl KrkrRenderer {
                 3 => {
                     if paint.brush_points.len() < 3
                         || paint.brush_points.len() > 4096
-                        || (!paint.surround_colors.is_empty()
-                            && paint.surround_colors.len() != 1
-                            && paint.surround_colors.len() != paint.brush_points.len())
+                        || paint.surround_colors.len() > paint.brush_points.len()
                     {
                         return Err("invalid path gradient boundary or surround colors".into());
                     }
@@ -453,10 +401,7 @@ impl KrkrRenderer {
                     if p[0] == p[2] && p[1] == p[3] {
                         return Err("zero length gradient".into());
                     }
-                    if paint.wrap < 4 {
-                        if paint.tile[2] <= 0.0 || paint.tile[3] <= 0.0 {
-                            return Err("linear gradient tile must have positive size".into());
-                        }
+                    if !uses_native_gradient(paint) {
                         scene.set_paint_transform(transform.inverse());
                         scene.set_paint(vello_gpu::Image {
                             image: vello_gpu::ImageSource::external_texture(
@@ -468,37 +413,10 @@ impl KrkrRenderer {
                                 .with_quality(vello_gpu::peniko::ImageQuality::Low),
                         });
                     } else {
-                        let extend = match paint.wrap {
-                        0 => Extend::Repeat,
-                        3 => Extend::Reflect,
-                        4 => Extend::Pad,
-                        _ => return Err(
-                            "linear gradient FlipX/FlipY requires a two-dimensional tile contract"
-                                .into(),
-                        ),
-                    };
                         let mut gradient = Gradient::new_linear((p[0], p[1]), (p[2], p[3]))
-                            .with_extend(extend)
-                            .with_interpolation_cs(if paint.brush_flags & 1 == 0 {
-                                ColorSpaceTag::Srgb
-                            } else {
-                                ColorSpaceTag::LinearSrgb
-                            });
-                        if paint.stops.is_empty() && !paint.blend_positions.is_empty() {
-                            let stops: Vec<vello_gpu::peniko::ColorStop> = paint
-                                .blend_positions
-                                .iter()
-                                .zip(&paint.blend_factors)
-                                .map(|(&position, &factor)| {
-                                    (
-                                        position as f32,
-                                        mix_color(paint.colors[0], paint.colors[1], factor),
-                                    )
-                                        .into()
-                                })
-                                .collect();
-                            gradient = gradient.with_stops(stops.as_slice());
-                        } else if paint.stops.is_empty() {
+                            .with_extend(Extend::Pad)
+                            .with_interpolation_cs(ColorSpaceTag::Srgb);
+                        if paint.stops.is_empty() {
                             gradient = gradient.with_stops(paint.colors.map(color));
                         } else {
                             let stops: Vec<vello_gpu::peniko::ColorStop> = paint
@@ -519,25 +437,14 @@ impl KrkrRenderer {
                         return Err("LayerExDraw source texture too large".into());
                     }
                     let p = paint.coordinates;
-                    if p.iter().any(|value| value.fract() != 0.0)
-                        || p[0] < 0.0
-                        || p[1] < 0.0
-                        || p[2] <= 0.0
-                        || p[3] <= 0.0
-                        || p[0] + p[2] > f64::from(source.texture.width())
-                        || p[1] + p[3] > f64::from(source.texture.height())
-                    {
-                        return Err(
-                            "texture crop must be an integer rectangle inside the source".into(),
-                        );
+                    if p[2] <= 0.0 || p[3] <= 0.0 {
+                        return Err("texture crop must have positive dimensions".into());
                     }
-                    let region = if p
-                        == [
-                            0.0,
-                            0.0,
-                            source.texture.width() as f64,
-                            source.texture.height() as f64,
-                        ] {
+                    let procedural = !native_crop(p, source.texture.width(), source.texture.height());
+                    let region = if procedural {
+                        scene.set_paint_transform(transform.inverse());
+                        vello_gpu::TextureRegion::Full
+                    } else if p == [0.0, 0.0, source.texture.width() as f64, source.texture.height() as f64] {
                         vello_gpu::TextureRegion::Full
                     } else {
                         scene
@@ -562,52 +469,59 @@ impl KrkrRenderer {
                             region,
                             true,
                         ),
-                        sampler: ImageSampler::new().with_x_extend(x).with_y_extend(y),
+                        sampler: if procedural { ImageSampler::new().with_quality(vello_gpu::peniko::ImageQuality::Low) } else { ImageSampler::new().with_x_extend(x).with_y_extend(y) },
                     });
                 }
                 _ => unreachable!(),
             }
-            let geometry = if paint.stroke {
-                if paint.alignment == 1 {
-                    if draw_path
-                        .iter()
-                        .filter(|element| matches!(element, kurbo::PathEl::MoveTo(_)))
-                        .count()
-                        != draw_path
-                            .iter()
-                            .filter(|element| matches!(element, kurbo::PathEl::ClosePath))
-                            .count()
-                    {
-                        return Err("inset pen requires closed subpaths".into());
+            let fill_rule = if request.fill_rule == 0 { Fill::EvenOdd } else { Fill::NonZero };
+            let mut include_bounds = |geometry: &BezPath| {
+                if !geometry.is_empty() {
+                    let rect = (transform * geometry).bounding_box();
+                    bounds = Some(bounds.map_or(rect, |bounds| bounds.union(rect)));
+                }
+            };
+            if !paint.stroke {
+                scene.fill_path(&draw_path);
+                include_bounds(&draw_path);
+                continue;
+            }
+            let mut pen = paint.clone();
+            if cosmetic { pen.width = 1.0; }
+            if pen.alignment == 1 {
+                let mut closed = BezPath::new();
+                let mut open = BezPath::new();
+                for figure in pen::figures(&draw_path) {
+                    if matches!(figure.last(), Some(kurbo::PathEl::ClosePath)) {
+                        closed.extend(figure.iter().copied());
+                    } else {
+                        open.extend(figure.iter().copied());
                     }
-                    scene.push_clip_path(&draw_path);
                 }
-                let mut pen = paint.clone();
-                if cosmetic {
-                    pen.width = 1.0;
+                if !closed.is_empty() {
+                    scene.push_clip_path(&closed);
+                    let outline = pen::outline(&closed, &pen)?;
+                    scene.set_fill_rule(Fill::NonZero);
+                    scene.fill_path(&outline);
+                    scene.pop_clip();
+                    include_bounds(&closed);
                 }
+                if !open.is_empty() {
+                    pen.alignment = 0;
+                    let outline = pen::outline(&open, &pen)?;
+                    scene.set_fill_rule(Fill::NonZero);
+                    scene.fill_path(&outline);
+                    include_bounds(&outline);
+                }
+            } else {
                 let outline = pen::outline(&draw_path, &pen)?;
                 scene.set_fill_rule(Fill::NonZero);
                 scene.fill_path(&outline);
-                scene.set_fill_rule(if request.fill_rule == 0 {
-                    Fill::EvenOdd
-                } else {
-                    Fill::NonZero
-                });
-                if paint.alignment == 1 {
-                    scene.pop_clip();
-                    draw_path.clone()
-                } else {
-                    outline
-                }
-            } else {
-                scene.fill_path(&draw_path);
-                draw_path.clone()
-            };
-            let rect = (transform * geometry).bounding_box();
-            bounds = Some(bounds.map_or(rect, |bounds| bounds.union(rect)));
+                include_bounds(&outline);
+            }
+            scene.set_fill_rule(fill_rule);
         }
-        if clip_quad.is_some() {
+        for _ in clips {
             scene.pop_clip();
         }
         scene.pop_clip();
@@ -623,7 +537,7 @@ impl KrkrRenderer {
         let mut backend = self
             .layer_ex_draw
             .take()
-            .unwrap_or_else(|| Backend::new(self.device.wgpu_device(), &self.queue, width, height));
+            .unwrap_or_else(|| Backend::new(&self.device, &self.queue, width, height));
         let result = (|| {
             let mut bindings = vello_gpu::TextureBindings::new();
             let mut sources = Vec::new();
@@ -639,18 +553,7 @@ impl KrkrRenderer {
                             let mut pixels = Vec::with_capacity(256);
                             for y in 0..8 {
                                 for x in 0..8 {
-                                    let argb = paint.colors
-                                        [usize::from(!hatch::foreground(paint.hatch, x, y))];
-                                    let alpha = (argb >> 24) as u8;
-                                    for channel in
-                                        [(argb >> 16) as u8, (argb >> 8) as u8, argb as u8]
-                                    {
-                                        pixels.push(
-                                            ((u16::from(channel) * u16::from(alpha) + 127) / 255)
-                                                as u8,
-                                        );
-                                    }
-                                    pixels.push(alpha);
+                                    pixels.extend(hatch::pixel(paint.hatch, x, y, paint.colors));
                                 }
                             }
                             self.queue.write_texture(
@@ -668,7 +571,7 @@ impl KrkrRenderer {
                         backend.hatches[&key].clone()
                     }
                     3 | 4 => {
-                        if paint.brush_type == 4 && paint.wrap == 4 {
+                        if paint.brush_type == 4 && uses_native_gradient(paint) {
                             continue;
                         }
                         self.prepare_draw_paint(
@@ -681,7 +584,11 @@ impl KrkrRenderer {
                     }
                     2 => {
                         let source = self.texture(paint.image)?;
-                        self.convert_draw_texture(&backend, &source, &source, 3)
+                        if native_crop(paint.coordinates, source.texture.width(), source.texture.height()) {
+                            self.convert_draw_texture(&backend, &source, &source, 3)
+                        } else {
+                            self.prepare_draw_paint(&backend, request, paint, width.into(), height.into())?
+                        }
                     }
                     _ => continue,
                 };

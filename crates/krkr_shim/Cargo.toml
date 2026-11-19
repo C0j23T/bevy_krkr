@@ -10,12 +10,19 @@ publish     = false
 name = "krkr_shim"
 
 [dependencies]
+fontdb = "0.23"
+harfrust = "0.12"
+unicode-bidi = "0.3"
+unicode-script = "0.5"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 krkr_storage = { path = "../krkr_storage" }
 xxhash-rust = { version = "0.8", features = ["xxh32", "xxh3"] }
 lz4_flex = { version = "0.11" }
 zip = { version = "9.4.2", default-features = false, features = ["deflate"] }
 sevenz-rust2 = { version = "0.25.0", default-features = false, features = ["util"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "ico"] }
+gif = "0.14"
+tiff = { version = "0.11", default-features = false, features = ["lzw"] }
 image-webp = "0.2"
 jpeg-encoder = "0.7"
 zune-jpeg = "0.5"

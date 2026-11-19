@@ -1,3 +1,4 @@
+use bevy::{asset::{AssetId, uuid::uuid}, render::{render_resource::{ShaderModuleDescriptor, ShaderSource}, renderer::RenderDevice}, shader::{Shader, ShaderCache, ShaderCacheSource}};
 use std::sync::LazyLock;
 
 use bevy::platform::collections::HashMap;
@@ -5,6 +6,30 @@ use indoc::indoc;
 use itertools::Itertools;
 
 use crate::render::operations::Operation;
+
+pub(super) fn standalone_shader(device: &RenderDevice, path: &'static str, source: &'static str) -> std::sync::Arc<wgpu::ShaderModule> {
+    let mut shaders = ShaderCache::new(device.clone(), |device, source, _| {
+        let ShaderCacheSource::Wgsl(source) = source else {
+            unreachable!()
+        };
+        Ok(device
+            .wgpu_device()
+            .create_shader_module(ShaderModuleDescriptor {
+                label: Some("Kirikiri WESL shader"),
+                source: ShaderSource::Wgsl(source.into()),
+            }))
+    });
+    let id = AssetId::<Shader>::Uuid {
+        uuid: uuid!("a726401c-982f-4ea6-935b-25840c22b97f"),
+    };
+    shaders.set_shader(
+        id,
+        Shader::from_wesl(source, path),
+    );
+    shaders
+        .get(0, id, &[])
+        .expect(path)
+}
 
 const IMPORT: &str = "import package::krkr::extNagano::nagano;";
 

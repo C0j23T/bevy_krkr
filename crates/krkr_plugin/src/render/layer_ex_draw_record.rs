@@ -2,7 +2,8 @@
 mod format;
 
 use super::{KrkrRenderer, PooledTexture, RENDERER_INSTANCE};
-use format::{Bitmap, Record, multiply};
+use format::{Bitmap, Clip, Record, RecordedDraw, multiply};
+use vello_gpu::{kurbo::Affine, peniko::Fill};
 use krkr_shim::layer_ex_draw::DrawOperation;
 use std::{
     collections::{HashMap, HashSet},
@@ -31,6 +32,7 @@ pub struct RecordInfo {
     pub background_argb: u32,
     pub operation_count: u32,
     pub bounds: [f64; 4],
+    pub dpi: [f64; 2],
 }
 
 fn ffi(action: impl FnOnce() -> Result<(), String>) -> i32 {
@@ -105,7 +107,7 @@ pub unsafe extern "C" fn krkr_layer_ex_record_append(
     smoothing: u32,
 ) -> i32 {
     ffi(|| {
-        if operation.is_null() || !operation.is_aligned() || smoothing > 4 {
+        if operation.is_null() || !operation.is_aligned() || smoothing > 6 {
             return Err("invalid recorded operation".into());
         }
         let mut request = unsafe { krkr_shim::layer_ex_draw::DrawRequest::copy(&*operation) }?;
@@ -150,10 +152,35 @@ pub unsafe extern "C" fn krkr_layer_ex_record_append(
                 paint.image = image;
             }
         }
-        record.content.operations.push(request);
+        record.content.operations.push(RecordedDraw { draw:request, clips:Vec::new() });
         Ok(())
     })
 }
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn krkr_layer_ex_record_append_image(id:u64, image:u64,
+    source:*const f64, transform:*const f64) -> i32 {
+    ffi(|| {
+        let source = unsafe { array(source)? };
+        let transform = unsafe { array(transform)? };
+        if !valid_source(source) || transform.iter().any(|n:&f64| !n.is_finite() || n.abs()>1e9) {
+            return Err("invalid embedded metafile coordinates".into());
+        }
+        let image = get(image)?;
+        let mut records = RECORDS.lock().map_err(|e| e.to_string())?;
+        let dest = Arc::make_mut(records.get_mut(&id).ok_or("unknown LayerExDraw record")?);
+        let resources:HashMap<_,_> = image.textures.keys().chain(image.content.images.keys())
+            .map(|id| (*id,NEXT_IMAGE.fetch_add(1,Ordering::Relaxed))).collect();
+        dest.content.embed(&image.content,source,transform,&[],&resources)?;
+        dest.textures.extend(image.textures.iter().map(|(id,tex)|(resources[id],tex.clone())));
+        dest.content.images.extend(image.content.images.iter().map(|(id,bmp)|(resources[id],bmp.clone())));
+        Ok(())
+    })
+}
+
+fn valid_source(rect:[f64;4]) -> bool {
+    rect.iter().all(|n|n.is_finite() && n.abs() <= 1e9) && rect[2] > 0. && rect[3] > 0.
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_layer_ex_record_decode(
     bytes: *const c_void,
@@ -203,7 +230,7 @@ pub unsafe extern "C" fn krkr_layer_ex_record_encode(
                     Bitmap {
                         width,
                         height,
-                        rgba,
+                        rgba:rgba.into(),
                     },
                 );
             }
@@ -231,7 +258,7 @@ fn replay(
         || clip[2] < clip[0]
         || clip[3] < clip[1]
         || view.iter().any(|v| !v.is_finite() || v.abs() > 1e9)
-        || source.is_some_and(|v| v.iter().any(|v| !v.is_finite()) || v[2] <= 0. || v[3] <= 0.)
+        || source.is_some_and(|r| !valid_source(r))
     {
         return Err("invalid record replay arguments".into());
     }
@@ -268,44 +295,10 @@ fn replay(
         remap.insert(id, temporary);
     }
     let result = (|| {
-        let quad = source.map(|[x, y, w, h]| {
-            [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map(|[x, y]| {
-                [
-                    x * view[0] + y * view[2] + view[4],
-                    x * view[1] + y * view[3] + view[5],
-                ]
-            })
-        });
-        if stored.content.background != 0 {
-            let [x, y, w, h] = stored.content.bounds;
-            let path = [
-                (0, [x, y, 0., 0., 0., 0.]),
-                (1, [x + w, y, 0., 0., 0., 0.]),
-                (1, [x + w, y + h, 0., 0., 0., 0.]),
-                (1, [x, y + h, 0., 0., 0., 0.]),
-                (3, [0.; 6]),
-            ]
-            .into_iter()
-            .map(|(verb, points)| krkr_shim::layer_ex_draw::PathElement {
-                verb,
-                points,
-                reserved: 0,
-            })
-            .collect();
-            let request = krkr_shim::layer_ex_draw::DrawRequest {
-                target,
-                clip,
-                transform: view,
-                path,
-                fill_rule: 0,
-                paints: vec![format::solid(stored.content.background)],
-                alpha_mode: alpha,
-                flags: 1,
-            };
-            render(renderer, &request, quad)?;
-        }
-        for original in &stored.content.operations {
-            let mut request = original.clone();
+        let crop = source.map(|rect| Clip {path:format::rectangle(rect).into(), fill:0, transform:format::IDENTITY});
+        let background = stored.content.background_draw();
+        for original in background.iter().chain(&stored.content.operations) {
+            let mut request = original.draw.clone();
             request.target = target;
             request.alpha_mode = alpha;
             request.transform = multiply(request.transform, view);
@@ -317,7 +310,11 @@ fn replay(
                         .ok_or("record image is unavailable")?;
                 }
             }
-            render(renderer, &request, quad)?;
+            let clips:Vec<_> = original.clips.iter().chain(crop.iter()).map(|clip| {
+                let matrix = Affine::new(multiply(clip.transform,view));
+                (matrix * super::layer_ex_draw::bez_path(&clip.path), if clip.fill == 0 { Fill::EvenOdd } else { Fill::NonZero })
+            }).collect();
+            renderer.draw_layer_ex_clipped(&request, &clips)?;
         }
         Ok(())
     })();
@@ -329,15 +326,6 @@ fn replay(
         }
     }
     result
-}
-
-fn render(
-    renderer: &mut KrkrRenderer,
-    request: &krkr_shim::layer_ex_draw::DrawRequest,
-    quad: Option<[[f64; 2]; 4]>,
-) -> Result<(), String> {
-    renderer.draw_layer_ex_clipped(request, quad.as_ref())?;
-    Ok(())
 }
 
 #[unsafe(no_mangle)]
@@ -397,6 +385,7 @@ pub unsafe extern "C" fn krkr_layer_ex_record_query(id: u64, result: *mut Record
                     background_argb: r.background,
                     operation_count: r.operations.len() as u32,
                     bounds: r.bounds,
+                    dpi:r.dpi,
                 },
             )
         }
@@ -421,7 +410,7 @@ pub unsafe extern "C" fn krkr_layer_ex_record_free(bytes: *mut c_void, length: u
     }
 }
 
-const _: () = assert!(std::mem::size_of::<RecordInfo>() == 48);
+const _: () = assert!(std::mem::size_of::<RecordInfo>() == 64);
 
 #[cfg(test)]
 mod tests {

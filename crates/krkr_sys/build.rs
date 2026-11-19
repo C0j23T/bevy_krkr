@@ -191,7 +191,7 @@ mod real {
         }
         cpp.cpp(true).std("c++17").files(&sources.cpp).files(&plugins).file(&shim);
         println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins/layerExSave/LayerExSaveUtils.inc").display());
-        for name in ["LayerExDrawGeometry.h", "LayerExDrawObjects.inc", "LayerExDrawState.inc", "LayerExDrawImage.inc", "LayerExDrawText.inc", "LayerExDrawConstants.inc", "LayerExDrawReadback.inc"] {
+        for name in ["LayerExDrawGeometry.h", "LayerExDrawObjects.inc", "LayerExDrawState.inc", "LayerExDrawImage.inc", "LayerExDrawText.inc", "LayerExDrawFont.inc", "LayerExDrawConstants.inc", "LayerExDrawReadback.inc"] {
             println!("cargo:rerun-if-changed={}", src.join("src/core/environ/bevy/plugins").join(name).display());
         }
         cpp.compile("krkr_core");
