@@ -20,7 +20,8 @@ use bevy::{
     render::{
         render_resource::{
             BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
-            Buffer, BufferBindingType, BufferDescriptor, BufferInitDescriptor, BufferUsages,
+            Buffer, BufferBinding, BufferBindingType, BufferDescriptor, BufferInitDescriptor,
+            BufferSize, BufferUsages,
             CommandEncoder, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline,
             Extent3d, MapMode, Origin3d, PipelineLayoutDescriptor, PollType,
             RawComputePipelineDescriptor, Sampler, ShaderModuleDescriptor, ShaderSource,
@@ -51,6 +52,7 @@ const GAUSSIAN_WEIGHT_CACHE_CAPACITY: usize = 64;
 const TEXTURE_POOL_RETIRE_FRAMES: usize = 3;
 const TEXTURE_POOL_MAX_PER_SIZE: usize = 128;
 const TEXTURE_POOL_MAX_AVAILABLE_BYTES: u64 = 512 * 1024 * 1024;
+const PARAMETER_BUFFER_BYTES: usize = 64 * 1024;
 
 static GAUSSIAN_WEIGHTS: LazyLock<Mutex<GaussianWeightCache>> =
     LazyLock::new(|| Mutex::new(GaussianWeightCache::default()));
@@ -234,6 +236,9 @@ struct KrkrRenderer {
     texture_pool: TexturePool,
     upload_buffer: Vec<u8>,
     parameter_scratch: Vec<[f32; 4]>,
+    parameter_buffer: Buffer,
+    parameter_upload: Vec<u8>,
+    parameter_alignment: usize,
 
     pipeline: ComputePipeline,
     plugin_methods: Vec<PluginMethod>,
@@ -469,6 +474,13 @@ impl KrkrRenderer {
 
         let mesh = super::mesh::MeshPipelines::new(&device, &operations_shader, &layout);
         let sampler = device.create_sampler(&Default::default());
+        let parameter_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("Kirikiri operation parameters"),
+            size: PARAMETER_BUFFER_BYTES as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let parameter_alignment = device.limits().min_storage_buffer_offset_alignment as usize;
         Self {
             device,
             queue,
@@ -480,6 +492,9 @@ impl KrkrRenderer {
             texture_pool: TexturePool::default(),
             upload_buffer: Vec::new(),
             parameter_scratch: Vec::new(),
+            parameter_buffer,
+            parameter_upload: Vec::new(),
+            parameter_alignment,
             pipeline,
             plugin_methods: Vec::new(),
             used_plugin_opcodes: Default::default(),
@@ -598,6 +613,12 @@ impl KrkrRenderer {
     fn flush(&mut self) {
         if let Some(encoder) = self.encoder.take() {
             let _submission = super::surface_sync::lock();
+            if !self.parameter_upload.is_empty() {
+                // Queue order keeps the upload after the previous batch's reads.
+                self.queue
+                    .write_buffer(&self.parameter_buffer, 0, &self.parameter_upload);
+                self.parameter_upload.clear();
+            }
             self.queue.submit([encoder.finish()]);
         }
         self.pending = 0;
@@ -1531,11 +1552,26 @@ impl KrkrRenderer {
             inputs[3].default_view.clone(),
             output.default_view.clone(),
         ];
-        let params = self.device.create_buffer_with_data(&BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(data),
-            usage: BufferUsages::STORAGE,
-        });
+        let parameters = bytemuck::cast_slice(data);
+        let offset = self
+            .parameter_upload
+            .len()
+            .next_multiple_of(self.parameter_alignment);
+        let (params, offset) = if offset
+            .checked_add(parameters.len())
+            .is_some_and(|end| end <= PARAMETER_BUFFER_BYTES)
+        {
+            self.parameter_upload.resize(offset, 0);
+            self.parameter_upload.extend_from_slice(parameters);
+            (self.parameter_buffer.clone(), offset as u64)
+        } else {
+            let buffer = self.device.create_buffer_with_data(&BufferInitDescriptor {
+                label: None,
+                contents: parameters,
+                usage: BufferUsages::STORAGE,
+            });
+            (buffer, 0)
+        };
         let entries = [
             BindGroupEntry {
                 binding: 0,
@@ -1559,7 +1595,11 @@ impl KrkrRenderer {
             },
             BindGroupEntry {
                 binding: 5,
-                resource: params.as_entire_binding(),
+                resource: BindingResource::Buffer(BufferBinding {
+                    buffer: &params,
+                    offset,
+                    size: BufferSize::new(parameters.len() as u64),
+                }),
             },
             BindGroupEntry {
                 binding: 6,

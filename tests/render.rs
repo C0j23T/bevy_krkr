@@ -246,6 +246,18 @@ fn gpu_layer_operations() {
     script(
         &engine,
         r#"
+        for (var i = 0; i < 192; i++)
+            dst.fillRect(i & 15, i >> 4, 1, 1, 0xff000000 + i * 257);
+        "#,
+    );
+    let (frame_width, _, pixels) = frame();
+    for value in 0..192 {
+        let offset = ((value / 16) * frame_width + value % 16) * 4;
+        assert_eq!(&pixels[offset..offset + 4], &[0, value as u8, value as u8, 255]);
+    }
+    script(
+        &engine,
+        r#"
         global.patch=layer(base,5,5,0); patch.visible=false;
         patch.fillRect(1,1,3,3,0xffff0000);
         patch.fillRect(2,0,1,1,0xff000000); patch.fillRect(0,2,1,1,0xff000000);
