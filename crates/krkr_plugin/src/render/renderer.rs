@@ -1491,16 +1491,27 @@ impl KrkrRenderer {
                 .acquire(&self.device, old.texture.width(), old.texture.height())
         });
 
-        let operation = data[1][0].to_bits();
-        let replaces_entire_target =
-            operation == Operation::FILL_ARGB.0 || operation == Operation::COPY.0;
-        let full_overwrite = replaces_entire_target
+        let operation = Operation(data[1][0].to_bits());
+        let writes_every_pixel_in_rect = matches!(
+            operation,
+            Operation::COPY
+                | Operation::FILL_ARGB
+                | Operation::ALPHA_BLEND
+                | Operation::CONST_ALPHA_BLEND
+                | Operation::CONST_ALPHA_BLEND_SD
+                | Operation::UNIV_TRANS_BLEND
+                | Operation::PS_BLEND
+                | Operation::NON_PS_BLEND
+                | Operation::BOX_BLUR_H
+                | Operation::BOX_BLUR_V
+        );
+        let full_overwrite = writes_every_pixel_in_rect
             && data[1][3] == 0.0
             && data[0][0] <= 0.0
             && data[0][1] <= 0.0
             && data[0][2] >= old.texture.width() as f32
             && data[0][3] >= old.texture.height() as f32;
-        if !matches!(operation, 40 | 41) && !full_overwrite {
+        if !full_overwrite {
             #[cfg(feature = "test-render-stats")]
             {
                 self.stats.copy_on_write_pixels +=

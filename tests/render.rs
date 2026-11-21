@@ -230,6 +230,21 @@ fn gpu_layer_operations() {
     near(pixel(14, 14), [128, 0, 127, 255]);
     script(
         &engine,
+        "src.setImageSize(16,16); src.setSizeToImageSize(); src.fillRect(0,0,16,16,0xff00ff00);
+         dst.fillRect(0,0,16,16,0xffff0000);",
+    );
+    #[cfg(feature = "test-render-stats")]
+    let before_blend = bevy_krkr::plugin::render::stats().unwrap();
+    script(&engine, "dst.operateRect(0,0,src,0,0,16,16,omAlpha,128);");
+    #[cfg(feature = "test-render-stats")]
+    assert_eq!(
+        bevy_krkr::plugin::render::stats().unwrap().copy_on_write_pixels,
+        before_blend.copy_on_write_pixels
+    );
+    near(pixel(0, 0), [127, 128, 0, 255]);
+    near(pixel(15, 15), [127, 128, 0, 255]);
+    script(
+        &engine,
         r#"
         global.patch=layer(base,5,5,0); patch.visible=false;
         patch.fillRect(1,1,3,3,0xffff0000);
