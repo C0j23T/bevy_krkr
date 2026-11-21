@@ -4040,6 +4040,7 @@ dependencies = [
  "image-webp",
  "jpeg-encoder",
  "krkr_storage",
+ "libwebp-sys",
  "lz4_flex",
  "miniz_oxide 0.8.9",
  "png",
@@ -4250,6 +4251,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c8469b4a23b962c1396b9b451dda50ef5b283e8dd309d69033475fa9b334324"
 dependencies = [
  "libc",
+ "pkg-config",
+]
+
+[[package]]
+name = "libwebp-sys"
+version = "0.14.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b3a87b44e34d17161e4f17d92a463d596cb13825dcd1758ed18fd3a721e189c"
+dependencies = [
+ "cc",
+ "glob",
  "pkg-config",
 ]
 

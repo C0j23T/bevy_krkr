@@ -11,16 +11,6 @@ pub struct KrkrWebpInfo {
     pub has_alpha: i32,
 }
 
-/// `(width, height, has_alpha, pixels)`, with 3 bytes per pixel when the file
-/// has no alpha.
-fn webp_decode(bytes: &[u8]) -> Option<(u32, u32, bool, Vec<u8>)> {
-    let mut decoder = image_webp::WebPDecoder::new(io::Cursor::new(bytes)).ok()?;
-    let (width, height) = decoder.dimensions();
-    let mut pixels = vec![0u8; decoder.output_buffer_size()?];
-    decoder.read_image(&mut pixels).ok()?;
-    Some((width, height, decoder.has_alpha(), pixels))
-}
-
 /// 0 on success, -1 when `src` is not a WebP image. Fills the header fields
 /// only; the image is not decoded.
 ///
@@ -54,7 +44,7 @@ pub unsafe extern "C" fn krkr_webp_info(
 ///
 /// # Safety
 /// `src` must hold `src_len` bytes (or be null if `src_len` is 0); `dst` must
-/// hold `dst_len` writable bytes.
+/// hold `dst_len` writable bytes without overlapping `src`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn krkr_webp_decode(
     src: *const c_void,
@@ -64,29 +54,53 @@ pub unsafe extern "C" fn krkr_webp_decode(
 ) -> usize {
     let dst = output(dst, dst_len);
     guard(FAILED, || {
-        let Some((width, height, _, pixels)) = webp_decode(input(src, src_len)) else {
+        let bytes = input(src, src_len);
+        let Ok(mut decoder) = image_webp::WebPDecoder::new(io::Cursor::new(bytes)) else {
             return FAILED;
         };
-        let Some(count) = (width as usize).checked_mul(height as usize) else {
+        let (width, height) = decoder.dimensions();
+        let Some(stride) = width.checked_mul(4).and_then(|row| i32::try_from(row).ok()) else {
             return FAILED;
         };
-        let Some(needed) = count.checked_mul(4) else {
+        let Some(needed) = (stride as usize).checked_mul(height as usize) else {
             return FAILED;
         };
-        if count == 0 || dst.len() < needed {
+        if needed == 0 || dst.len() < needed {
             return FAILED;
         }
         let dst = &mut dst[..needed];
-        match pixels.len() / count {
-            // `image-webp` drops the alpha byte when the file has none.
-            4 => dst.copy_from_slice(&pixels),
-            3 => {
-                for (pixel, dst) in pixels.as_chunks::<3>().0.iter().zip(dst.as_chunks_mut::<4>().0) {
-                    dst[..3].copy_from_slice(pixel);
-                    dst[3] = 0xFF;
-                }
-            }
-            _ => return FAILED,
+        if !decoder.is_animated() {
+            // SAFETY: the parsed dimensions size the non-overlapping RGBA destination.
+            let decoded = unsafe {
+                libwebp_sys::WebPDecodeRGBAInto(
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    dst.as_mut_ptr(),
+                    dst.len(),
+                    stride,
+                )
+            };
+            return if decoded.is_null() { FAILED } else { needed };
+        }
+        if decoder.has_alpha() {
+            return if decoder.read_image(dst).is_ok() {
+                needed
+            } else {
+                FAILED
+            };
+        }
+        let mut rgb = vec![0; needed / 4 * 3];
+        if decoder.read_image(&mut rgb).is_err() {
+            return FAILED;
+        }
+        for (pixel, dst) in rgb
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(dst.as_chunks_mut::<4>().0)
+        {
+            dst[..3].copy_from_slice(pixel);
+            dst[3] = 0xff;
         }
         needed
     })

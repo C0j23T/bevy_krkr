@@ -26,6 +26,7 @@ image = { version = "0.25", default-features = false, features = ["bmp", "gif", 
 gif = "0.14"
 tiff = { version = "0.11", default-features = false, features = ["lzw"] }
 image-webp = "0.2"
+libwebp-sys = "0.14.4"
 jpeg-encoder = "0.7"
 zune-jpeg = "0.5"
 png = "0.18"

@@ -86,3 +86,6 @@ codegen-units = 1
 panic = "abort"
 # strip = true
 opt-level = "z"
+
+[profile.release.package.libwebp-sys]
+opt-level = 3

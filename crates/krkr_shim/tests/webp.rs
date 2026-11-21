@@ -1,7 +1,4 @@
-//! The WebP decoder through the C ABI, the way `environ/bevy/WEBPLoader.cpp`
-//! drives it: the header call, the RGBA byte order the engine bitmap expects,
-//! the sentinels. The fixtures are encoded with the same crate's lossless
-//! encoder, so this tests the seam rather than VP8.
+//! WebP headers, RGBA output and error sentinels through the engine's C ABI.
 
 use image_webp::{ColorType, WebPEncoder};
 use krkr_shim::ffi::{krkr_webp_decode, krkr_webp_info, KrkrWebpInfo};
@@ -50,6 +47,20 @@ fn opaque_files_get_an_opaque_alpha_byte() {
     let webp = encode(&pixels, 2, 1, ColorType::Rgb8);
     assert_eq!(info(&webp), Some((2, 1, false)));
     assert_eq!(decode(&webp, 2, 1).expect("decodes"), vec![10, 20, 30, 255, 40, 50, 60, 255]);
+}
+
+#[test]
+fn decodes_lossy_vp8_as_rgba() {
+    let webp = include_bytes!("data/lossy-red.webp");
+    assert_eq!(info(webp), Some((4, 4, false)));
+    assert_eq!(decode(webp, 4, 4).unwrap(), [255, 1, 0, 255].repeat(16));
+}
+
+#[test]
+fn animated_webp_decodes_the_first_frame() {
+    let webp = include_bytes!("data/animated-red-green.webp");
+    assert_eq!(info(webp), Some((4, 4, true)));
+    assert_eq!(decode(webp, 4, 4).unwrap(), [255, 0, 0, 255].repeat(16));
 }
 
 #[test]
