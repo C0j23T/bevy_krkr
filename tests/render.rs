@@ -258,6 +258,33 @@ fn gpu_layer_operations() {
     script(
         &engine,
         r#"
+        Plugins.link("shrinkCopy.dll");
+        global.preview=layer(base,8,8,0xffff0000); preview.setPos(32,16);
+        "#,
+    );
+    assert_eq!(pixel(34, 18), [255, 0, 0, 255]);
+    for (operation, corner) in [
+        ("preview.shrinkCopy(2,2,4,4,src,0,0,8,8);", [255, 0, 0, 255]),
+        ("preview.shrinkCopyFast(src,2);", [0, 255, 0, 255]),
+    ] {
+        #[cfg(feature = "test-render-stats")]
+        let before_shrink = bevy_krkr::plugin::render::stats().unwrap();
+        script(&engine, operation);
+        assert_eq!(pixel(34, 18), [0, 255, 0, 255]);
+        #[cfg(feature = "test-render-stats")]
+        {
+            let after_shrink = bevy_krkr::plugin::render::stats().unwrap();
+            assert_eq!(
+                after_shrink.scene_copy_pixels - before_shrink.scene_copy_pixels,
+                64
+            );
+        }
+        assert_eq!(pixel(32, 16), corner);
+        assert_eq!(pixel(31, 16), [0, 0, 255, 255]);
+    }
+    script(
+        &engine,
+        r#"
         global.patch=layer(base,5,5,0); patch.visible=false;
         patch.fillRect(1,1,3,3,0xffff0000);
         patch.fillRect(2,0,1,1,0xff000000); patch.fillRect(0,2,1,1,0xff000000);
